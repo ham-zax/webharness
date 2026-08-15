@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+set -euo pipefail
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=../lib/bridge/common.sh
+source "$DIR/lib/bridge/common.sh"
+
+TUNNEL_NAME="${TUNNEL_NAME:-}"
+TUNNEL_URL="${TUNNEL_URL:-}"
+export TUNNEL_NAME TUNNEL_URL
+
+[ -n "$TUNNEL_URL" ] || {
+  echo "public URL is not configured; run scripts/setup.sh --profile restricted|trusted-dev first" >&2
+  exit 2
+}
+[ -f "$BRIDGE_CONFIG_DIR/mcp.json" ] || {
+  echo "1MCP config is missing at $BRIDGE_CONFIG_DIR/mcp.json; run scripts/setup.sh with an explicit profile" >&2
+  exit 2
+}
+
+for cmd in node npm cloudflared curl flock; do
+  command -v "$cmd" >/dev/null 2>&1 || {
+    echo "$cmd is required to start the Cloudflare OAuth Bridge" >&2
+    exit 1
+  }
+done
+
+if ! bridge_lock_acquire 30; then
+  echo "another bridge lifecycle operation is already in progress" >&2
+  exit 1
+fi
+
+START_COMMITTED=false
+cleanup_failed_start() {
+  local rc=$?
+  if [ "$START_COMMITTED" != true ]; then
+    bridge_disable
+    bridge_stop_watchdog
+    bridge_stop_cloudflared
+    bridge_stop_1mcp
+    rm -f "$BRIDGE_TUNNEL_URL_FILE"
+  fi
+  bridge_lock_release
+  trap - EXIT INT TERM
+  exit "$rc"
+}
+trap cleanup_failed_start EXIT INT TERM
+
+# Manual starts and watchdog reconciliation share the same lifecycle lock.
+# Disable/stop the old watchdog first so there is only one reconciler.
+bridge_disable
+bridge_stop_watchdog
+
+echo "== starting WebHarness =="
+echo "1MCP OAuth origin: http://127.0.0.1:3050/mcp"
+echo "public MCP URL:    $TUNNEL_URL/mcp"
+
+bridge_reconcile_1mcp "$TUNNEL_URL"
+bridge_start_cloudflared
+printf '%s\n' "$TUNNEL_URL" > "$BRIDGE_TUNNEL_URL_FILE"
+
+PUBLIC_ATTEMPTS="${BRIDGE_PUBLIC_HEALTH_ATTEMPTS:-45}"
+PUBLIC_INTERVAL="${BRIDGE_PUBLIC_HEALTH_INTERVAL:-3}"
+if ! bridge_wait_url "$TUNNEL_URL/health/ready" "$PUBLIC_ATTEMPTS" "$PUBLIC_INTERVAL" 5; then
+  echo "Cloudflare OAuth Bridge public endpoint did not become healthy" >&2
+  exit 1
+fi
+
+bridge_enable
+bridge_start_watchdog
+START_COMMITTED=true
+bridge_lock_release
+trap - EXIT INT TERM
+
+echo "WebHarness is ready"
+echo "  MCP endpoint: $TUNNEL_URL/mcp"
+echo "  status:       bin/status"
+echo "  stop:         bin/stop"

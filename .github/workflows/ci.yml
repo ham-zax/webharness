@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: providers/pi-dev/package-lock.json
+      - name: Install Pi provider dependencies
+        run: npm --prefix providers/pi-dev ci
+      - name: Shell syntax
+        run: bash -n bin/* lib/bridge/*.sh scripts/*.sh tests/*.sh
+      - name: Node syntax
+        run: |
+          node --check scripts/render-config.mjs
+          node --check providers/pi-dev/server.mjs
+      - name: Harness tests
+        run: bash tests/harness.sh
+      - name: Publication tests
+        run: bash tests/publication.sh
+      - name: Lifecycle tests
+        run: bash tests/lifecycle.sh
+      - name: Pi provider tests
+        run: npm --prefix providers/pi-dev test
+      - name: Dependency audit
+        run: npm --prefix providers/pi-dev audit --omit=dev

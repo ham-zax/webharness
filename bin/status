@@ -1,0 +1,105 @@
+#!/usr/bin/env bash
+set -uo pipefail
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=../lib/bridge/common.sh
+source "$DIR/lib/bridge/common.sh"
+
+ISSUES=0
+warn() {
+  echo "WARN: $*"
+  ISSUES=$((ISSUES + 1))
+}
+
+if bridge_enabled; then
+  DESIRED="running"
+else
+  DESIRED="stopped"
+fi
+PUBLIC_URL="$(cat "$BRIDGE_TUNNEL_URL_FILE" 2>/dev/null || printf '%s' "${TUNNEL_URL:-}")"
+
+echo "== WebHarness =="
+echo "desired state: $DESIRED"
+echo "public URL:    ${PUBLIC_URL:-unconfigured}"
+
+echo
+echo "== 1MCP OAuth origin =="
+mapfile -t MCP_PIDS < <(bridge_find_1mcp_pids)
+MCP_COUNT="${#MCP_PIDS[@]}"
+if [ "$MCP_COUNT" -eq 0 ]; then
+  echo "config-scoped processes: none"
+else
+  echo "config-scoped processes: ${MCP_PIDS[*]}"
+fi
+if [ "$MCP_COUNT" -gt 1 ]; then
+  warn "duplicate 1MCP processes for $BRIDGE_CONFIG_DIR: ${MCP_PIDS[*]}"
+fi
+
+LISTENER_PID="$(bridge_listener_pid 2>/dev/null || true)"
+SERVER_PID="$(bridge_server_pid 2>/dev/null || true)"
+RUN_PID="$(cat "$BRIDGE_ONE_MCP_PID_FILE" 2>/dev/null || true)"
+
+echo "listener :3050 pid: ${LISTENER_PID:-none}"
+echo "1MCP server.pid pid: ${SERVER_PID:-none}"
+echo "bridge one-mcp.pid: ${RUN_PID:-none}"
+
+if [ -n "$LISTENER_PID" ] && [ -n "$SERVER_PID" ] && [ "$LISTENER_PID" != "$SERVER_PID" ]; then
+  warn "PID/listener mismatch: 1MCP server.pid=$SERVER_PID but :3050 listener=$LISTENER_PID"
+fi
+if [ -n "$LISTENER_PID" ] && [ -n "$RUN_PID" ] && [ "$LISTENER_PID" != "$RUN_PID" ]; then
+  warn "PID/listener mismatch: bridge one-mcp.pid=$RUN_PID but :3050 listener=$LISTENER_PID"
+fi
+if [ "$MCP_COUNT" -eq 1 ] && [ -n "$LISTENER_PID" ] && [ "${MCP_PIDS[0]}" != "$LISTENER_PID" ]; then
+  warn "PID/listener mismatch: config-scoped 1MCP=${MCP_PIDS[0]} but :3050 listener=$LISTENER_PID"
+fi
+
+LOCAL_READY=false
+if bridge_local_health; then
+  LOCAL_READY=true
+  echo "local health: ready"
+else
+  echo "local health: unreachable"
+fi
+
+if [ "$MCP_COUNT" -eq 1 ] && [ -n "$PUBLIC_URL" ] && ! bridge_1mcp_matches "${MCP_PIDS[0]}" "$PUBLIC_URL"; then
+  warn "1MCP process ${MCP_PIDS[0]} is not running with OAuth/external URL $PUBLIC_URL"
+fi
+
+CLOUDFLARED_UP=false
+WATCHDOG_UP=false
+bridge_pidfile_alive "$BRIDGE_CLOUDFLARED_PID_FILE" 'cloudflared tunnel run' && CLOUDFLARED_UP=true
+bridge_pidfile_alive "$BRIDGE_WATCHDOG_PID_FILE" "$BRIDGE_ROOT/lib/bridge/watchdog.sh" && WATCHDOG_UP=true
+
+echo
+echo "== Cloudflare transport + supervision =="
+echo "cloudflared: $([ "$CLOUDFLARED_UP" = true ] && echo running || echo stopped)"
+echo "watchdog:    $([ "$WATCHDOG_UP" = true ] && echo running || echo stopped)"
+
+PUBLIC_READY=false
+if [ -n "$PUBLIC_URL" ] && curl -sf -m 5 "$PUBLIC_URL/health/ready" -o /dev/null; then
+  PUBLIC_READY=true
+  echo "public health: ok"
+elif [ -n "$PUBLIC_URL" ]; then
+  echo "public health: unreachable"
+else
+  echo "public health: unconfigured"
+fi
+
+if [ "$DESIRED" = "running" ]; then
+  [ "$MCP_COUNT" -eq 1 ] || warn "running bridge expects exactly one 1MCP process, found $MCP_COUNT"
+  [ "$LOCAL_READY" = true ] || warn "running bridge local 1MCP health is unavailable"
+  [ "$CLOUDFLARED_UP" = true ] || warn "running bridge cloudflared PID is missing/stale"
+  [ "$WATCHDOG_UP" = true ] || warn "running bridge watchdog PID is missing/stale"
+  [ "$PUBLIC_READY" = true ] || warn "running bridge public health is unavailable"
+else
+  if [ "$MCP_COUNT" -gt 0 ] || [ "$CLOUDFLARED_UP" = true ] || [ "$WATCHDOG_UP" = true ]; then
+    warn "bridge is disabled but managed processes are still present"
+  fi
+fi
+
+echo
+echo "== overview =="
+echo "  MCP endpoint: ${PUBLIC_URL:+$PUBLIC_URL/mcp}"
+echo "  local origin: http://127.0.0.1:3050/mcp"
+echo "  issues:       $ISSUES"
+
+[ "$ISSUES" -eq 0 ]

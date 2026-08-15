@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+set -euo pipefail
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=../lib/bridge/common.sh
+source "$DIR/lib/bridge/common.sh"
+
+if ! bridge_lock_acquire 30; then
+  echo "another bridge lifecycle operation is already in progress" >&2
+  exit 1
+fi
+trap 'bridge_lock_release' EXIT INT TERM
+
+# Disable first so a watchdog waiting on the lifecycle lock exits instead of
+# resurrecting a component while shutdown is in progress.
+bridge_disable
+bridge_stop_watchdog
+bridge_stop_cloudflared
+bridge_stop_1mcp
+rm -f "$BRIDGE_TUNNEL_URL_FILE"
+
+bridge_lock_release
+trap - EXIT INT TERM
+
+echo "WebHarness stopped"

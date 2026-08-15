@@ -1,0 +1,21 @@
+{
+  "$schema": "https://docs.1mcp.app/schemas/v1.0.0/mcp-config.json",
+  "version": "1.0.0",
+  "mcpServers": {
+    "dev": {
+      "command": "node",
+      "args": [
+        "__REPO_ROOT__/providers/pi-dev/server.mjs"
+      ],
+      "env": {
+        "MCP_DEV_SHELL_MODE": "__SHELL_MODE__",
+        "MCP_DEV_WORKSPACE_ROOT": "__WORKSPACE_ROOT__",
+        "MCP_DEV_STATE_DIR": "__DEV_STATE_DIR__",
+        "MCP_DEV_MAX_OUTPUT_BYTES": "__DEV_MAX_OUTPUT_BYTES__"
+      },
+      "tags": [
+        "dev"
+      ]
+    }
+  }
+}

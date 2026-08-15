@@ -1,0 +1,8 @@
+.env
+run/
+config/logs/
+config/sessions/
+node_modules/
+**/node_modules/
+__pycache__/
+*.pyc

@@ -1,0 +1,16 @@
+{
+  "name": "webharness-pi-dev",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "engines": { "node": ">=22.19.0" },
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "start": "node server.mjs"
+  },
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "0.84.1",
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "zod": "4.4.3"
+  }
+}
