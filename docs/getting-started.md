@@ -22,6 +22,45 @@ MCP_TUNNEL_NAME=
 
 For `personal`, `MCP_PERSONAL_DEFAULT_CWD` is optional; when omitted, WebHarness uses the WSL user's home directory.
 
+### Provision the Cloudflare transport used by the reference deployment
+
+The maintained workstation uses a locally-managed Cloudflare Tunnel. WebHarness does not create the Cloudflare account, tunnel, DNS record, or Cloudflare authentication files; those remain operator-owned state outside the repository.
+
+Create the tunnel and DNS route with `cloudflared`:
+
+```bash
+cloudflared tunnel login
+cloudflared tunnel create webharness
+cloudflared tunnel route dns webharness mcp.example.com
+```
+
+Configure the tunnel in the normal `~/.cloudflared/config.yml`. A minimal equivalent of the WebHarness-relevant part of the maintained setup is:
+
+```yaml
+tunnel: <TUNNEL-UUID>
+credentials-file: /home/<user>/.cloudflared/<TUNNEL-UUID>.json
+
+ingress:
+  - hostname: mcp.example.com
+    service: http://127.0.0.1:3050
+  - service: http_status:404
+```
+
+The maintained machine may use the same Cloudflare configuration for other ingress rules; those are unrelated to WebHarness. WebHarness only depends on the MCP hostname reaching the loopback 1MCP origin.
+
+The maintained workstation deliberately leaves this value empty:
+
+```text
+MCP_PUBLIC_URL=https://mcp.example.com
+MCP_TUNNEL_NAME=
+```
+
+With `MCP_TUNNEL_NAME` empty, WebHarness starts `cloudflared tunnel run` with no tunnel argument and `cloudflared` reads the tunnel identity from its default local configuration. Setting `MCP_TUNNEL_NAME=webharness` instead makes WebHarness start `cloudflared tunnel run webharness`. That named selector exists in the implementation, but it is not the path used by the maintained workstation.
+
+A separate future connector path is OpenAI Secure MCP Tunnel. ChatGPT developer-mode apps can choose **Tunnel** as the connection type; OpenAI then routes MCP requests through an OpenAI-hosted tunnel endpoint to `tunnel-client` running inside the private network. For this workstation, the intended equivalent topology would be ChatGPT app -> OpenAI Secure MCP Tunnel -> `tunnel-client` in WSL -> the private 1MCP HTTP endpoint on loopback. `tunnel-client` initiates outbound HTTPS to OpenAI, so the MCP server itself does not need public ingress.
+
+WebHarness does not currently install, configure, supervise, or health-check `tunnel-client`, and it does not render an OpenAI `tunnel_id`, runtime API key, or Platform-organization/ChatGPT-workspace association. The current 1MCP OAuth/public-origin behavior has also not been qualified through this transport. Treat Secure MCP Tunnel as a compatible alternative architecture for the ChatGPT connector path, not as implemented WebHarness support.
+
 ## 2. Diagnose before setup
 
 Run the non-mutating doctor first:

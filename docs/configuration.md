@@ -27,6 +27,12 @@ MCP_OWNER_CONTEXT_FILE=
 MCP_OWNER_ENV_FILE=
 ```
 
+`MCP_PUBLIC_URL` is the externally reachable HTTPS MCP origin. In the maintained reference deployment, Cloudflare routes that hostname to the loopback 1MCP listener at `127.0.0.1:3050`.
+
+`MCP_TUNNEL_NAME` controls only the locally-managed Cloudflare startup command. Empty/unset, as on the maintained workstation, runs `cloudflared tunnel run` and relies on the operator-owned default `~/.cloudflared/config.yml` for tunnel identity. A non-empty value runs `cloudflared tunnel run <name>`. That named selector is implemented but is not the maintained workstation path.
+
+OpenAI Secure MCP Tunnel is a separate possible transport for a ChatGPT developer-mode app: an OpenAI-hosted tunnel endpoint talks to `tunnel-client` inside the private network, which can forward to the loopback MCP server without public ingress. WebHarness does not currently own that client, its tunnel identity/runtime credential, its service lifecycle, or the required OpenAI organization/workspace association. See [Getting Started](getting-started.md#provision-the-cloudflare-transport-used-by-the-reference-deployment).
+
 `MCP_PERSONAL_DEFAULT_CWD` is optional and applies only to the Personal Workstation (`personal`) profile. Leave it empty/unset to use the actual WSL user's `$HOME`. `MCP_TERMINAL_FRONTEND` is also personal-only: unset/empty defaults to `kitty`, and the accepted values are `kitty` and `windows-terminal`. The renderer validates this selector only for `personal`, so a stray value does not break `restricted` or `trusted-dev`.
 
 `MCP_OWNER_CONTEXT_FILE` and `MCP_OWNER_ENV_FILE` are optional personal-profile references to owner-controlled files outside the repository. Both paths must be absolute when set. `pi-dev` requires the context file to be a readable, current-user-owned regular file no larger than 32 KiB and publishes non-empty content as MCP initialization instructions. The renderer requires the env file to be a readable, current-user-owned regular file no larger than 64 KiB and permits only `GALLIUM_DRIVER`, `MOZ_ENABLE_WAYLAND`, `AGENT_BROWSER_PROFILE`, and `AGENT_BROWSER_EXECUTABLE_PATH`. The Agent Browser settings are Linux `browser-fast`-only; the executable path must be absolute and executable. Generated `owner.env` still contains only the validated Dev/Terminal GUI variables, so Agent Browser settings are not imported into systemd service environments. Do not put trust policy or secrets in `.env` or the owner GUI env.
