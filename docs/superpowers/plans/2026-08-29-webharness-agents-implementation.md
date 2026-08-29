@@ -376,3 +376,129 @@ The Agent Broker is the authority. The extension is an adapter. 1MCP is the prov
 ## Rollback Boundary
 
 Agents is additive. Rollback removes/disables the `agents` outer provider/tag, stops/disables `wsl-agent-agents.service`, removes the Agents-specific 1MCP compatibility hook during a pinned-runtime reinstall, and disables the unpacked WebHarness Agents extension. Dev, Code, Terminal, Local, browser profiles, tmux sessions, OAuth state for existing domains, and repository state remain untouched.
+
+## Development Pause Handoff
+
+We’ve stopped development for now because ChatGPT began returning:
+
+> “You’re making requests too quickly. We’ve temporarily limited access to your conversations to protect your data.”
+
+We’re intentionally pausing rather than continuing to generate traffic and potentially muddy the experiment.
+
+### Where we stopped
+
+The original worker-activation failure was substantially improved.
+
+**Fixed and verified:**
+
+- Patched `main` in `/home/hamza/repo/webharness`.
+- Restored the working Chat On Steroids behavior where a missing `Origin` on extension localhost requests is acceptable.
+- Fixed the proven stale-401 bearer race.
+- Focused tests pass.
+- Deployed the actual `main` extension into the Linux Agents Chrome profile.
+- Verified installed `background.js` and `content.js` match `main`.
+- Started the broker from the actual `main` checkout.
+- The pathological `/pair` churn disappeared.
+- Prime binding works.
+- Worker spawn works.
+- `/activity` works.
+- `open_agent_command` works.
+- A worker ChatGPT tab is opened.
+- `/commands/redeem` works.
+
+That is significant progress. Previously workers remained:
+
+```text
+staged
+owner: null
+conversationId: null
+```
+
+The current worker progressed to:
+
+```text
+worker-1
+command: 0IsDCcp9RYHkoayDcfqZzg
+state: invited
+owner: 142iq0b1cswlto
+ack: null
+conversationId: null
+```
+
+The browser **did redeem and take ownership of the worker command**.
+
+### Current remaining issue
+
+The failure boundary has moved later:
+
+```text
+spawn                         ✓
+→ worker staged               ✓
+→ /activity                   ✓
+→ open_agent_command          ✓
+→ worker tab created          ✓
+→ /commands/redeem            ✓
+→ command owner assigned      ✓
+→ bootstrap inserted/sent     ← CURRENT AREA
+→ command ACK
+→ ChatGPT /c/<conversationId>
+→ worker active
+```
+
+Chrome showed the worker page:
+
+```text
+https://chatgpt.com/?clf=0IsDCcp9RYHkoayDcfqZzg#clf=0IsDCcp9RYHkoayDcfqZzg
+```
+
+but it never became a worker `/c/<conversationId>`.
+
+Also important: there was **no persisted ACK attempt**, so the remaining investigation should start specifically inside:
+
+```text
+content.js
+deliverCommand()
+```
+
+after successful `/commands/redeem` and before the first `ack()` call.
+
+The most relevant sub-path is:
+
+```text
+redeem succeeds
+→ waitForComposer()
+→ insertPrompt()
+→ CLF_DOM.send()
+→ wait for conversation ID
+→ ack()
+```
+
+We should **not reopen the auth/origin investigation** unless new evidence points back there. That part is now working live.
+
+### Preserved state
+
+The previous broker state was backed up as:
+
+```text
+~/.local/state/mcp-dev-bridge/agents/state.pre-main-test.json
+```
+
+The current `main` working tree contains the fixes and focused regression tests. No commit was made during this session.
+
+### When we continue
+
+Resume from one question only:
+
+**Why does the redeemed fresh worker page fail to reach its first ACK?**
+
+Do not spawn lots of workers or add broad diagnostics initially. Instrument or test the smallest `deliverCommand()` segment needed to identify whether the stop is:
+
+```text
+composer readiness
+insertPrompt
+CLF_DOM.send
+conversation-ID discovery
+or ACK dispatch
+```
+
+Development is paused at that point because of the ChatGPT request-rate limitation, not because the investigation is exhausted.
