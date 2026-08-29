@@ -30,10 +30,13 @@ Full reference-workstation authority.
 - Terminal can create and control persistent tmux-backed PTYs.
 - Durable waits can observe local process/port/file/HTTP/systemd and WebHarness Terminal state.
 - Local Browser access can control the dedicated persistent Windows MCP Chrome profile or the separate managed WSLg Chrome profile after explicit `tag:local` authorization; everyday Windows Chrome remains outside MCP control.
+- Agents can create and message parallel ChatGPT worker conversations after explicit `tag:agents` authorization and a paired WebHarness Agents extension.
 
-This profile is intentionally powerful. Treat it like giving a coding agent an interactive shell as your WSL user plus, when `tag:local` is granted, access to the local capability domain, which currently includes authenticated browser control.
+This profile is intentionally powerful. Treat it like giving a coding agent an interactive shell as your WSL user plus any separately granted capability domains. `tag:local` includes authenticated browser control; `tag:agents` includes cross-conversation ChatGPT worker orchestration.
 
-The outer `local` provider is the `tag:local` authorization boundary. Its generic `tool_call(server, tool, arguments)` means every downstream MCP admitted to that broker instance shares that authority. The `browser-devtools` and `browser-fast` logical servers intentionally share this local browser trust domain. A genuinely different trust domain needs a separate broker/scope or direct exposure.
+The outer `local` provider is the `tag:local` authorization boundary. Its generic `tool_call(server, tool, arguments)` means every downstream MCP admitted to that broker instance shares that authority. The `browser-devtools` and `browser-fast` logical servers intentionally share this local browser trust domain.
+
+Agents is intentionally separate under `tag:agents`. The MCP provider receives caller identity only from ChatGPT's native `openai/session` metadata. The browser extension never receives that session value or an Agents bearer from the model; it binds the native session to the exact ChatGPT conversation by consuming a one-time marker from the rendered Agents result. The broker rejects conflicting bindings and keeps its pairing token in extension storage, not in prompts or MCP arguments. Existing OAuth grants must be re-authorized before a client gains `tag:agents`.
 
 The DevTools `browser-devtools` facade intentionally does not advertise MCP filesystem roots to its internal Chrome DevTools MCP clients. Upstream path-bearing browser tools therefore remain restricted to the relevant OS temp directory. `browser-fast` has two narrow filesystem reads owned by the facade. Observation may read Markdown plus platform `match.json` beneath `~/.config/mcp-dev-bridge/browser-memory/` and return bounded content as strategy/policy metadata. Upload may read `~/.config/mcp-dev-bridge/browser-artifacts.json`, resolve one explicitly named approved file, and hand that file path to Agent Browser. The model never supplies a raw path, and an unlisted artifact is rejected before browser action dispatch. The artifact manifest is an upload allowlist, so it should contain only files the operator is willing to send to websites; it is not a destination allowlist and does not remove the need to verify the current form/site before uploading.
 
@@ -86,11 +89,11 @@ Human keystrokes are never copied into a separate broker-side input log. Sudo/pa
 
 ## Public exposure
 
-1MCP listens on loopback `:3050`. Cloudflare exposes HTTPS and OAuth remains required for the public MCP origin. Providers and browser debugging endpoints remain local implementation details; the reference deployment does not intentionally expose raw provider stdio, the Local inner 1MCP, Chrome DevTools endpoints, or Terminal broker sockets beyond the host boundaries that own them.
+1MCP listens on loopback `:3050`. Cloudflare exposes HTTPS and OAuth remains required for the public MCP origin. Providers and browser debugging endpoints remain local implementation details; the reference deployment does not intentionally expose raw provider stdio, the Local inner 1MCP, Chrome DevTools endpoints, Terminal broker sockets, or the Agent Broker Unix socket beyond the host boundaries that own them. The Agent Broker's browser bridge listens only on fixed loopback ports 8765..8769 and accepts the paired WebHarness Agents extension protocol.
 
 Pinned 1MCP 0.36.0 permits only loopback OAuth callback origins in its consent-page CSP. The reference installer applies a fail-closed compatibility patch that also permits the exact registered HTTPS callback origin; it does not permit arbitrary HTTPS form destinations. Requalify this patch when changing the pinned 1MCP version.
 
-Local capability authority is separate from Dev/Code/Terminal: `tag:local` exposes the three-tool Local broker, whose inner 1MCP contains `browser-devtools` and `browser-fast`. Both can reach resource-local browser state only after explicit client authorization at that outer domain.
+Local capability authority is separate from Dev/Code/Terminal: `tag:local` exposes the three-tool Local broker, whose inner 1MCP contains `browser-devtools` and `browser-fast`. Both can reach resource-local browser state only after explicit client authorization at that outer domain. Agents is another independent authority boundary under `tag:agents`; it is never routed through Local.
 
 ## Sensitive state
 
@@ -101,6 +104,7 @@ Keep these outside Git:
 - OAuth/session state;
 - logs and PID/runtime files;
 - Terminal state;
+- Agent Broker swarm state and extension pairing state;
 - credentials and tunnel secrets.
 
 Historical engineering evidence under `docs/history/` is excluded from the public reference distribution because it can contain superseded or machine-specific context.

@@ -11,13 +11,15 @@ Terminal  terminal_open terminal_read terminal_send terminal_resize terminal_lis
 Local     tool_list tool_schema tool_call
             |-- browser-fast      observe/execute interaction; Windows default, WSLg on request
             `-- browser-devtools  full Chrome DevTools diagnostics; Windows default, WSLg on request
+Agents    agents {spawn|message|status|finish}
 ```
 
-Think in four model-facing domains:
+Think in five model-facing domains:
 
 - **Dev** handles focused text/file work, bounded execution, durable waits, and explicit Windows-host sleep.
 - **Code** provides rooted indexed repository intelligence without exposing raw CodeDB mechanics; first use may create or update heavyweight persistent index state.
 - **Terminal** owns durable PTY/process lifetime and human/model terminal ownership.
+- **Agents** owns parallel ChatGPT worker coordination through one `agents` tool and a separate `tag:agents` grant. The Agent Broker owns swarm state; the WebHarness Agents extension binds native ChatGPT MCP sessions to exact browser conversations. Agents does not choose repositories, worktrees, branches, or cwd for workers.
 - **Local/Browser** exposes only three stable broker tools. Use logical `server="browser-fast"` for routine interaction: `observe` once, consume any returned `memory` that applies to the current host, then pass the returned `active_tab` to `execute` with the mechanical sequence. Policy memory is local operator policy; exact-site memory is more specific than reusable platform memory; live browser state wins when strategy memory is stale. Unknown/custom sites need no predefined ATS entry and continue through the generic observe/execute flow. `execute.tab` is required and stale/unavailable tab context fails before action dispatch. A click follows exactly one newly opened target before later actions; multiple new targets stop the sequence without guessing and require another observation. Upload uses an observed file-input ref plus a logical artifact key from `~/.config/mcp-dev-bridge/browser-artifacts.json`; never substitute an arbitrary filesystem path. Use logical `server="browser-devtools"` for DevTools diagnostics and load only the specific DevTools schema needed. Omit `arguments.browser_target` for the dedicated persistent Windows MCP Chrome profile; use `arguments.browser_target="linux"` for WSLg. The Windows MCP profile is separate from everyday Chrome and keeps its own persistent sign-ins; Windows MCP and Linux browser state remain separate.
 
 ## Learning exact-site browser memory
@@ -85,13 +87,14 @@ For a complete install with automatic startup in later WSL sessions:
 webharness setup --profile personal --enable-startup
 ```
 
-`--enable-startup` is explicit consent to install the user-systemd units, enable user linger, enable the services, and start them now. After that, the services start automatically whenever this WSL user's systemd manager starts. The bootstrap does **not** configure Windows to launch WSL.
+`--enable-startup` is explicit consent to install the user-systemd units, enable user linger, enable the services, and start them now. This includes `wsl-agent-agents.service`. After that, the services start automatically whenever this WSL user's systemd manager starts. The bootstrap does **not** configure Windows to launch WSL or silently load a Chrome extension.
 
-The same command also qualifies the Personal Workstation CLI toolbox, installs/verifies the pinned 1MCP runtime through the repository's shared runtime installer, installs all six pinned personal in-repo provider dependency trees, installs/verifies the pinned CodeDB binary, prepares Clearcote's Ubuntu/WSL runtime dependencies and pinned browser build, renders the outer Personal Workstation composition plus the Local inner browser composition, and installs:
+The same command also qualifies the Personal Workstation CLI toolbox, installs/verifies the pinned 1MCP runtime through the repository's shared runtime installer, installs all seven pinned personal in-repo provider dependency trees, installs/verifies the pinned CodeDB binary, prepares Clearcote's Ubuntu/WSL runtime dependencies and pinned browser build, renders the outer Personal Workstation composition plus the Local inner browser composition, and installs:
 
 ```text
-~/.local/bin/webharness -> <this checkout>/bin/webharness
-~/.local/bin/wsl-term   -> <this checkout>/bin/wsl-term
+~/.local/bin/webharness                         -> <this checkout>/bin/webharness
+~/.local/bin/wsl-term                           -> <this checkout>/bin/wsl-term
+~/.local/share/webharness/agents-extension/     <- <this checkout>/webharness-agents-extension/
 ```
 
 Omit `--enable-startup` when you only want dependencies/configuration plus the user-local commands and do not want persistent startup state changed:
@@ -104,12 +107,14 @@ The direct renderer, toolbox setup, unit installers, and `bin/start`/`bin/stop` 
 
 ### New ChatGPT client
 
-The WSL side is persistent after the explicit startup install, but a new ChatGPT environment still owns two client-side pieces that the repository cannot silently mutate:
+The WSL side is persistent after the explicit startup install, but a new ChatGPT environment still owns client-side state that the repository cannot silently mutate:
 
 1. connect ChatGPT to the configured public MCP endpoint and complete OAuth;
-2. install any desired client-side Skills separately, then refresh/reopen the MCP connection when the outer model-facing schema changes. Ordinary Local downstream tool additions/removals are discovered through Local and do not by themselves change the outer three-tool broker schema.
+2. when enabling Agents, explicitly authorize the separate `tag:agents` scope and refresh the model-visible tool catalog;
+3. load `~/.local/share/webharness/agents-extension` as an unpacked extension in the dedicated Agents Chrome profile and sign into ChatGPT there;
+4. install any desired client-side Skills separately. Ordinary Local downstream tool additions/removals are discovered through Local and do not by themselves change the outer three-tool broker schema.
 
-These are client-side actions, not recurring WSL service-start commands.
+In a fresh ChatGPT Project chat, explicitly attaching `@wsl-web-harness` is the reliable way to hydrate the connector when ChatGPT has not loaded it automatically. The first Agents call may return `binding_required`; the extension consumes the one-time marker and the next call resolves the role. These are client/browser actions, not recurring WSL service-start commands.
 
 ### AI clients without native MCP support
 

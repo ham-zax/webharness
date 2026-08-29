@@ -79,13 +79,15 @@ Full Personal Workstation reference deployment:
 ./bin/webharness setup --profile personal
 ```
 
-This installs/qualifies the reference toolbox and provider dependencies, renders the Personal Workstation configuration, and installs `webharness` and `wsl-term` in `~/.local/bin`. It does **not** enable linger or persistent user services unless you explicitly add:
+This installs/qualifies the reference toolbox and provider dependencies, renders the Personal Workstation configuration, installs `webharness` and `wsl-term` in `~/.local/bin`, and copies the WebHarness Agents unpacked extension to `~/.local/share/webharness/agents-extension`. It does **not** enable linger or persistent user services unless you explicitly add:
 
 ```bash
 ./bin/webharness setup --profile personal --enable-startup
 ```
 
-`--enable-startup` is the only setup path that enables persistent user-systemd startup. The bootstrap does not configure Windows to launch WSL.
+`--enable-startup` is the only setup path that enables persistent user-systemd startup. It includes the `wsl-agent-agents.service` broker. The bootstrap does not configure Windows to launch WSL or silently load a Chrome extension.
+
+For Agents, open `chrome://extensions` in the dedicated Agents Chrome profile, enable Developer mode, and **Load unpacked** from `~/.local/share/webharness/agents-extension`. Setup updates that stable directory in place on later runs; restart/reload that dedicated Chrome profile after extension updates.
 
 Smaller authority examples use the same operator command:
 
@@ -106,9 +108,11 @@ webharness status
 webharness stop
 ```
 
-A healthy running deployment reports local 1MCP health, Cloudflare transport, watchdog health, public health, and `issues: 0`.
+A healthy running deployment reports local 1MCP health, Cloudflare transport, watchdog health, public health, `issues: 0`, Terminal broker state, and Agent Broker/extension state.
 
-When the model-facing provider composition changes, refresh the ChatGPT MCP connection/catalog so the client sees the current schemas.
+Agents is a separate OAuth authority domain (`tag:agents`). When first enabling it, reconnect/re-authorize the ChatGPT WebHarness connector so the user explicitly grants that domain, then refresh the client tool catalog. In a fresh ChatGPT Project chat, attach `@wsl-web-harness` when the connector is not already hydrated; the first Agents call may return a one-time binding-required handshake that the extension consumes automatically.
+
+When any model-facing provider composition changes, refresh the ChatGPT MCP connection/catalog so the client sees the current schemas.
 
 ## 5. Generated state
 

@@ -8,7 +8,7 @@ webharness status
 webharness stop
 ```
 
-Healthy status should report one config-scoped 1MCP process, local health ready, cloudflared running, watchdog running, public health OK, bounded retained-diagnostic storage, and `issues: 0`. It prints both the rendered live source root and, when different, the checkout from which diagnostics are being run; live watchdog ownership is matched against the rendered root so inspecting from a candidate worktree does not create a false "watchdog stopped" result. In personal mode it also reports the Terminal broker socket and, when the user-systemd bus is directly reachable, `ActiveState` plus `NRestarts` for the broker unit. A missing user bus is reported separately from the broker socket so user-systemd observability ambiguity is not mistaken for broker failure.
+Healthy status should report one config-scoped 1MCP process, local health ready, cloudflared running, watchdog running, public health OK, bounded retained-diagnostic storage, and `issues: 0`. It prints both the rendered live source root and, when different, the checkout from which diagnostics are being run. In personal mode it also reports Terminal broker state and Agent Broker state: socket/unit, loopback browser-bridge port, pairing, extension version/protocol/heartbeat age, active run, worker counts, pending commands, and the bounded last bridge error. A missing user bus is reported separately from broker sockets so user-systemd observability ambiguity is not mistaken for broker failure.
 
 ## Personal Workstation installed lifecycle
 
@@ -23,10 +23,11 @@ The flag is the explicit startup-consent boundary. The bootstrap renders the per
 ```text
 wsl-agent-tmux.service
 wsl-agent-terminal-broker.service
+wsl-agent-agents.service
 mcp-dev-bridge.service
 ```
 
-It also installs a personal `mcp-dev-bridge.service.d/personal.conf` drop-in with `Wants=`/`After=` ordering on the broker. That is startup ordering only: the bridge does not own or stop the tmux lifetime service. Once installed, the services start when this WSL user's systemd manager starts in later WSL sessions. Nothing here configures Windows to launch WSL.
+It also installs a personal `mcp-dev-bridge.service.d/personal.conf` drop-in with `Wants=`/`After=` ordering on the Terminal and Agent brokers. That is startup ordering only: the bridge does not own or stop tmux. Setup also refreshes the stable unpacked extension directory at `~/.local/share/webharness/agents-extension`; Chrome extension loading/reloading remains an explicit browser-side action. Once installed, the services start when this WSL user's systemd manager starts in later WSL sessions. Nothing here configures Windows to launch WSL.
 
 Omitting `--enable-startup` prepares dependencies/configuration and the user-local `wsl-term` command but deliberately leaves user-systemd and linger untouched.
 
@@ -63,6 +64,18 @@ systemctl --user start wsl-agent-tmux.service wsl-agent-terminal-broker.service
 ```
 
 Do not restart tmux merely to deploy broker/provider or frontend-launch code. tmux owns the PTY lifetime. Retained-dead panes remain available for reads and exit status, but their transcript `pipe-pane` is finalized at pane death so the per-pane writer receives EOF and exits; broker reconciliation applies the same finalization to historical dead panes that still have a pipe attached.
+
+## Personal Workstation Agent Broker
+
+The Agent Broker is independent of Terminal and Browser Fast. Lower-level repair uses:
+
+```bash
+scripts/install-agent-broker-user.sh
+scripts/install-agent-extension.sh
+systemctl --user restart wsl-agent-agents.service
+```
+
+The broker owns the Unix socket `${XDG_RUNTIME_DIR:-/run/user/$UID}/wsl-agent-agents.sock`, durable swarm state beneath the bridge state root, and a fixed-loopback browser bridge chosen from ports 8765..8769. The dedicated WebHarness Agents Chrome profile loads `~/.local/share/webharness/agents-extension`. Restart/reload only that dedicated profile after extension updates; do not change Browser Fast's Linux selector or reuse its managed browser profiles for Agents.
 
 ## Personal Workstation Terminal frontend
 
@@ -133,22 +146,24 @@ If the source update changed generated provider/application policy (including th
 For a personal broker-code update:
 
 1. keep `wsl-agent-tmux.service` running;
-2. rerender/install the Terminal units if their source root changed;
-3. restart `wsl-agent-terminal-broker.service` only;
-4. restart/reconcile the bridge if provider composition or source paths changed;
-5. verify tmux PID/lifetime and bridge health.
+2. rerender/install the Terminal or Agent Broker unit whose source root changed;
+3. restart only the affected broker service;
+4. refresh `~/.local/share/webharness/agents-extension` and reload the dedicated Agents Chrome only when extension code changed;
+5. restart/reconcile the bridge if provider composition or source paths changed;
+6. verify tmux lifetime, broker sockets, extension heartbeat, and bridge health.
 
 ## Safe source cutover
 
 Rendered configuration contains absolute provider source paths. Before deleting an old checkout/worktree:
 
-1. verify the new source tree is clean and tested;
+1. verify the new source tree is clean and qualified;
 2. render the same profile using the new `--repo-root`;
-3. rerender the Terminal broker units if personal mode is active;
-4. restart the broker without restarting tmux;
-5. restart the bridge from a control process that is not inside the 1MCP process tree being replaced;
-6. verify generated provider paths, `issues: 0`, local/public health, and a real action call;
-7. only then remove the old worktree.
+3. rerender the Terminal and Agent Broker units if personal mode is active;
+4. refresh the stable Agents extension directory if that source changed;
+5. restart only the affected brokers without restarting tmux;
+6. restart the bridge from a control process that is not inside the 1MCP process tree being replaced;
+7. verify generated provider paths, `issues: 0`, local/public health, Agent Broker/extension health, and a real action call;
+8. only then remove the old worktree.
 
 For an installed personal checkout, rerunning `scripts/bootstrap-personal.sh --enable-startup` from the new canonical source root performs the normal render/unit/user-bin convergence before the old checkout is removed.
 
@@ -157,6 +172,8 @@ A tmux-owned Terminal shell is suitable as an external control process because t
 ## OAuth continuity
 
 1MCP's `--config-dir` is also its writable OAuth/session home. When changing the state root, preserve inbound OAuth continuity with `scripts/migrate-legacy-oauth-state.sh` before replacing the live service. Do not treat Streamable HTTP transport sessions as credential state.
+
+Agents uses its own `tag:agents` authorization domain. Adding or enabling it requires an explicit ChatGPT connector re-authorization so existing Dev/Code/Terminal/Local grants do not silently widen. After re-authorization, refresh the ChatGPT tool catalog so the `agents` provider schema is loaded.
 
 ## 1MCP 0.36.0 compatibility
 

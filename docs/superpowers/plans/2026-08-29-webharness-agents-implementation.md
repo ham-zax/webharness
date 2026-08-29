@@ -2,7 +2,7 @@
 
 **Goal:** After WebHarness stabilization is complete and the public `webharness` checkout is the canonical live source, add first-class parallel ChatGPT workers through one small `agents` MCP surface, a persistent WebHarness Agent Broker daemon, and the vendored ChatGPT browser extension as the first worker backend.
 
-**Architecture:** Keep Dev, Code, Terminal, Local, Browser, and Browser DevTools unchanged. Add `Agents` as a separate outer MCP authority domain. The MCP provider is intentionally thin: the persistent Agent Broker owns prime/worker identity, worker lifecycle, queues, browser commands, and durable agent state. The vendored Chrome extension under `third_party/chat-on-steroids-extension/` is the only ChatGPT-side adapter: it proves conversation/request identity from ChatGPT page evidence, opens/revives worker chats, sends worker prompts, and reports turn lifecycle back to the broker. A narrow pinned-1MCP compatibility hook carries the inbound ChatGPT request ID to the Agents provider and appends queued agent messages to ordinary WebHarness tool results.
+**Architecture:** Keep Dev, Code, Terminal, Local, Browser, and Browser DevTools unchanged. Add `Agents` as a separate outer MCP authority domain. The MCP provider is intentionally thin: the persistent Agent Broker owns prime/worker identity, worker lifecycle, queues, browser commands, and durable agent state. The WebHarness-owned Chrome extension under `webharness-agents-extension/` is the ChatGPT-side adapter: it proves conversation identity from ChatGPT page evidence, opens/revives worker chats, sends worker prompts, and reports turn lifecycle back to the broker. MCP caller identity comes from ChatGPT's native `openai/session` metadata; the extension binds that session to the exact browser conversation through the one-time Agents result marker.
 
 **Tech Stack:** Node.js 24+, MCP SDK, pinned 1MCP 0.36.0 compatibility patching, systemd user services, Unix domain sockets, loopback HTTP bridge, Chrome Manifest V3 extension, existing Cloudflare/OAuth transport, existing WebHarness lifecycle/rendering.
 
@@ -11,7 +11,7 @@
 - This plan starts only after `2026-08-29-webharness-product-stabilization.md` is complete, the canonical `webharness` public checkout is the development source, and the maintained workstation is running from that checkout.
 - Do not add a Workspace object, `workspaceId`, worktree management, project authority, project lifecycle, or automatic repository isolation.
 - Agents are a new first-class outer domain. Do not put worker orchestration behind Local, Browser, Browser DevTools, Dev, Code, or Terminal.
-- The authoritative ChatGPT browser adapter is the vendored snapshot at `third_party/chat-on-steroids-extension/`. Do not fetch or depend on upstream source during implementation. Modify this vendored copy only; refresh it later only as an explicit vendor update with a new pinned commit recorded in `UPSTREAM.md`.
+- The authoritative ChatGPT browser adapter is the WebHarness-owned adaptation at `webharness-agents-extension/`. Its upstream provenance remains pinned in `UPSTREAM.md`; do not silently refresh from upstream.
 - Do not port the vendored project's desktop app, session recorder, goal loop, Compact & Resume system, workspace subsystem, or general chat-history product. Reuse only extension mechanisms needed for ChatGPT conversation identity, request correlation, worker tab creation/revival, command acknowledgement, and worker turn observation.
 - ChatGPT worker conversations are the only backend in this implementation. Do not introduce Codex/API/provider abstractions until a second real backend exists.
 - Do not make the model carry a worker/prime bearer token. Agent identity is the exact ChatGPT conversation proven by browser request-id evidence.
@@ -200,17 +200,17 @@ It does **not** persist a general ChatGPT transcript or project/workspace model.
 ### Task 4: Adapt the vendored extension into the WebHarness ChatGPT worker adapter
 
 **Files:**
-- Modify: `third_party/chat-on-steroids-extension/manifest.json`
-- Modify: `third_party/chat-on-steroids-extension/background.js`
-- Modify: `third_party/chat-on-steroids-extension/content.js`
-- Modify: `third_party/chat-on-steroids-extension/popup.html`
-- Modify: `third_party/chat-on-steroids-extension/popup.js`
-- Modify: `third_party/chat-on-steroids-extension/popup.css`
-- Preserve: `third_party/chat-on-steroids-extension/chatgpt-dom.js`
-- Preserve: `third_party/chat-on-steroids-extension/fiber.js`
-- Preserve as an unused vendored source file after removing it from the manifest: `third_party/chat-on-steroids-extension/overlay.css`
-- Preserve: `third_party/chat-on-steroids-extension/LICENSE`
-- Update: `third_party/chat-on-steroids-extension/UPSTREAM.md`
+- Modify: `webharness-agents-extension/manifest.json`
+- Modify: `webharness-agents-extension/background.js`
+- Modify: `webharness-agents-extension/content.js`
+- Modify: `webharness-agents-extension/popup.html`
+- Modify: `webharness-agents-extension/popup.js`
+- Modify: `webharness-agents-extension/popup.css`
+- Preserve/adapt: `webharness-agents-extension/chatgpt-dom.js`
+- Preserve/adapt: `webharness-agents-extension/fiber.js`
+- Preserve as unused upstream source after removing it from the manifest: `webharness-agents-extension/overlay.css`
+- Preserve: `webharness-agents-extension/LICENSE`
+- Update: `webharness-agents-extension/UPSTREAM.md`
 
 **Interfaces:**
 - Consumes: Agent Broker browser bridge and ChatGPT page/DOM/request metadata.
@@ -242,8 +242,8 @@ It does **not** persist a general ChatGPT transcript or project/workspace model.
 **Files:**
 - Modify: `providers/agents/broker.mjs`
 - Modify: `providers/agents/server.mjs`
-- Modify: `third_party/chat-on-steroids-extension/background.js`
-- Modify: `third_party/chat-on-steroids-extension/content.js`
+- Modify: `webharness-agents-extension/background.js`
+- Modify: `webharness-agents-extension/content.js`
 - Modify: `docs/security.md`
 - Modify: `docs/architecture.md`
 

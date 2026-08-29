@@ -12,9 +12,10 @@ Code      code_search code_context code_symbol
 Terminal  terminal_open terminal_read terminal_send terminal_resize
           terminal_list terminal_yield terminal_close
 Local     tool_list tool_schema tool_call
+Agents    agents {spawn|message|status|finish}
 ```
 
-The current outer provider IDs are `dev`, `code`, `terminal`, and `local`. `restricted` and `trusted-dev` intentionally expose smaller compositions.
+The current outer provider IDs are `dev`, `code`, `terminal`, `local`, and `agents`. `restricted` and `trusted-dev` intentionally expose smaller compositions. `agents` exists only in the Personal Workstation profile and is authorized separately under `tag:agents`.
 
 Local is one authorization domain. Its three broker tools address downstream MCPs by logical `{server, tool}` identity. The maintained Personal Workstation composes:
 
@@ -50,10 +51,10 @@ Names such as `mcp-dev-bridge.service`, `mcp-dev-bridge` state directories, `%LO
 
 Provider IDs are also not the whole ABI. Tool names, input schemas, result/error behavior, annotations, and authority boundaries together define the model-facing contract.
 
-## Current Agents limitation
+## Agents compatibility boundary
 
-WebHarness controls tools and local runtimes through MCP, but it does not own ChatGPT model scheduling. It therefore cannot currently create first-class parallel ChatGPT workers from inside the MCP runtime.
+Agents is additive and does not change Dev, Code, Terminal, Local, Browser, or Browser DevTools. Its model-facing contract is one `agents` tool with the `spawn`, `message`, `status`, and `finish` actions. Caller identity is not an argument: the provider accepts only ChatGPT's native `openai/session` metadata and the Agent Broker maps that session to an exact browser conversation through the paired WebHarness Agents extension.
 
-Agents are the next planned additive capability, not part of the stabilized reference runtime. The intended model-facing surface is one small `agents` capability with `spawn`, `message`, `status`, and `finish` operations backed by an Agent Broker. The first backend may adapt ChatGPT worker conversations; later API or Codex runtimes should remain replaceable beneath the same broker contract.
+The extension protocol is independently versioned. A broker/extension protocol or extension-version mismatch fails visibly rather than silently accepting incompatible browser evidence. The unpacked extension's source is `webharness-agents-extension/`; upstream provenance is retained inside that directory.
 
-This limitation does not require redesigning Dev, Code, Terminal, Local, Browser, or Browser DevTools. Workspace objects, worktree management, and project-authority abstractions are explicitly outside the current product direction.
+WebHarness still does not own ChatGPT model scheduling. It can open worker conversations and deliver worker turns, but it cannot synthesize a new prime model turn while the prime is idle. Workspace objects, automatic worktree management, and project authority remain outside the contract.

@@ -48,7 +48,7 @@ bash tests/lifecycle.sh
 (cd providers/local-tools && npm test)
 node scripts/check-doc-links.mjs
 bash -n bin/* lib/bridge/*.sh scripts/*.sh tests/*.sh
-node --check scripts/*.mjs providers/pi-dev/*.mjs providers/terminal/*.mjs providers/code-router/*.mjs providers/browser/*.mjs providers/browser-fast/*.mjs providers/local-tools/*.mjs
+node --check scripts/*.mjs providers/pi-dev/*.mjs providers/terminal/*.mjs providers/agents/*.mjs providers/code-router/*.mjs providers/browser/*.mjs providers/browser-fast/*.mjs providers/local-tools/*.mjs webharness-agents-extension/*.js
 git diff --check
 ```
 

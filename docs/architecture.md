@@ -15,6 +15,9 @@ Cloudflare Tunnel
        -> inner 1MCP
             |-- browser-fast
             `-- browser-devtools
+  -> Agents     (Personal Workstation, tag:agents)
+       -> Agent Broker -> loopback browser bridge -> WebHarness Agents extension
+                                                   -> ChatGPT worker conversations
 Linux / WSL host
 ```
 
@@ -84,6 +87,9 @@ bridge persistent state  ${XDG_STATE_HOME:-$HOME/.local/state}/mcp-dev-bridge
 bridge runtime state     ${XDG_RUNTIME_DIR:-/run/user/$UID}/mcp-dev-bridge
 Terminal state           ${XDG_STATE_HOME:-$HOME/.local/state}/wsl-agent-terminal
 Terminal broker socket   ${XDG_RUNTIME_DIR:-/run/user/$UID}/wsl-agent-terminal.sock
+Agent Broker state       ${XDG_STATE_HOME:-$HOME/.local/state}/mcp-dev-bridge/agents
+Agent Broker socket      ${XDG_RUNTIME_DIR:-/run/user/$UID}/wsl-agent-agents.sock
+Agents extension         $HOME/.local/share/webharness/agents-extension
 ```
 
 1MCP receives one external writable application root because its config, PID, and OAuth/session data live together beneath that root.
@@ -97,9 +103,20 @@ Personal Workstation Terminal lifetime is split into two user services:
 ```text
 wsl-agent-tmux.service             PTY/process lifetime
 wsl-agent-terminal-broker.service  broker/transcript/control state
+wsl-agent-agents.service           Agent Broker/swarm/browser-bridge state
 ```
 
-Restart the broker without restarting tmux when only broker/provider code changes.
+Restart the Terminal broker without restarting tmux when only Terminal broker/provider code changes. The Agent Broker is a separate user service and can be restarted independently.
+
+### Agents
+
+Agents is a first-class outer provider under `tag:agents`; it is not routed through Local or Browser. Its single MCP tool accepts `spawn`, `message`, `status`, and `finish`. The provider is deliberately thin and takes caller identity only from ChatGPT's native `openai/session` metadata.
+
+The persistent Agent Broker owns the session-to-conversation binding, prime/worker roles, worker command transactions, bounded message queues, and durable swarm state. The WebHarness Agents MV3 extension at `webharness-agents-extension/` is the browser adapter. It pairs to a loopback broker port from 8765..8769, observes exact ChatGPT conversation/tool evidence, consumes a one-time binding marker from an Agents result, and opens or revives worker conversations. Project membership is launch context only: workers may inherit the prime's ChatGPT Project route, but browser route/project names never become identity authority.
+
+The extension uses its own dedicated persistent Chrome profile. It does not use Browser Fast, Browser DevTools, the managed Clearcote profile, or the shared Linux Browser selector. Workers retain the ordinary WebHarness tools available to their ChatGPT account; Agents does not choose cwd, Git branch, worktree, or repository ownership for them.
+
+MCP cannot synthesize a new prime model turn. If workers message or finish while the prime is idle, the broker keeps those messages until the prime next invokes Agents; the extension does not type a fake user message into the prime conversation.
 
 ### Local tool broker
 
@@ -143,4 +160,4 @@ Windows browser ownership is shared below both logical surfaces by one runtime. 
 
 ## Trust/profile separation
 
-`restricted` and `trusted-dev` remain smaller explicit compositions; they do not inherit Code, Terminal, Local/Browser, `wait`, or the Personal Workstation Terminal socket. `personal` is the full reference composition and remains an explicit authority choice.
+`restricted` and `trusted-dev` remain smaller explicit compositions; they do not inherit Code, Terminal, Local/Browser, Agents, `wait`, or the Personal Workstation broker sockets. `personal` is the full reference composition and remains an explicit authority choice. `tag:local` and `tag:agents` are separate grants.

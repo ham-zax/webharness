@@ -6,6 +6,7 @@ WebHarness is published as a reproducible reference implementation, not as a pro
 - Node.js 24 or newer;
 - a systemd user manager inside WSL;
 - WSLg for headed Linux browser capability;
+- Google Chrome for the dedicated WebHarness Agents profile;
 - tmux for durable Terminal PTYs;
 - Cloudflare Tunnel plus 1MCP 0.36.0 for the demonstrated public MCP transport.
 
@@ -13,7 +14,7 @@ Run `webharness doctor --profile personal` before setup. Doctor validates the de
 
 ## Personal Workstation assumptions
 
-The `personal` profile is the full reference deployment. Its setup path qualifies a Linux CLI toolbox and installs pinned provider/runtime dependencies used by Dev, Code, Terminal, Local, Browser, and Browser DevTools. `scripts/check-personal-toolbox.sh` records the current command/version assumptions.
+The `personal` profile is the full reference deployment. Its setup path qualifies a Linux CLI toolbox and installs pinned provider/runtime dependencies used by Dev, Code, Terminal, Local, Browser, Browser DevTools, and Agents. It also installs the WebHarness Agents unpacked extension payload at `~/.local/share/webharness/agents-extension`. `scripts/check-personal-toolbox.sh` records the current command/version assumptions.
 
 The reference bootstrap currently owns a globally installed pinned 1MCP runtime and applies two source-level compatibility patches to that package. This is an implementation constraint, not a recommended packaging model for every fork. Do not run the reference bootstrap on a machine where another deployment must independently control the same global 1MCP installation without first changing that ownership model.
 
@@ -32,6 +33,8 @@ On Windows, WebHarness launches or reuses a dedicated visible Chrome profile at:
 Chrome chooses an ephemeral loopback DevTools port through `DevToolsActivePort`. `browser-fast` uses Agent Browser for routine interaction; `browser-devtools` connects the Chrome DevTools MCP facade to the same dedicated profile. Everyday Chrome is not attached or copied.
 
 On Linux/WSLg, `browser-fast` uses the current user configuration at `~/.config/mcp-dev-bridge/browser-fast.json`. The maintained Personal Workstation can use managed Chrome or a managed Clearcote profile. Browser DevTools uses the Linux Chrome DevTools path when callers pass `browser_target="linux"`.
+
+Agents uses a separate persistent Chrome profile owned by the WebHarness Agents workflow. It loads `~/.local/share/webharness/agents-extension` and must not reuse Browser Fast's managed Chrome/Clearcote profiles or mutate the shared Linux browser selector. The maintained qualification requires a logged-in ChatGPT session in that dedicated profile and explicit `tag:agents` authorization on the WebHarness connector.
 
 ## What is not qualified
 

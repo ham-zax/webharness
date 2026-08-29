@@ -8,7 +8,7 @@ This repository is a capability showcase and reproducible reference, not a promi
 
 ## What the workstation exposes
 
-Agents should reason about four capability domains rather than individual backend packages:
+Agents should reason about five capability domains rather than individual backend packages:
 
 | Capability | Use it for | Important boundary |
 |---|---|---|
@@ -16,6 +16,7 @@ Agents should reason about four capability domains rather than individual backen
 | **Code** | repository structure, symbols, semantic context, callers/dependencies | routes to the nearest canonical Git root; raw CodeDB tools stay hidden |
 | **Terminal** | long-running or interactive commands and human handoff | tmux owns PTY/process lifetime; the broker owns transcript and control state |
 | **Local** | high-cardinality local capabilities without bloating the outer MCP catalog | exposes only `tool_list`, `tool_schema`, and `tool_call`; Browser is currently the main downstream domain |
+| **Agents** | spawn, message, inspect, and finish parallel ChatGPT worker conversations | separate `tag:agents` authority; the Agent Broker owns swarm state and the WebHarness Agents extension binds browser conversations to native ChatGPT MCP sessions |
 
 The full workstation composition is deliberately small at the client boundary:
 
@@ -26,6 +27,7 @@ Terminal  terminal_open terminal_read terminal_send terminal_resize terminal_lis
 Local     tool_list tool_schema tool_call
             |-- browser-fast      observe / execute
             `-- browser-devtools  Chrome DevTools diagnostics
+Agents    agents {spawn|message|status|finish}
 ```
 
 `browser-fast` is for routine interaction. `browser-devtools` keeps the full Chrome DevTools MCP surface for network, console, performance, Lighthouse, heap, screenshots, and detailed debugging.
@@ -45,14 +47,17 @@ Cloudflare Tunnel
   +-- Dev
   +-- Code
   +-- Terminal --------> broker --------> tmux PTYs
-  `-- Local
-        |
-        `-- inner 1MCP
-              |-- browser-fast ---------> Agent Browser
-              `-- browser-devtools -----> Chrome DevTools MCP
-                         |
-                         +-- Windows: dedicated persistent MCP Chrome
-                         `-- Linux: managed visible Chrome through WSLg
+  +-- Local
+  |     |
+  |     `-- inner 1MCP
+  |           |-- browser-fast ---------> Agent Browser
+  |           `-- browser-devtools -----> Chrome DevTools MCP
+  |                      |
+  |                      +-- Windows: dedicated persistent MCP Chrome
+  |                      `-- Linux: managed visible Chrome through WSLg
+  `-- Agents -----------> Agent Broker <------> WebHarness Agents extension
+                                                   |
+                                                   `-- ChatGPT worker conversations
 ```
 
 Cloudflare is the current public HTTPS transport and 1MCP is the OAuth/MCP gateway. The maintained workstation uses a locally-managed Cloudflare Tunnel configured outside the repository and leaves `MCP_TUNNEL_NAME` empty, so WebHarness runs `cloudflared tunnel run` against the operator-owned default Cloudflare configuration. OpenAI Secure MCP Tunnel is a separate future connector path that could keep 1MCP private behind a local `tunnel-client`; WebHarness does not currently implement or supervise that path. See [Getting Started](docs/getting-started.md#provision-the-cloudflare-transport-used-by-the-reference-deployment) for both boundaries. Providers remain local stdio processes. The Local broker exists so adding or upgrading a large downstream tool catalog does not force the entire catalog into every client session.
@@ -63,11 +68,11 @@ There is no silent default. Pick the authority you intend to give the agent.
 
 | Profile | Authority | Reference role |
 |---|---|---|
-| `personal` | WSL-user paths, native Bash, Code, persistent Terminal, waits, Local/Browser, optional Windows host sleep | maintained full Personal Workstation reference |
+| `personal` | WSL-user paths, native Bash, Code, persistent Terminal, waits, Local/Browser, Agents, optional Windows host sleep | maintained full Personal Workstation reference |
 | `restricted` | workspace-bounded files plus an allowlisted legacy shell | conservative smaller example |
 | `trusted-dev` | workspace-bounded files plus unrestricted Bash as the Linux service user | smaller trusted-development example; use only on a dedicated host |
 
-`trusted-dev` and `personal` can act with the Linux account's authority. The `personal` Local domain can additionally control its dedicated Windows MCP Chrome profile after explicit `tag:local` authorization. Read [Security](docs/security.md) before enabling either powerful profile.
+`trusted-dev` and `personal` can act with the Linux account's authority. The `personal` Local domain can control its dedicated MCP browser profiles after explicit `tag:local` authorization. Agents is a separate `tag:agents` grant because it can create and message ChatGPT worker conversations through the dedicated WebHarness Agents extension. Read [Security](docs/security.md) before enabling either powerful profile.
 
 ## Quick start
 
@@ -85,7 +90,7 @@ webharness start
 webharness status
 ```
 
-`doctor` is non-mutating. `setup` qualifies dependencies and renders configuration. `--enable-startup` is an explicit consent boundary: without it, setup does not enable user linger or persistent services.
+`doctor` is non-mutating. `setup` qualifies dependencies, renders configuration, and installs the unpacked WebHarness Agents extension payload at `~/.local/share/webharness/agents-extension`. Load that stable directory once in the dedicated Agents Chrome profile. `--enable-startup` is an explicit consent boundary: without it, setup does not enable user linger or persistent services.
 
 Machine-specific owner policy stays outside the checkout under operator-controlled paths referenced by `MCP_OWNER_CONTEXT_FILE` and `MCP_OWNER_ENV_FILE`. The repository also cannot silently install or replace ChatGPT Skills or client authorization.
 
@@ -112,6 +117,7 @@ Use the narrowest domain that owns the task:
 | command must persist, needs a PTY, or may need human input | Terminal |
 | routine navigation/forms/clicks in a resource-local browser | Local -> `browser-fast` |
 | network/console/performance/screenshot/DevTools investigation | Local -> `browser-devtools` |
+| delegate independent work to parallel ChatGPT conversations | Agents |
 
 For large or unfamiliar repositories, begin with bounded Bash/`rg` and focused reads before paying the cost of a new CodeDB index unless indexed intelligence is specifically useful.
 
@@ -181,9 +187,7 @@ webharness stop
 | Browser interaction | `browser-fast` provides compact observe/execute with persistent browser state | Chromium/CDP is the qualified browser family |
 | Browser diagnostics | `browser-devtools` provides the full Chrome DevTools MCP surface | shares the Local authorization domain with routine Browser |
 | High-cardinality local MCPs | Local keeps only three outer metatools and discovers downstream schemas on demand | all MCPs admitted to one Local broker share its authorization domain |
-| First-class delegated workers | not implemented in the stabilized runtime | Chat WSL-style Agents and cross-chat recordings are the primary current capability gap |
-
-The next planned additive capability is a small Agents surface—`spawn`, `message`, `status`, `finish`—backed by an Agent Broker. It is intentionally not part of this stabilization and does not require a Workspace/worktree/project-authority subsystem. See the [Agents implementation plan](docs/superpowers/plans/2026-08-29-webharness-agents-implementation.md) for that follow-on.
+| First-class delegated workers | Agents exposes `spawn`, `message`, `status`, and `finish` through a persistent Agent Broker and dedicated ChatGPT extension | WebHarness cannot create a new prime model turn while the prime chat is idle; queued worker messages are delivered on the prime's next proven Agents interaction |
 
 ## End-to-end orchestration example
 
@@ -202,7 +206,7 @@ Terminal      yield the exact PTY to a human for MFA/sudo/manual inspection
 Terminal      resume model control on the same process afterward
 ```
 
-That separation is deliberate: Dev owns files/commands/readiness, Code owns semantic repository intelligence, Terminal owns durable PTY interaction, and Local owns downstream MCP routing.
+That separation is deliberate: Dev owns files/commands/readiness, Code owns semantic repository intelligence, Terminal owns durable PTY interaction, Local owns downstream MCP routing, and Agents owns cross-conversation worker coordination without choosing repository/worktree authority for those workers.
 
 ## Reference implementation and forking
 
@@ -215,6 +219,7 @@ Forks should preserve the model-facing contracts they rely on, then deliberately
 - The project currently pins 1MCP 0.36.0 after qualification of the current provider composition, direct-mode rich Browser results, config reload, and OAuth behavior. Upgrade it deliberately rather than treating it as an unqualified interchangeable dependency.
 - 1MCP listens on loopback; Cloudflare supplies the public HTTPS route. OAuth remains required for the public MCP origin.
 - The Local broker is one authorization domain. Every downstream MCP admitted behind the same `tag:local` grant must legitimately share that authority.
+- Agents is a separate `tag:agents` authorization domain. Adding the provider requires explicit client re-authorization; it is not aliased onto Dev or Local.
 - Browser debugging endpoints are local implementation details and are not intentionally published beyond loopback.
 - Sudo/password/MFA input belongs in a human-controlled Terminal client, not in MCP arguments or agent-visible logs.
 
