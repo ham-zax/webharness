@@ -90,8 +90,8 @@
     budget.remaining -= taken.length;
     return taken;
   }
-  /** Exact protected-resource name of the WebHarness connector this adapter may vouch for. */
-  const OUR_APPS = ['wsl-web-harness'];
+  /** Exact protected-resource names of the WebHarness connector surfaces this adapter may vouch for. */
+  const OUR_APPS = ['wsl-web-harness', '1MCP Agent - Universal MCP Server Proxy'];
 
   /** Whether an `invoked_resource.app_name` names one of this app's own connectors. */
   function ourApp(name) {
