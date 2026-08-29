@@ -74,6 +74,8 @@ if [ "${PERSONAL_BOOTSTRAP_SKIP_INSTALL:-0}" != "1" ]; then
   npm --prefix "$ROOT/providers/pi-dev" ci --omit=dev
   npm --prefix "$ROOT/providers/code-router" ci --omit=dev
   npm --prefix "$ROOT/providers/terminal" ci --omit=dev
+  npm --prefix "$ROOT/providers/agents" ci --omit=dev
+  "$ROOT/scripts/install-agent-extension.sh"
   npm --prefix "$ROOT/providers/browser" ci --omit=dev
   npm --prefix "$ROOT/providers/browser-fast" ci --omit=dev
   npm --prefix "$ROOT/providers/local-tools" ci --omit=dev
@@ -113,6 +115,8 @@ HOME="$USER_HOME" BRIDGE_STATE_DIR="$STATE_DIR" BRIDGE_SYSTEMD_TARGET_DIR="$SYST
 HOME="$USER_HOME" TERMINAL_SYSTEMD_TARGET_DIR="$SYSTEMD_TARGET_DIR" \
   TERMINAL_OWNER_ENV_FILE="$STATE_DIR/owner.env" TERMINAL_SYSTEMD_DRY_RUN=1 \
   "$ROOT/scripts/install-terminal-broker-user.sh"
+HOME="$USER_HOME" AGENTS_SYSTEMD_TARGET_DIR="$SYSTEMD_TARGET_DIR" AGENTS_STATE_ROOT="$STATE_DIR/agents" \
+  AGENTS_SYSTEMD_DRY_RUN=1 "$ROOT/scripts/install-agent-broker-user.sh"
 
 DROPIN_DIR="$SYSTEMD_TARGET_DIR/mcp-dev-bridge.service.d"
 DROPIN="$DROPIN_DIR/personal.conf"
@@ -120,8 +124,8 @@ mkdir -p "$DROPIN_DIR"
 DROPIN_TMP="$DROPIN.tmp.$$"
 cat > "$DROPIN_TMP" <<'EOF'
 [Unit]
-Wants=wsl-agent-terminal-broker.service
-After=wsl-agent-terminal-broker.service
+Wants=wsl-agent-terminal-broker.service wsl-agent-agents.service
+After=wsl-agent-terminal-broker.service wsl-agent-agents.service
 EOF
 chmod 0644 "$DROPIN_TMP"
 mv -f "$DROPIN_TMP" "$DROPIN"
@@ -163,9 +167,10 @@ systemctl --user daemon-reload
 systemctl --user enable --now \
   wsl-agent-tmux.service \
   wsl-agent-terminal-broker.service \
+  wsl-agent-agents.service \
   mcp-dev-bridge.service
 
-for unit in wsl-agent-tmux.service wsl-agent-terminal-broker.service mcp-dev-bridge.service; do
+for unit in wsl-agent-tmux.service wsl-agent-terminal-broker.service wsl-agent-agents.service mcp-dev-bridge.service; do
   systemctl --user is-enabled "$unit" >/dev/null
   systemctl --user is-active "$unit" >/dev/null
 done

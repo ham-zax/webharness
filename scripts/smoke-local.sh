@@ -14,13 +14,14 @@ const cfg = JSON.parse(fs.readFileSync(configFile, 'utf8'));
 const dev = cfg.mcpServers?.dev;
 const code = cfg.mcpServers?.code;
 const terminal = cfg.mcpServers?.terminal;
+const agents = cfg.mcpServers?.agents;
 const local = cfg.mcpServers?.local;
 if (cfg.mcpServers?.filesystem) throw new Error('filesystem provider must be absent after Pi cutover');
 if (cfg.mcpServers?.codedb) throw new Error('raw codedb provider must remain hidden behind the Code facade');
 if (cfg.mcpServers?.['browser-devtools'] || cfg.mcpServers?.['browser-fast']) throw new Error('Browser providers must remain behind the Local broker');
 if (profile) {
   const actual = Object.keys(cfg.mcpServers ?? {}).sort();
-  const expected = profile === 'trusted-dev' ? ['dev'] : profile === 'restricted' ? ['dev', 'shell'] : profile === 'personal' ? ['code', 'dev', 'local', 'terminal'] : null;
+  const expected = profile === 'trusted-dev' ? ['dev'] : profile === 'restricted' ? ['dev', 'shell'] : profile === 'personal' ? ['agents', 'code', 'dev', 'local', 'terminal'] : null;
   if (!expected || JSON.stringify(actual) !== JSON.stringify(expected)) {
     throw new Error(`unexpected final provider set for ${profile || 'unknown'}: ${actual.join(',')}`);
   }
@@ -67,6 +68,23 @@ if (local) {
   if (fastPkg.dependencies?.['@modelcontextprotocol/sdk'] !== '1.30.0') throw new Error('unexpected Browser Fast MCP SDK pin');
   if (fastPkg.dependencies?.['agent-browser'] !== '0.35.0') throw new Error('unexpected Browser Fast Agent Browser pin');
   if (fastPkg.dependencies?.zod !== '4.4.3') throw new Error('unexpected Browser Fast zod pin');
+}
+if (agents) {
+  if (profile !== 'personal') throw new Error('Agents provider is available only in the personal profile');
+  if (agents.command !== 'node') throw new Error('Agents provider must run with node');
+  const expectedServer = path.join(repoRoot, 'providers', 'agents', 'server.mjs');
+  if (JSON.stringify(agents.args ?? []) !== JSON.stringify([expectedServer])) throw new Error('unexpected Agents provider server path');
+  const env = agents.env ?? {};
+  if (!path.isAbsolute(env.MCP_AGENT_SOCKET ?? '')) throw new Error('MCP_AGENT_SOCKET must be absolute');
+  if (path.basename(env.MCP_AGENT_SOCKET) !== 'wsl-agent-agents.sock') throw new Error('unexpected Agents broker socket name');
+  if (JSON.stringify(agents.tags ?? []) !== JSON.stringify(['agents'])) throw new Error('Agents provider must use only the agents tag');
+  const pkg = JSON.parse(fs.readFileSync(path.join(repoRoot, 'providers', 'agents', 'package.json'), 'utf8'));
+  if (pkg.dependencies?.['@modelcontextprotocol/sdk'] !== '1.30.0') throw new Error('unexpected Agents MCP SDK pin');
+  if (pkg.dependencies?.zod !== '4.4.3') throw new Error('unexpected Agents zod pin');
+  const installedSdk = JSON.parse(fs.readFileSync(path.join(repoRoot, 'providers', 'agents', 'node_modules', '@modelcontextprotocol', 'sdk', 'package.json'), 'utf8'));
+  if (installedSdk.version !== '1.30.0') throw new Error(`unexpected installed Agents MCP SDK version: ${installedSdk.version}`);
+  const installedZod = JSON.parse(fs.readFileSync(path.join(repoRoot, 'providers', 'agents', 'node_modules', 'zod', 'package.json'), 'utf8'));
+  if (installedZod.version !== '4.4.3') throw new Error(`unexpected installed Agents zod version: ${installedZod.version}`);
 }
 if (terminal) {
   if (profile !== 'personal') throw new Error('Terminal provider is available only in the personal profile');
@@ -154,4 +172,4 @@ curl -sf -m 5 -X POST "$URL" \
   -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"smoke","version":"1.0.0"}}}'
 echo
 echo
-echo "(connectivity check only; inspect dev plus restricted-only shell for public profiles, or Dev/Code/Terminal plus the three-tool Local broker for personal composition)"
+echo "(connectivity check only; inspect dev plus restricted-only shell for public profiles, or Dev/Code/Terminal/Agents plus the three-tool Local broker for personal composition)"

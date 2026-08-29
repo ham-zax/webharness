@@ -110,6 +110,18 @@ if [ "$PROFILE" = personal ]; then
   fi
   if command -v cloudflared >/dev/null 2>&1; then ok "cloudflared is available"; else warn "cloudflared is not installed yet; public transport cannot start"; fi
   if command -v tmux >/dev/null 2>&1; then ok "tmux is available"; else warn "tmux is not installed yet; durable Terminal cannot start"; fi
+  if command -v google-chrome >/dev/null 2>&1; then ok "Google Chrome is available for the dedicated Agents profile"; else warn "google-chrome is not installed yet; ChatGPT worker tabs cannot start"; fi
+  AGENTS_SOURCE_MANIFEST="$ROOT/webharness-agents-extension/manifest.json"
+  AGENTS_INSTALLED_MANIFEST="$HOME/.local/share/webharness/agents-extension/manifest.json"
+  AGENTS_SOURCE_VERSION="$(node -e 'const m=require(process.argv[1]); process.stdout.write(String(m.version || ""))' "$AGENTS_SOURCE_MANIFEST" 2>/dev/null || true)"
+  AGENTS_INSTALLED_VERSION="$(node -e 'const m=require(process.argv[1]); process.stdout.write(String(m.version || ""))' "$AGENTS_INSTALLED_MANIFEST" 2>/dev/null || true)"
+  if [ -z "$AGENTS_INSTALLED_VERSION" ]; then
+    warn "WebHarness Agents extension is not installed at ~/.local/share/webharness/agents-extension"
+  elif [ "$AGENTS_INSTALLED_VERSION" = "$AGENTS_SOURCE_VERSION" ]; then
+    ok "installed WebHarness Agents extension matches source version $AGENTS_SOURCE_VERSION"
+  else
+    warn "installed WebHarness Agents extension is v${AGENTS_INSTALLED_VERSION:-unknown}; source is v${AGENTS_SOURCE_VERSION:-unknown}"
+  fi
   if "$ROOT/scripts/check-personal-toolbox.sh" >/dev/null 2>&1; then
     ok "Personal Workstation CLI toolbox matches the qualified assumptions"
   else
@@ -156,7 +168,7 @@ const fs = require('fs');
 const [profile, outerFile, innerFile] = process.argv.slice(2);
 const keys = value => Object.keys(value?.mcpServers ?? {}).sort();
 const outer = JSON.parse(fs.readFileSync(outerFile, 'utf8'));
-const expectedOuter = profile === 'restricted' ? ['dev', 'shell'] : profile === 'trusted-dev' ? ['dev'] : ['code', 'dev', 'local', 'terminal'];
+const expectedOuter = profile === 'restricted' ? ['dev', 'shell'] : profile === 'trusted-dev' ? ['dev'] : ['agents', 'code', 'dev', 'local', 'terminal'];
 if (JSON.stringify(keys(outer)) !== JSON.stringify(expectedOuter)) process.exit(1);
 if (profile === 'personal') {
   const inner = JSON.parse(fs.readFileSync(innerFile, 'utf8'));

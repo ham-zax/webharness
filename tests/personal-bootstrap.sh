@@ -141,6 +141,7 @@ test_prepare_without_startup_consent() {
   [ ! -e "$systemd_dir/mcp-dev-bridge.service" ] || return 1
   [ ! -e "$systemd_dir/wsl-agent-tmux.service" ] || return 1
   [ ! -e "$systemd_dir/wsl-agent-terminal-broker.service" ] || return 1
+  [ ! -e "$systemd_dir/wsl-agent-agents.service" ] || return 1
   [ ! -s "$home/systemctl.log" ] || return 1
   [ ! -s "$home/loginctl.log" ] || return 1
   [ "$(cat "$home/linger.state")" = no ] || return 1
@@ -164,20 +165,21 @@ test_startup_consent_installs_and_converges() {
   rc=$?
   [ "$rc" -eq 0 ] || { printf '%s\n' "$output" >&2; return 1; }
 
-  for unit in mcp-dev-bridge.service wsl-agent-tmux.service wsl-agent-terminal-broker.service; do
+  for unit in mcp-dev-bridge.service wsl-agent-tmux.service wsl-agent-terminal-broker.service wsl-agent-agents.service; do
     [ -f "$systemd_dir/$unit" ] || return 1
   done
   [ -f "$dropin" ] || return 1
   diff -u <(cat <<'EOF'
 [Unit]
-Wants=wsl-agent-terminal-broker.service
-After=wsl-agent-terminal-broker.service
+Wants=wsl-agent-terminal-broker.service wsl-agent-agents.service
+After=wsl-agent-terminal-broker.service wsl-agent-agents.service
 EOF
 ) "$dropin" || return 1
   grep -Fq "Environment=MCP_TERMINAL_DEFAULT_CWD=$home" "$systemd_dir/wsl-agent-terminal-broker.service" || return 1
+  grep -Fq "Environment=MCP_AGENT_STATE_ROOT=$state/agents" "$systemd_dir/wsl-agent-agents.service" || return 1
   grep -Fq "$ROOT/bin/start" "$systemd_dir/mcp-dev-bridge.service" || return 1
   grep -Fxq -- '--user daemon-reload' "$home/systemctl.log" || return 1
-  grep -Fxq -- '--user enable --now wsl-agent-tmux.service wsl-agent-terminal-broker.service mcp-dev-bridge.service' "$home/systemctl.log" || return 1
+  grep -Fxq -- '--user enable --now wsl-agent-tmux.service wsl-agent-terminal-broker.service wsl-agent-agents.service mcp-dev-bridge.service' "$home/systemctl.log" || return 1
   grep -Fxq -- "enable-linger $(id -un)" "$home/loginctl.log" || return 1
   [ "$(cat "$home/linger.state")" = yes ] || return 1
   [ ! -s "$home/sudo.log" ] || return 1
@@ -191,16 +193,16 @@ EOF
   grep -Fq 'usage: wsl-term list' <<<"$cli_output" || { printf '%s\n' "$cli_output" >&2; return 1; }
   ! grep -Fqi 'module not found' <<<"$cli_output" || return 1
 
-  hash_before="$(sha256sum "$dropin" "$systemd_dir/mcp-dev-bridge.service" "$systemd_dir/wsl-agent-tmux.service" "$systemd_dir/wsl-agent-terminal-broker.service")"
+  hash_before="$(sha256sum "$dropin" "$systemd_dir/mcp-dev-bridge.service" "$systemd_dir/wsl-agent-tmux.service" "$systemd_dir/wsl-agent-terminal-broker.service" "$systemd_dir/wsl-agent-agents.service")"
   : > "$home/systemctl.log"
   : > "$home/loginctl.log"
   output="$(run_bootstrap_fixture "$home" "$runtime" "$state" "$systemd_dir" "$fakebin" "$env_file" --enable-startup 2>&1)"
   rc=$?
   [ "$rc" -eq 0 ] || { printf '%s\n' "$output" >&2; return 1; }
-  hash_after="$(sha256sum "$dropin" "$systemd_dir/mcp-dev-bridge.service" "$systemd_dir/wsl-agent-tmux.service" "$systemd_dir/wsl-agent-terminal-broker.service")"
+  hash_after="$(sha256sum "$dropin" "$systemd_dir/mcp-dev-bridge.service" "$systemd_dir/wsl-agent-tmux.service" "$systemd_dir/wsl-agent-terminal-broker.service" "$systemd_dir/wsl-agent-agents.service")"
   [ "$hash_before" = "$hash_after" ] || return 1
   ! grep -q '^enable-linger ' "$home/loginctl.log" || return 1
-  grep -Fxq -- '--user enable --now wsl-agent-tmux.service wsl-agent-terminal-broker.service mcp-dev-bridge.service' "$home/systemctl.log" || return 1
+  grep -Fxq -- '--user enable --now wsl-agent-tmux.service wsl-agent-terminal-broker.service wsl-agent-agents.service mcp-dev-bridge.service' "$home/systemctl.log" || return 1
 }
 
 run_test 'personal bootstrap prepares state and wsl-term without installing startup services' test_prepare_without_startup_consent

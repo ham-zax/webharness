@@ -33,15 +33,21 @@ test_public_structure() {
   [ -f "$ROOT/systemd/mcp-dev-bridge.service.in" ] && \
   [ -f "$ROOT/systemd/wsl-agent-tmux.service.in" ] && \
   [ -f "$ROOT/systemd/wsl-agent-terminal-broker.service.in" ] && \
+  [ -f "$ROOT/systemd/wsl-agent-agents.service.in" ] && \
   [ -f "$ROOT/providers/legacy-shell/server.py" ] && \
   [ -f "$ROOT/providers/pi-dev/server.mjs" ] && \
   [ -f "$ROOT/providers/code-router/server.mjs" ] && \
   [ -f "$ROOT/providers/terminal/mcp-server.mjs" ] && \
+  [ -f "$ROOT/providers/agents/server.mjs" ] && \
+  [ -f "$ROOT/providers/agents/broker.mjs" ] && \
   [ -f "$ROOT/providers/local-tools/server.mjs" ] && \
   [ -f "$ROOT/providers/browser/server.mjs" ] && \
   [ -f "$ROOT/providers/browser-fast/server.mjs" ] && \
   [ -f "$ROOT/scripts/render-config.mjs" ] && \
   [ -f "$ROOT/scripts/bootstrap-personal.sh" ] && \
+  [ -x "$ROOT/scripts/install-agent-extension.sh" ] && \
+  [ -f "$ROOT/webharness-agents-extension/manifest.json" ] && \
+  [ -f "$ROOT/webharness-agents-extension/UPSTREAM.md" ] && \
   [ -f "$ROOT/scripts/manage-extension.mjs" ] && \
   [ -f "$ROOT/scripts/doctor.sh" ] && \
   [ -f "$ROOT/scripts/public-paths.sh" ] && \
@@ -81,9 +87,13 @@ test_public_classifier_matches_reference_boundary() {
     config/templates/mcp-local.json \
     docs/personal/harness.md \
     providers/terminal/example \
+    providers/agents/server.mjs \
     scripts/install-terminal-broker-user.sh \
+    scripts/install-agent-broker-user.sh \
+    scripts/install-agent-extension.sh \
     systemd/wsl-agent-tmux.service.in \
     systemd/wsl-agent-terminal-broker.service.in \
+    systemd/wsl-agent-agents.service.in \
     providers/code-router/example \
     providers/browser/example \
     providers/browser-fast/example \
@@ -92,7 +102,7 @@ test_public_classifier_matches_reference_boundary() {
     scripts/manage-extension.mjs \
     bin/extension \
     bin/wsl-term \
-    third_party/chat-on-steroids-extension/manifest.json \
+    webharness-agents-extension/manifest.json \
     docs/superpowers/plans/2026-08-29-webharness-agents-implementation.md; do
     is_public_path "$path" || { echo "reference path classified as non-public: $path" >&2; return 1; }
   done
@@ -144,8 +154,10 @@ const local = JSON.parse(fs.readFileSync(localFile, 'utf8'));
 const keys = cfg => Object.keys(cfg.mcpServers ?? {}).sort();
 if (JSON.stringify(keys(restricted)) !== JSON.stringify(['dev', 'shell'])) process.exit(1);
 if (JSON.stringify(keys(trusted)) !== JSON.stringify(['dev'])) process.exit(1);
-if (JSON.stringify(keys(personal)) !== JSON.stringify(['code', 'dev', 'local', 'terminal'])) process.exit(1);
+if (JSON.stringify(keys(personal)) !== JSON.stringify(['agents', 'code', 'dev', 'local', 'terminal'])) process.exit(1);
 if (JSON.stringify(keys(local)) !== JSON.stringify(['browser-devtools', 'browser-fast'])) process.exit(1);
+if (!personal.mcpServers.agents.args.includes(root + '/providers/agents/server.mjs')) process.exit(1);
+if (JSON.stringify(personal.mcpServers.agents.tags) !== JSON.stringify(['agents'])) process.exit(1);
 if (!local.mcpServers['browser-devtools'].args.includes(root + '/providers/browser/server.mjs')) process.exit(1);
 if (!local.mcpServers['browser-fast'].args.includes(root + '/providers/browser-fast/server.mjs')) process.exit(1);
 NODE2

@@ -21,7 +21,7 @@ contains() { grep -Eq "$2" "$1"; }
 
 test_scripts_are_executable() {
   local script
-  for script in setup.sh install-bridge-runtime.sh bootstrap-personal.sh start.sh stop.sh status.sh tunnel-up.sh tunnel-down.sh; do
+  for script in setup.sh install-bridge-runtime.sh bootstrap-personal.sh install-agent-broker-user.sh install-agent-extension.sh start.sh stop.sh status.sh tunnel-up.sh tunnel-down.sh; do
     [ -x "$ROOT/scripts/$script" ] || return 1
   done
   [ -x "$ROOT/bin/start" ] && [ -x "$ROOT/bin/status" ] && [ -x "$ROOT/bin/stop" ] && \
@@ -35,6 +35,7 @@ test_no_global_process_matching() {
 test_dependencies_are_pinned() {
   contains "$ROOT/scripts/install-bridge-runtime.sh" 'ONE_MCP_VERSION="0\.36\.0"' && \
   contains "$ROOT/providers/pi-dev/package.json" '"@earendil-works/pi-coding-agent"[[:space:]]*:[[:space:]]*"0\.84\.1"' && \
+  contains "$ROOT/providers/agents/package.json" '"@modelcontextprotocol/sdk"[[:space:]]*:[[:space:]]*"1\.30\.0"' && \
   contains "$ROOT/config/templates/mcp.json" 'mcp-shell-server==1\.1\.8'
 }
 
@@ -144,6 +145,8 @@ test_status_has_core_diagnostics() {
   contains "$ROOT/bin/status" 'PID/listener mismatch' && \
   contains "$ROOT/bin/status" 'retained diagnostics' && \
   contains "$ROOT/bin/status" 'Terminal broker' && \
+  contains "$ROOT/bin/status" 'Agent Broker' && \
+  contains "$ROOT/bin/status" 'heartbeat_age_seconds' && \
   contains "$ROOT/bin/status" 'NRestarts'
 }
 
@@ -182,6 +185,9 @@ test_personal_bootstrap_startup_consent_contract() {
   contains "$script" 'startup services were not installed' && \
   contains "$script" 'loginctl enable-linger' && \
   contains "$script" 'systemctl --user enable --now' && \
+  contains "$script" 'wsl-agent-agents\.service' && \
+  contains "$script" 'install-agent-broker-user\.sh' && \
+  contains "$script" 'install-agent-extension\.sh' && \
   ! contains "$script" 'wsl\.exe|schtasks|Task Scheduler'
 }
 

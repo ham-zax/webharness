@@ -53,10 +53,11 @@ const personalEnv = fs.readFileSync(personalEnvFile, 'utf8');
 const keys = cfg => Object.keys(cfg.mcpServers ?? {}).sort();
 if (JSON.stringify(keys(restricted)) !== JSON.stringify(['dev', 'shell'])) process.exit(1);
 if (JSON.stringify(keys(trusted)) !== JSON.stringify(['dev'])) process.exit(1);
-if (JSON.stringify(keys(personal)) !== JSON.stringify(['code', 'dev', 'local', 'terminal'])) process.exit(1);
+if (JSON.stringify(keys(personal)) !== JSON.stringify(['agents', 'code', 'dev', 'local', 'terminal'])) process.exit(1);
 if (JSON.stringify(keys(personalLocal)) !== JSON.stringify(['browser-devtools', 'browser-fast'])) process.exit(1);
 if (restricted.mcpServers?.code || trusted.mcpServers?.code) process.exit(1);
 if (restricted.mcpServers?.terminal || trusted.mcpServers?.terminal) process.exit(1);
+if (restricted.mcpServers?.agents || trusted.mcpServers?.agents) process.exit(1);
 if (restricted.mcpServers?.local || trusted.mcpServers?.local) process.exit(1);
 if (restricted.mcpServers?.browser || trusted.mcpServers?.browser || personal.mcpServers?.browser) process.exit(1);
 if (restricted.mcpServers?.codedb || trusted.mcpServers?.codedb || personal.mcpServers?.codedb) process.exit(1);
@@ -89,6 +90,10 @@ if (!personal.mcpServers.terminal.args.includes(root + '/providers/terminal/mcp-
 if (personal.mcpServers.terminal.env.MCP_TERMINAL_SOCKET !== runtimeDir + '/wsl-agent-terminal.sock') process.exit(1);
 if (personal.mcpServers.terminal.env.MCP_TERMINAL_FRONTEND !== 'kitty') process.exit(1);
 if (personal.mcpServers.terminal.env.MCP_TERMINAL_READ_MAX_BYTES !== '65536') process.exit(1);
+if (personal.mcpServers.agents.command !== 'node') process.exit(1);
+if (!personal.mcpServers.agents.args.includes(root + '/providers/agents/server.mjs')) process.exit(1);
+if (personal.mcpServers.agents.env.MCP_AGENT_SOCKET !== runtimeDir + '/wsl-agent-agents.sock') process.exit(1);
+if (JSON.stringify(personal.mcpServers.agents.tags) !== JSON.stringify(['agents'])) process.exit(1);
 if (personal.mcpServers.local.command !== 'node') process.exit(1);
 if (!personal.mcpServers.local.args.includes(root + '/providers/local-tools/server.mjs')) process.exit(1);
 if (personal.mcpServers.local.env.MCP_LOCAL_INNER_CONFIG !== personalLocalFile) process.exit(1);
@@ -429,8 +434,11 @@ test_personal_runtime_files_have_no_machine_home() {
     "$ROOT/config/profiles/personal.env" \
     "$ROOT/config/templates/mcp-personal.json" \
     "$ROOT/systemd/wsl-agent-terminal-broker.service.in" \
+    "$ROOT/systemd/wsl-agent-agents.service.in" \
     "$ROOT/providers/terminal/tmux.mjs" \
     "$ROOT/providers/terminal/broker.mjs" \
+    "$ROOT/providers/agents/broker.mjs" \
+    "$ROOT/providers/agents/server.mjs" \
     "$ROOT/providers/code-router/server.mjs" \
     "$ROOT/providers/local-tools/server.mjs" \
     "$ROOT/providers/browser/server.mjs" \

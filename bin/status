@@ -181,6 +181,57 @@ echo "== Terminal broker =="
   else
     echo "user-systemd: unavailable (broker socket remains the direct runtime signal)"
   fi
+
+  echo
+  echo "== Agent Broker =="
+  AGENT_SOCKET="$BRIDGE_RUNTIME_BASE/wsl-agent-agents.sock"
+  if [ -S "$AGENT_SOCKET" ]; then
+    echo "broker socket: present ($AGENT_SOCKET)"
+    AGENT_STATUS="$(node --input-type=module - "$DIR/providers/agents/rpc-client.mjs" "$AGENT_SOCKET" <<'NODE' 2>/dev/null
+import { pathToFileURL } from 'node:url';
+const [moduleFile, socketPath] = process.argv.slice(2);
+try {
+  const { AgentBrokerClient } = await import(pathToFileURL(moduleFile).href);
+  const status = await new AgentBrokerClient({ socketPath, timeoutMs: 1500 }).request('status');
+  const ageMs = Number(status?.extension?.heartbeatAgeMs);
+  const ageSeconds = Number.isFinite(ageMs) ? Math.floor(ageMs / 1000) : null;
+  const lastError = status?.lastBridgeError && typeof status.lastBridgeError === 'object' ? status.lastBridgeError : null;
+  console.log(`broker rpc: ready`);
+  console.log(`browser bridge: port=${status?.bridgePort ?? 'none'} paired=${status?.paired === true ? 'yes' : 'no'}`);
+  console.log(`extension: version=${status?.extension?.version ?? 'unknown'} protocol=${status?.extension?.protocol ?? 'unknown'} heartbeat_age_seconds=${ageSeconds ?? 'unknown'}`);
+  console.log(`swarm: prime=${status?.prime ?? 'none'} run=${status?.activeRunId ?? 'none'} active_workers=${Number(status?.activeWorkers) || 0} sleeping_workers=${Number(status?.sleepingWorkers) || 0} pending_commands=${Number(status?.pendingCommands) || 0}`);
+  console.log(`bindings: ${Number(status?.bindings) || 0}`);
+  if (lastError) console.log(`last bridge error: at=${lastError.at ?? 'unknown'} message=${String(lastError.message ?? 'unknown').slice(0, 500)}`);
+  const healthy = status?.paired === true && ageSeconds !== null && ageSeconds <= 60;
+  process.exitCode = healthy ? 0 : 2;
+} catch {
+  process.exitCode = 3;
+}
+NODE
+)"
+    AGENT_STATUS_RC=$?
+    [ -n "$AGENT_STATUS" ] && printf '%s\n' "$AGENT_STATUS"
+    if [ "$AGENT_STATUS_RC" -eq 2 ]; then
+      warn "Agent Broker is reachable but the WebHarness Agents extension is unpaired or its heartbeat is stale"
+    elif [ "$AGENT_STATUS_RC" -ne 0 ]; then
+      warn "Agent Broker socket exists but status RPC failed"
+    fi
+  else
+    echo "broker socket: absent ($AGENT_SOCKET)"
+    if [ "$DESIRED" = "running" ]; then
+      warn "personal bridge is running without the Agent Broker socket"
+    fi
+  fi
+
+  if command -v systemctl >/dev/null 2>&1 && [ -S "$USER_BUS" ]; then
+    AGENT_UNIT_STATE="$(XDG_RUNTIME_DIR="$BRIDGE_RUNTIME_BASE" DBUS_SESSION_BUS_ADDRESS="unix:path=$USER_BUS" \
+      systemctl --user show wsl-agent-agents.service --property=ActiveState --property=NRestarts 2>/dev/null || true)"
+    AGENT_ACTIVE_STATE="$(sed -n 's/^ActiveState=//p' <<<"$AGENT_UNIT_STATE" | head -n1)"
+    AGENT_RESTARTS="$(sed -n 's/^NRestarts=//p' <<<"$AGENT_UNIT_STATE" | head -n1)"
+    echo "user-systemd: active_state=${AGENT_ACTIVE_STATE:-unknown} NRestarts=${AGENT_RESTARTS:-unknown}"
+  else
+    echo "user-systemd: unavailable (broker socket remains the direct runtime signal)"
+  fi
 fi
 
 echo
