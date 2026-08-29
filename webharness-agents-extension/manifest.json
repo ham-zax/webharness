@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Chat On Steroids companion",
-  "version": "2.0.2",
-  "description": "Records your ChatGPT session into the local Chat On Steroids app and labels its MCP tool calls with what they actually did.",
+  "name": "WebHarness Agents",
+  "version": "2.0.4",
+  "description": "ChatGPT worker identity and command adapter for WebHarness Agents.",
   "minimum_chrome_version": "116",
   "permissions": ["storage", "scripting", "alarms"],
   "host_permissions": [
@@ -22,7 +22,6 @@
     {
       "matches": ["https://chatgpt.com/*", "https://chat.openai.com/*"],
       "js": ["chatgpt-dom.js", "content.js"],
-      "css": ["overlay.css"],
       "run_at": "document_idle"
     },
     {
@@ -40,7 +39,7 @@
   },
   "action": {
     "default_popup": "popup.html",
-    "default_title": "Chat On Steroids",
+    "default_title": "WebHarness Agents",
     "default_icon": {
       "16": "icons/icon16.png",
       "32": "icons/icon32.png",

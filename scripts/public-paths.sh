@@ -23,7 +23,7 @@ is_public_path() {
       return 1
       ;;
     docs/superpowers/plans/2026-08-29-webharness-agents-implementation.md | \
-    third_party/chat-on-steroids-extension/*)
+    webharness-agents-extension/*)
       return 0
       ;;
     docs/superpowers/*)

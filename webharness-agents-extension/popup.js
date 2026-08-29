@@ -12,12 +12,8 @@
  */
 
 const $ = (id) => document.getElementById(id);
-const RENDER_STREAM_KEY = 'renderStreamEnabled';
-const SHOW_TIMES_KEY = 'showStreamTimes';
 const POLL_MS = 1500;
 
-let overwriteEnabled = true;
-let showTimes = false;
 let latest = { status: null, tab: null };
 let openedOnFailure = false;
 
@@ -97,7 +93,7 @@ function pipeline(info, ready) {
       read: readStage,
       sent: ['failed', pending ? `${pending} held` : ''],
       proc: ['off'],
-      why: ['bad', 'The app is not reachable. Nothing is leaving this browser.']
+      why: ['bad', 'The WebHarness Agent Broker is not reachable. Nothing is leaving this browser.']
     };
   }
   if (sent && sent.ok === false) {
@@ -105,7 +101,7 @@ function pipeline(info, ready) {
       read: readStage,
       sent: ['failed', String(sent.error || 'failed')],
       proc: ['off'],
-      why: ['bad', `The app rejected the last delivery (${sent.error || 'failed'}).`]
+      why: ['bad', `The Agent Broker rejected the last delivery (${sent.error || 'failed'}).`]
     };
   }
   // Refused by the extension itself, before anything could be queued for the app. `pending`
@@ -131,7 +127,7 @@ function pipeline(info, ready) {
       read: readStage,
       sent: ['running', `${pending} queued`],
       proc: ['off'],
-      why: ['', 'Queued here. Retrying delivery to the app.']
+      why: ['', 'Queued here. Retrying delivery to the Agent Broker.']
     };
   }
 
@@ -141,7 +137,7 @@ function pipeline(info, ready) {
       read: readStage,
       sent: sentStage,
       proc: ['running'],
-      why: ['', 'Delivered. The app has not opened a session for this chat yet.']
+      why: ['', 'Delivered. The Agent Broker has not bound this chat yet.']
     };
   }
 
@@ -163,7 +159,7 @@ function pipeline(info, ready) {
     read: readStage,
     sent: sentStage,
     proc: ['done', calls.length ? `${placed}/${calls.length}` : ''],
-    why: ['', calls.length ? 'Every tool call matched end to end.' : 'Recording into the app.']
+    why: ['', calls.length ? 'Every tool call matched end to end.' : 'Connected to the Agent Broker.']
   };
 }
 
@@ -216,7 +212,7 @@ function paintHeader(status) {
     : off
       ? 'Disconnected'
       : !connected
-        ? 'App not running'
+        ? 'Agent Broker not running'
         : ready
           ? `Connected · Port ${status.port}`
           : `Port ${status.port} · connecting`;
@@ -233,11 +229,11 @@ function paintAlert(status, info) {
   const pairError = status && status.pairError;
   const error = page && page.lastError;
   const text = incompatible
-    ? 'The app and this extension speak different bridge protocols.'
+    ? 'The Agent Broker and this extension speak different bridge protocols.'
     : pairError && pairError.message
       ? pairError.message
       : pairError && pairError.error === 'secure_storage_unavailable'
-        ? 'Secure credential storage is unavailable. Open Chat On Steroids for setup instructions.'
+        ? 'Secure credential storage is unavailable. Reload the WebHarness Agents extension and retry.'
     : error && Date.now() - error.at < 10 * 60 * 1000
       ? error.text
       : '';
@@ -268,7 +264,13 @@ function paintDetails(status, info) {
   const page = info && info.page;
   const sent = info && info.delivery;
 
-  detail(grid, 'app', status ? `v${status.appVersion || '?'} · port ${status.port || '—'}` : null);
+  detail(grid, 'broker', status ? `v${status.appVersion || '?'} · port ${status.port || '—'}` : null);
+  const agents = status && status.agentsStatus;
+  detail(grid, 'prime', agents ? agents.prime || 'none' : null);
+  detail(grid, 'run', agents ? agents.run || 'none' : null);
+  detail(grid, 'workers', agents ? `${Number(agents.activeWorkers) || 0} active · ${Number(agents.sleepingWorkers) || 0} sleeping` : null);
+  detail(grid, 'pending commands', agents ? Number(agents.pendingCommands) || 0 : null);
+  if (agents && agents.lastBridgeError) detail(grid, 'last bridge error', agents.lastBridgeError.message || 'unknown', true);
   detail(
     grid,
     'extension',
@@ -351,18 +353,6 @@ async function refresh() {
 
 // -------------------------------------------------------------------- controls
 
-function syncOverwrite() {
-  $('overwriteToggle').checked = overwriteEnabled;
-}
-
-async function loadPreferences() {
-  const stored = await chrome.storage.local.get([RENDER_STREAM_KEY, SHOW_TIMES_KEY]);
-  overwriteEnabled = stored[RENDER_STREAM_KEY] !== false;
-  showTimes = stored[SHOW_TIMES_KEY] === true;
-  syncOverwrite();
-  $('timeToggle').checked = showTimes;
-}
-
 /** Puts one value on the clipboard and says so in place, without moving anything. */
 async function copyInto(button, text) {
   if (!text) return;
@@ -406,27 +396,6 @@ $('unpairBtn').addEventListener('click', async () => {
   await refresh();
 });
 
-$('overwriteToggle').addEventListener('change', async () => {
-  const previous = overwriteEnabled;
-  overwriteEnabled = $('overwriteToggle').checked === true;
-  syncOverwrite();
-  try {
-    await chrome.storage.local.set({ [RENDER_STREAM_KEY]: overwriteEnabled });
-    // The toggle is the action. Enabling it immediately pulls the latest app timeline into
-    // every known ChatGPT tab; there is deliberately no second "Overwrite now" button.
-    if (overwriteEnabled) await chrome.runtime.sendMessage({ type: 'overwriteNow' });
-  } catch {
-    overwriteEnabled = previous;
-    syncOverwrite();
-  }
-});
-
-$('timeToggle').addEventListener('change', async () => {
-  showTimes = $('timeToggle').checked === true;
-  await chrome.storage.local.set({ [SHOW_TIMES_KEY]: showTimes });
-});
-
 // A popup is open for seconds at a time and the three stages move within those seconds.
-void loadPreferences();
 void refresh();
 setInterval(() => void refresh().catch(() => undefined), POLL_MS);

@@ -71,6 +71,7 @@
     globalThis.__CLF_CONTENT_RECORDER_ACTIVE__ = true;
   }
 
+  const AGENTS_ONLY = true;
   const OBSERVE_MS = 1000;
   /** Streaming mutations are bursty; never run a transcript-wide pass per token. */
   const TRANSCRIPT_OBSERVE_MS = 250;
@@ -782,7 +783,7 @@
     const takeUtf8 = (value, budget) => {
       if (typeof value !== 'string') return value;
       if (utf8Bytes(value) <= budget) return value;
-      const marker = '\n\n[Chat On Steroids: browser observation truncated to fit transport.]';
+      const marker = '\n\n[WebHarness Agents: browser observation truncated to fit transport.]';
       const markerBytes = utf8Bytes(marker);
       let low = 0;
       let high = value.length;
@@ -2095,6 +2096,11 @@
   const TURN_SECTION = 'section[data-testid^="conversation-turn"]';
   let seededPath = null;
 
+  function conversationFromPath(value) {
+    const match = /^\/(?:g\/g-p-[A-Za-z0-9_-]{6,160}\/)?c\/([0-9a-f-]{8,64})(?:\/|$)/i.exec(String(value || ''));
+    return match ? match[1] : null;
+  }
+
   /**
    * Whether the page is still on the chat these counts were taken from.
    *
@@ -2108,7 +2114,7 @@
     try {
       const path = location.pathname;
       if (path === seededPath) return true;
-      const named = /^\/c\//.test(path) && !/^\/c\//.test(seededPath || '');
+      const named = conversationFromPath(path) !== null && conversationFromPath(seededPath) === null;
       seededPath = path;
       return named;
     } catch {
@@ -2213,7 +2219,7 @@
   // 6: adds request-id ownership evidence used by deterministic MCP attribution.
   // 7: keys streaming commentary and native activity by ChatGPT thought/message identity,
   //    so React row replacement, raw text UUID rotation and refresh cannot mint duplicates.
-  const FIBER_VERSION = 10;
+  const FIBER_VERSION = 11;
   const FIBER_TIMEOUT_MS = 1500;
   const FIBER_MAX_ROWS = 400;
   /** Assistant turns whose per-call evidence is accepted from one scan. */
@@ -2223,6 +2229,8 @@
   const FIBER_MAX_MESSAGES = 200;
   const FIBER_MAX_ACTIVITIES = 200;
   const TOOL_NAME = /^[a-z0-9_.-]{1,64}$/i;
+  const AGENTS_TOOL = /^(?:agents|agents(?:-experiment)?_1mcp_agents)$/i;
+  const AGENT_BINDING = /^[A-Za-z0-9_-]{20,100}$/;
   const FIBER_BUSY_CAPTIONS = new Set(['thinking', 'thinking about it', 'reasoning', 'working', 'loading', 'done', 'called tool']);
   const FIBER_TIMER_CAPTION = /^(?:worked|thought|reasoned|thinking)\s+for\s+[\d.,]+\s*(?:s|m|h|sec|secs|seconds?|min|mins|minutes?|hours?)\b/;
 
@@ -2260,6 +2268,10 @@
   const callsReported = new Map();
   /** Exact request ids the app has ACKed as owned by a concrete conversation. */
   const requestOwnersConfirmed = new Map();
+  /** One-time Agents binding markers already accepted by the local broker. */
+  const agentBindingsConfirmed = new Set();
+  /** Binding markers currently crossing the extension bridge. */
+  const agentBindingsPending = new Set();
   /** One in-flight ownership handshake per conversation/request id. */
   const requestOwnersPending = new Set();
   /** Failed handshakes back off briefly instead of retrying on every Fiber mutation. */
@@ -2341,11 +2353,13 @@
         continue;
       }
       seen.add(messageId);
+      const binding = typeof entry.binding === 'string' && AGENT_BINDING.test(entry.binding) ? entry.binding : null;
       calls.push({
         messageId,
         tool,
         order: Number.isInteger(entry.order) ? Math.max(0, Math.min(FIBER_MAX_CALLS, entry.order)) : calls.length,
         answered: entry.answered === true,
+        binding,
         // ChatGPT's own id for the request, and its own creation time. The id is what lets
         // the app place the call in the chat that issued it; this script's own stamp is a
         // poll tick and cannot.
@@ -2629,6 +2643,20 @@
     return found;
   }
 
+  async function confirmAgentBinding(marker, ownerConversation) {
+    if (!AGENT_BINDING.test(String(marker || '')) || !ownerConversation) return;
+    if (agentBindingsConfirmed.has(marker) || agentBindingsPending.has(marker)) return;
+    agentBindingsPending.add(marker);
+    try {
+      const reply = await ask({ type: 'bind_agent', marker, conversationId: ownerConversation });
+      if (reply && reply.ok === true && reply.data && reply.data.bound === true && reply.data.conversationId === ownerConversation) {
+        agentBindingsConfirmed.add(marker);
+      }
+    } finally {
+      agentBindingsPending.delete(marker);
+    }
+  }
+
   async function confirmLiveRequestOwners(calls, ownerConversation) {
     if (!Array.isArray(calls) || calls.length === 0 || !ownerConversation) return;
     const byRequest = new Map();
@@ -2785,6 +2813,7 @@
     const acceptedCalls = answer.turns.flatMap((turn) => turn.calls || []);
     observed.calls = acceptedCalls.length;
     for (const call of acceptedCalls) {
+      if (AGENTS_TOOL.test(call.tool) && call.binding && askedConversation) void confirmAgentBinding(call.binding, askedConversation);
       if (!call.requestId) continue;
       observed.requestId = call.requestId;
       traceStage(call.requestId, 'read');
@@ -4448,21 +4477,8 @@
     return row;
   }
 
-  /**
-   * Whether a Fiber descriptor names one of *this* app's connectors.
-   *
-   * Kept in one place because getting it wrong is silent and total: 1.7.1 split the model
-   * surface into a Core and a Desktop connector, and while this test still spelled the
-   * single pre-1.7.1 name, no descriptor on any page matched it. Every call then looked
-   * like a stranger's — so it produced no attribution evidence and, worse, local rows were
-   * classified as ChatGPT-native activity and re-recorded as the assistant's own captions.
-   * `app_name` comes from the protected-resource metadata this app serves, not from what
-   * the user typed into ChatGPT, so these are this app naming itself.
-   *
-   * Exact names, never a prefix: `Chat On Steroids Backup` would be somebody else's
-   * connector, and a prefix test would have this app vouch for its traffic.
-   */
-  const OUR_CONNECTORS = ['Chat On Steroids Core', 'Chat On Steroids Desktop', 'TobisComputer'];
+  /** Exact protected-resource name of the WebHarness connector this adapter may vouch for. */
+  const OUR_CONNECTORS = ['wsl-web-harness'];
 
   function ourConnectorApp(name) {
     return typeof name === 'string' && OUR_CONNECTORS.includes(name);
@@ -4806,6 +4822,7 @@
    * nowhere to store it yet.
    */
   async function pullSettings() {
+    if (AGENTS_ONLY) return;
     if (settingsPulling) return;
     settingsPulling = true;
     try {
@@ -4961,6 +4978,21 @@
       const nextSince = Number(data.nextSince);
       if (Number.isFinite(nextSince) && nextSince > since) since = nextSince;
       job = data.job || null;
+      const agentCommandId =
+        data.agentCommand && typeof data.agentCommand.id === 'string'
+          ? data.agentCommand.id
+          : null;
+      const agentCommandConversation =
+        data.agentCommand && typeof data.agentCommand.conversationId === 'string'
+          ? data.agentCommand.conversationId
+          : null;
+      if (agentCommandId) {
+        void ask({
+          type: 'open_agent_command',
+          id: agentCommandId,
+          conversationId: agentCommandConversation
+        }).catch(() => undefined);
+      }
       pendingTools = Number.isFinite(Number(data.pendingTools)) ? Number(data.pendingTools) : 0;
       // The generation this chat has open in the app, if any. Only ever *read* by
       // resumeOpenTurn(), on the boot pull, and only to work out whether this document is
@@ -5431,6 +5463,7 @@
    * handled by the same settle barrier a manual press goes through.
    */
   async function maybeAutoCompact(expectedConversation = conversationId, expectedEpoch = epoch) {
+    if (AGENTS_ONLY) return;
     const current = () =>
       alive &&
       conversationId === expectedConversation &&
@@ -5871,6 +5904,7 @@
   }
 
   function renderMenu() {
+    if (AGENTS_ONLY) return void closeMenu();
     if (!menuOpen) return void closeMenu();
     if (!control || !control.root.isConnected) return void closeMenu();
     const root = menuElement();
@@ -6121,6 +6155,11 @@
 
   function renderControl() {
     if (!control || !control.root.isConnected) return;
+    if (AGENTS_ONLY) {
+      closeMenu();
+      control.root.hidden = true;
+      return;
+    }
     const state = currentState();
     const busy = state.mode === 'busy' || state.mode === 'waiting';
     control.root.hidden = state.mode === 'hidden';
@@ -6476,6 +6515,7 @@
    * control beside it: ChatGPT replaces this subtree whenever it feels like it.
    */
   function injectStage() {
+    if (AGENTS_ONLY) return void removeStagePanel();
     // Stage state is conversation-scoped. A concrete different route is handled by
     // resetConversation(); an id-less route is the New Chat/transient-router gap. In both
     // cases the current composer is not proven to belong to the state we would paint.
@@ -7332,6 +7372,7 @@
    * does not change a second later, so nothing retries.
    */
   function noteGoalTurn(ended, outcome, endedTurnId) {
+    if (AGENTS_ONLY) return;
     if (!endedTurnId || !goalUsable()) return;
     // Not a turn to continue from. `stopped` is the user's own hand on the stop button and
     // is exactly the turn they are about to say something about themselves; `failed` and
@@ -7535,6 +7576,7 @@
    * then gives up honestly rather than typing over somebody mid-sentence.
    */
   async function maybeSendGoalReply() {
+    if (AGENTS_ONLY) return;
     const draft = goalDraft;
     if (!draft || !conversationId || draft.conversationId !== conversationId) return;
     if (goalBusy) return;
@@ -7739,8 +7781,7 @@
    */
   const OPENED_CONVERSATION = (() => {
     try {
-      const match = /^\/c\/([0-9a-f-]{8,64})/i.exec(location.pathname);
-      return match ? match[1] : null;
+      return conversationFromPath(location.pathname);
     } catch {
       return null;
     }
@@ -8191,15 +8232,13 @@
       return void (await fail('the marked fresh chat changed before bootstrap send; nothing was sent'));
     }
     const onTarget = () => (target ? CLF_DOM.conversationId() === target : !CLF_DOM.conversationId());
-    // Redeeming the command proves which *document* owns it, not which SPA route that
-    // document will still be showing after the await. ChatGPT can navigate this same
-    // document to an existing conversation while the worker/app answer is in flight. An
-    // empty composer there looks exactly like the marked fresh one, so text checks cannot
-    // fence the irreversible send. Keep proving both facts that made this page eligible:
-    // the marker still names this command, and ChatGPT still has not assigned/opened a chat.
-    // A command handed over by the service worker has no marker in this tab's URL to check;
-    // the conversation fence above is the stronger half of the same proof and applies to it.
-    const stillOnTarget = () => alive && (!fromUrl || markerId() === id) && onTarget();
+    // Redeeming the command is the durable ownership cut: the broker has already bound this
+    // exact document's RUN_ID to the command. ChatGPT is free to canonicalize a fresh root URL
+    // and drop the `clf` query/fragment after that point, so the marker must not remain a
+    // post-redeem liveness requirement. Keep proving the route fact that matters instead: a
+    // fresh command must still be in an id-less New Chat, and a revival must still be on its
+    // exact target conversation.
+    const stillOnTarget = () => alive && onTarget();
     const failIfRetargeted = async () => {
       if (stillOnTarget()) return false;
       await fail(

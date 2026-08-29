@@ -24,7 +24,7 @@ const PORTS = [8765, 8766, 8767, 8768, 8769];
 const HELLO_TIMEOUT_MS = 1200;
 const REQUEST_TIMEOUT_MS = 10_000;
 /** Bumped only when the request/response shape changes; the app compares it. */
-const BRIDGE_PROTOCOL = 8;
+const BRIDGE_PROTOCOL = 9;
 
 /**
  * Journal caps. The byte figure is what actually matters — chrome.storage.session has a
@@ -64,6 +64,8 @@ let loading = null;
  * for one that was told to stop, and only this flag can tell those two apart.
  */
 let disconnected = false;
+/** Monotonic credential state for rejecting stale auth responses and storage writes. */
+let authGeneration = 0;
 /**
  * Monotonic user connection intent for this worker lifetime.
  *
@@ -255,8 +257,20 @@ async function loadOnce() {
   loaded = true;
 }
 
-async function persist() {
-  await chrome.storage.local.set({ port, token, disconnected });
+let authPersistQueue = Promise.resolve();
+
+function persist() {
+  const generation = authGeneration;
+  const snapshot = { port, token, disconnected };
+  const write = authPersistQueue.then(() => {
+    if (generation !== authGeneration) return;
+    return chrome.storage.local.set(snapshot);
+  });
+  authPersistQueue = write.then(
+    () => undefined,
+    () => undefined
+  );
+  return write;
 }
 
 let liveWriteQueue = Promise.resolve();
@@ -804,7 +818,7 @@ async function hello(candidate) {
     }, HELLO_TIMEOUT_MS);
     if (!response.ok) return null;
     const body = await response.json();
-    return body && body.app === 'chat-on-steroids' ? body : null;
+    return body && body.app === 'webharness-agents' ? body : null;
   } catch {
     return null;
   }
@@ -881,6 +895,7 @@ function forgetPort() {
 async function latchAppDisconnect() {
   token = null;
   disconnected = true;
+  authGeneration++;
   await persist();
 }
 
@@ -899,6 +914,8 @@ async function call(path, init = {}, retried = false) {
     const got = await provision();
     if (!got.ok) return { ok: false, status: 401, error: got.error || 'not_paired' };
   }
+  const requestToken = token;
+  const requestAuthGeneration = authGeneration;
   try {
     const response = await fetchBounded(`http://127.0.0.1:${found.port}${path}`, {
       ...init,
@@ -906,7 +923,7 @@ async function call(path, init = {}, retried = false) {
       headers: {
         ...(init.body ? { 'content-type': 'application/json' } : {}),
         ...versionHeaders(),
-        authorization: `Bearer ${token}`
+        authorization: `Bearer ${requestToken}`
       }
     });
     const data = await response.json().catch(() => ({}));
@@ -915,12 +932,17 @@ async function call(path, init = {}, retried = false) {
         await latchAppDisconnect();
         return { ok: false, status: 401, error: 'disconnected', data };
       }
-      // Our token no longer matches the app's — it was reset, or the app's storage was
-      // rebuilt. Drop ours and provision a new one once, rather than retrying forever
-      // with a credential that will never work again or making the user do it by hand.
+      // A delayed 401 is authoritative only for the credential that request actually used.
+      // If another request already repaired authentication, retry once with the newer token
+      // without clearing or persisting over it.
+      if (token !== requestToken || authGeneration !== requestAuthGeneration) {
+        if (retried) return { ok: false, status: 401, error: 'not_paired', data };
+        return call(path, init, true);
+      }
       token = null;
+      authGeneration++;
       await persist();
-      if (retried) return { ok: false, status: 401, error: 'not_paired' };
+      if (retried) return { ok: false, status: 401, error: 'not_paired', data };
       return call(path, init, true);
     }
     return { ok: response.ok, status: response.status, data };
@@ -1000,6 +1022,7 @@ async function pairOnce(intent = connectionEpoch, reconnect = false) {
     token = data.token;
     // Connecting is the counterpart of disconnecting, and the only thing that clears it.
     disconnected = false;
+    authGeneration++;
     await persist();
     scheduleRetry();
     return { ok: true };
@@ -1596,11 +1619,27 @@ async function releaseTab(tab, expected = null, expectedDocument = null, expecte
   return { ok: true, closed: delivered.pending === 0, pendingClose: delivered.pending };
 }
 
+function projectPrefixFromUrl(value) {
+  try {
+    const url = new URL(String(value || ''));
+    if (url.protocol !== 'https:' || (url.hostname !== 'chatgpt.com' && url.hostname !== 'chat.openai.com')) return null;
+    const match = /^\/g\/(g-p-[A-Za-z0-9_-]{6,160})(?:\/|$)/i.exec(url.pathname);
+    return match ? `/g/${match[1]}` : null;
+  } catch {
+    return null;
+  }
+}
+
+function projectPathFromUrl(value) {
+  const prefix = projectPrefixFromUrl(value);
+  return prefix ? `${prefix}/project` : null;
+}
+
 function conversationFromUrl(value) {
   try {
     const url = new URL(String(value || ''));
     if (url.protocol !== 'https:' || (url.hostname !== 'chatgpt.com' && url.hostname !== 'chat.openai.com')) return null;
-    const match = /^\/c\/([0-9a-f-]{8,64})/i.exec(url.pathname);
+    const match = /^\/(?:g\/g-p-[A-Za-z0-9_-]{6,160}\/)?c\/([0-9a-f-]{8,64})(?:\/|$)/i.exec(url.pathname);
     return match ? match[1] : null;
   } catch {
     return null;
@@ -1644,7 +1683,10 @@ const HANDLERS = {
     // Not after a deliberate disconnect: opening the popup to check is not a request to
     // undo the thing the popup was opened to check.
     if (found && !token && !disconnected) await provision();
+    let agentsStatus = null;
     if (found && token) {
+      const snapshot = await call('/activity', { method: 'POST', body: JSON.stringify({ since: 0 }) });
+      if (snapshot.ok && snapshot.data && typeof snapshot.data.agentsStatus === 'object') agentsStatus = snapshot.data.agentsStatus;
       void drainCommandAcks()
         .then(() => drain())
         .then(() => drainCloses())
@@ -1662,6 +1704,7 @@ const HANDLERS = {
       appProtocol: found ? found.bridge : null,
       extensionVersion: chrome.runtime.getManifest().version,
       extensionProtocol: BRIDGE_PROTOCOL,
+      agentsStatus,
       ...(pairingError ? { pairError: pairingError } : {})
     };
   },
@@ -1685,6 +1728,7 @@ const HANDLERS = {
     // Invalidate any `/pair` already on the wire before changing the visible/persisted state.
     connectionEpoch++;
     token = null;
+    authGeneration++;
     // Remembered, not just cleared. Otherwise the next request — two seconds away in any
     // open tab — provisions a new token and the browser is connected again.
     disconnected = true;
@@ -1878,19 +1922,80 @@ const HANDLERS = {
     });
     return ownsDocument(source) ? result : { ok: false, error: 'stale_document' };
   },
+  async bind_agent(message, _sender, source) {
+    await load();
+    if (!ownsDocument(source)) return { ok: false, error: 'stale_document' };
+    const conversationId = cleanConversationId(message.conversationId);
+    const marker = typeof message.marker === 'string' && /^[A-Za-z0-9_-]{20,100}$/.test(message.marker)
+      ? message.marker
+      : null;
+    if (!conversationId || !marker) return { ok: false, error: 'bad_binding' };
+    await noteTabConversation(source, conversationId);
+    if (!ownsDocument(source)) return { ok: false, error: 'stale_document' };
+    const result = await call('/bindings', {
+      method: 'POST',
+      body: JSON.stringify({ marker, conversationId })
+    });
+    return ownsDocument(source) ? result : { ok: false, error: 'stale_document' };
+  },
+  async open_agent_command(message, _sender, source) {
+    await load();
+    if (!ownsDocument(source)) return { ok: false, error: 'stale_document' };
+    const id = typeof message.id === 'string' && /^[A-Za-z0-9_-]{8,100}$/.test(message.id)
+      ? message.id
+      : null;
+    if (!id) return { ok: false, error: 'bad_command_id' };
+    const conversationId = cleanConversationId(message.conversationId);
+    let tabs = [];
+    try {
+      tabs = await chrome.tabs.query({ url: CHATGPT_TAB_URLS });
+    } catch {
+      tabs = [];
+    }
+    const existing = tabs.find((tab) => {
+      if (!tab || typeof tab.id !== 'number' || typeof tab.url !== 'string') return false;
+      try {
+        const url = new URL(tab.url);
+        return url.searchParams.get('clf') === id || url.hash === `#clf=${encodeURIComponent(id)}`;
+      } catch {
+        return false;
+      }
+    });
+    if (existing) return { ok: true, opened: false, tabId: existing.id };
+    let projectPrefix = null;
+    try {
+      const opener = Number.isInteger(source && source.tab) ? await chrome.tabs.get(source.tab) : null;
+      projectPrefix = projectPrefixFromUrl(opener && opener.url);
+    } catch {
+      projectPrefix = null;
+    }
+    const url = conversationId
+      ? new URL(projectPrefix ? `https://chatgpt.com${projectPrefix}/c/${conversationId}` : `https://chatgpt.com/c/${conversationId}`)
+      : new URL(projectPrefix ? `https://chatgpt.com${projectPrefix}/project` : 'https://chatgpt.com/');
+    url.searchParams.set('clf', id);
+    url.hash = `clf=${encodeURIComponent(id)}`;
+    try {
+      const created = await chrome.tabs.create({ url: url.toString(), active: false });
+      return { ok: true, opened: true, tabId: created && typeof created.id === 'number' ? created.id : null };
+    } catch {
+      return { ok: false, error: 'worker_tab_open_failed' };
+    }
+  },
   async activity(message, _sender, source) {
     await load();
     if (!ownsDocument(source)) return { ok: false, error: 'stale_document' };
     await noteTabConversation(source, message.conversationId);
     if (!ownsDocument(source)) return { ok: false, error: 'stale_document' };
-    // Goal drafts are conversation-scoped in the app but browser writes are tab-scoped. Tell
-    // the app which tab is polling so two tabs showing the same chat cannot both receive and
-    // submit one ready Goal draft.
-    const query =
-      `?conversationId=${encodeURIComponent(message.conversationId)}` +
-      `&since=${Number(message.since) || 0}` +
-      `&goalClient=${encodeURIComponent(String(source.tab))}`;
-    const result = await call(`/activity${query}`);
+    // Keep activity on the same authenticated POST path that already works for the browser
+    // bridge instead of depending on Chrome's inconsistent Origin behavior for privileged GETs.
+    const result = await call('/activity', {
+      method: 'POST',
+      body: JSON.stringify({
+        conversationId: message.conversationId,
+        since: Number(message.since) || 0,
+        goalClient: String(source.tab)
+      })
+    });
     return ownsDocument(source) ? result : { ok: false, error: 'stale_document' };
   },
   /** Reinstall the least-trusted MAIN-world reader when a live content script loses it. */
@@ -2198,6 +2303,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     'bind',
     'activity',
     'correlate',
+    'bind_agent',
+    'open_agent_command',
     'closed',
     'compact',
     'auto_compact_claim',

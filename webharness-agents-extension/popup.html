@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>Chat On Steroids</title>
+    <title>WebHarness Agents</title>
     <link rel="stylesheet" href="popup.css" />
   </head>
   <body>
@@ -24,12 +24,12 @@
 
       <header>
         <img class="glyph" src="icons/icon48.png" alt="" width="34" height="34" />
-        <h1>Chat On Steroids</h1>
+        <h1>WebHarness Agents</h1>
       </header>
 
-      <p class="pill" id="pill"><span class="dot"></span><span id="state">Looking for the app</span></p>
+      <p class="pill" id="pill"><span class="dot"></span><span id="state">Looking for the Agent Broker</span></p>
 
-      <p class="caption">Session capture</p>
+      <p class="caption">Agent bridge</p>
       <section class="card">
         <div class="row" id="r-tab">
           <svg class="ico"><use href="#i-tab" /></svg>
@@ -39,7 +39,7 @@
       </div>
       <div class="row" id="r-rec">
         <svg class="ico"><use href="#i-rec" /></svg>
-        <span class="name">Recording this chat</span>
+        <span class="name">Observing this chat</span>
         <span class="meta" id="d-rec"></span>
         <span class="badge"></span>
       </div>
@@ -58,14 +58,14 @@
       <details id="stream">
         <summary class="row" id="r-app">
           <svg class="ico"><use href="#i-send" /></svg>
-          <span class="name">Reaching the app</span>
+          <span class="name">Reaching the Agent Broker</span>
           <span class="meta" id="d-app"></span>
           <span class="badge"></span>
           <span class="chevron" aria-hidden="true"></span>
         </summary>
         <div class="stages">
           <div class="stage" id="s-read"><span class="tick"></span><span class="name">Picked up</span><span class="meta" id="n-read"></span></div>
-          <div class="stage" id="s-sent"><span class="tick"></span><span class="name">Sent to app</span><span class="meta" id="n-sent"></span></div>
+          <div class="stage" id="s-sent"><span class="tick"></span><span class="name">Sent to broker</span><span class="meta" id="n-sent"></span></div>
           <div class="stage" id="s-proc"><span class="tick"></span><span class="name">App processed</span><span class="meta" id="n-proc"></span></div>
           <p class="why" id="why"></p>
           <div class="calls" id="calls"></div>
@@ -74,22 +74,6 @@
     </section>
 
     <p class="alert" id="alert" hidden></p>
-
-    <p class="caption">Augment ChatGPT</p>
-    <section class="card">
-      <label class="row" for="overwriteToggle">
-        <svg class="ico"><use href="#i-pen" /></svg>
-        <span class="name">Overwrite ChatGPT</span>
-        <input id="overwriteToggle" type="checkbox" checked />
-        <span class="track" aria-hidden="true"><span class="thumb"></span></span>
-      </label>
-      <label class="row" for="timeToggle">
-        <svg class="ico"><use href="#i-clock" /></svg>
-        <span class="name">Timestamps</span>
-        <input id="timeToggle" type="checkbox" />
-        <span class="track" aria-hidden="true"><span class="thumb"></span></span>
-      </label>
-    </section>
 
     <details id="more">
       <summary class="card row">

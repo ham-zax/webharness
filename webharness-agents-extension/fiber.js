@@ -37,7 +37,7 @@
   'use strict';
 
   /** Bumped when the descriptor shape changes, so a stale pair cannot half-understand. */
-  const VERSION = 10;
+  const VERSION = 11;
   // The MAIN world survives an extension reload because the ChatGPT document survives it.
   // Recovery may therefore execute this file again in a page that still has an older helper
   // listener. Keep at most one listener for this protocol version; content.js rejects older
@@ -90,21 +90,8 @@
     budget.remaining -= taken.length;
     return taken;
   }
-  /**
-   * The connectors this app is reached through. Nothing else is ours to vouch for.
-   *
-   * There is more than one now: 1.7.1 split the model-facing surface into a Core and a
-   * Desktop connector, so a single hardcoded name stopped matching *anything* the page
-   * held — every call in every chat lost its page evidence at once and was filed outside
-   * the conversation that made it. The name is not user input: ChatGPT takes `app_name`
-   * from the `resource_name` this app serves in its own protected-resource metadata
-   * (`server.ts`), so these are this app naming itself rather than labels somebody typed.
-   * The pre-1.7.1 name stays so an older chat's evidence still reads.
-   *
-   * Exact names, never a prefix: `Chat On Steroids Backup` would be somebody else's
-   * connector, and a prefix test would have this app vouch for its traffic.
-   */
-  const OUR_APPS = ['Chat On Steroids Core', 'Chat On Steroids Desktop', 'TobisComputer'];
+  /** Exact protected-resource name of the WebHarness connector this adapter may vouch for. */
+  const OUR_APPS = ['wsl-web-harness'];
 
   /** Whether an `invoked_resource.app_name` names one of this app's own connectors. */
   function ourApp(name) {
@@ -129,6 +116,10 @@
   const PATH_HEAD = /^\s*\{\s*"path"\s*:\s*"([^"\\]{1,200})"/;
   /** A tool name we are willing to put on a row. */
   const NAME = /^[a-z0-9_.-]{1,64}$/i;
+  /** Exact Agents tool names accepted for one-time browser binding. */
+  const AGENTS_TOOL = /^(?:agents|agents(?:-experiment)?_1mcp_agents)$/i;
+  /** One-time Agents binding marker emitted only inside an Agents connector result. */
+  const AGENT_BINDING = /(?:^|\n)WEBHARNESS_AGENT_BIND:([A-Za-z0-9_-]{20,100})(?:\n|$)/;
 
   // Captured before the page can swap them. If the page has already replaced one of these
   // at load time there is nothing to be done about it, but it cannot do so afterwards.
@@ -897,13 +888,49 @@
     return asked || answered;
   }
 
+  /** The one allowlisted Agents binding marker inside a connector result, or null. */
+  function bindingMarker(message) {
+    const content = message && typeof message === 'object' ? message.content : null;
+    if (!content || typeof content !== 'object') return null;
+    let found = null;
+    const inspect = (value) => {
+      if (typeof value !== 'string' || value.length === 0 || value.length > 64_000) return true;
+      const match = AGENT_BINDING.exec(value);
+      if (!match) return true;
+      if (found && found !== match[1]) return false;
+      found = match[1];
+      return true;
+    };
+    if (!inspect(content.text)) return null;
+    if (!found && typeof content.text === 'string' && content.text.length <= 64_000) {
+      try {
+        const wrapped = JSON.parse(content.text);
+        if (wrapped && typeof wrapped === 'object' && !Array.isArray(wrapped)) {
+          if (!inspect(wrapped.text)) return null;
+        }
+      } catch {
+        // Ordinary non-JSON tool text stays on the direct path above.
+      }
+    }
+    if (Array.isArray(content.parts)) {
+      for (let at = 0; at < content.parts.length; at++) {
+        if (!inspect(content.parts[at])) return null;
+      }
+    }
+    return found;
+  }
+
   /** The connector a result came back through, and whether it came back at all. */
   function resultOf(message) {
     if (!message || typeof message !== 'object') return null;
     const meta = message.metadata;
     const resource = meta && meta.invoked_resource;
     if (!resource || typeof resource !== 'object') return null;
-    return { app: str(resource.app_name), resource: str(resource.resource_uri) };
+    return {
+      app: str(resource.app_name),
+      resource: str(resource.resource_uri),
+      binding: bindingMarker(message)
+    };
   }
   /** Exact number of this app's own invocations represented by the whole turn, or null. */
   function localCountOf(messages) {
@@ -1032,17 +1059,23 @@
     if (!Array.isArray(messages)) return [];
     const out = [];
     const seen = new Set();
-    const answered = new Set();
-    // Results first, so a request can say whether its own answer has arrived. `parent_id`
-    // is what pairs them; position does not, and pairing by position is how a row came to
-    // sit over another tool's output.
+    const answered = new Map();
+    // Results first, so a request can say whether its own answer has arrived and, for the
+    // Agents experiment only, carry the one allowlisted binding marker from that exact
+    // connector result. `parent_id` is what pairs them; position does not.
     for (let at = 0; at < messages.length && answered.size < MAX_CALLS; at++) {
       const message = messages[at];
       const result = resultOf(message);
       if (!result || !ourApp(result.app)) continue;
       const meta = message && typeof message === 'object' ? message.metadata : null;
       const parent = meta && typeof meta === 'object' ? str(meta.parent_id) : null;
-      if (parent) answered.add(parent);
+      if (!parent) continue;
+      const prior = answered.get(parent);
+      if (prior && prior.binding && result.binding && prior.binding !== result.binding) {
+        answered.set(parent, { ...result, binding: null });
+      } else if (!prior) {
+        answered.set(parent, result);
+      }
     }
 
     const duplicated = new Set();
@@ -1057,12 +1090,14 @@
       // for two different requests, which is the same piece of evidence spent twice.
       if (seen.has(id)) duplicated.add(id);
       seen.add(id);
-      const hasResult = answered.has(id);
+      const result = answered.get(id) || null;
+      const hasResult = result !== null;
       out.push({
         messageId: id,
         tool,
         order: 0,
         answered: hasResult,
+        binding: AGENTS_TOOL.test(tool) && result && result.binding ? result.binding : null,
         // ChatGPT's own id for the request, and its own timestamp for when the request was
         // created. The app's existing stamp is when the *extension* observed the row, which
         // is a poll tick and jitters per tab; these are the only values on either side that
