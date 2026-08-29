@@ -173,53 +173,14 @@ For the Personal Workstation Local domain, the outer 1MCP exposes only Local `to
 
 Windows browser calls do not attach to the everyday Chrome profile and require no `chrome://inspect` setup. The shared Windows runtime owns `%LOCALAPPDATA%\\mcp-dev-bridge\\chrome-profile`; on first use or after that browser exits, it launches visible Chrome with `--user-data-dir=<that directory>` and `--remote-debugging-port=0`, waits for the profile's `DevToolsActivePort`, and health-checks the loopback endpoint. Chrome chooses the port, so the bridge does not reserve a global `9222`. `browser-devtools` passes the resulting HTTP endpoint to Chrome DevTools MCP with `--browserUrl`; `browser-fast` passes the WebSocket endpoint to native Agent Browser with `--cdp` and `--pin-tab`. The profile is persistent: sign into sites in that MCP Chrome window once when needed, and cookies/local storage remain in that directory across restarts. Do not copy the everyday Chrome data directory into it. Agent Browser 0.35.0 plus its one-shot Windows Node helper remain materialized under `%LOCALAPPDATA%\\mcp-dev-bridge\\agent-browser\\0.35.0`; the helper owns bounded stdout/stderr files so cold daemon startup cannot keep the WSL interop lifetime open. Do not publish the debugging endpoint beyond the trusted local machine. Both logical servers default to this Windows profile; `browser_target=linux` selects the separate WSLg paths.
 
-### Switching the Linux browser-fast backend
+### Selecting the Linux browser-fast backend
 
-The live selector is `~/.config/mcp-dev-bridge/browser-fast.json`. It is reread without restarting the bridge. The normal Chrome configuration is:
+`~/.config/mcp-dev-bridge/browser-fast.json` defines the Linux default and managed Clearcote profiles. The maintained workstation keeps `clearcote` / `x-main` as its normal default. Do not rewrite this shared selector merely to use Chrome; changing it affects other conversations that omit an explicit backend.
 
-```json
-{
-  "version": 2,
-  "linux": {
-    "browser": "chrome"
-  },
-  "clearcote": {
-    "profiles": {
-      "x-main": {
-        "fingerprint": "x-main",
-        "platform": "linux",
-        "brand": "Chrome",
-        "headless": false,
-        "humanize": true,
-        "lightStealth": false
-      }
-    }
-  }
-}
-```
+For a normal Clearcote operation, use `browser_target="linux"` and omit `browser_backend`, or set `browser_backend="clearcote"`. `browser-fast` returns the resolved `browser_backend` and `browser_profile`; pass those values back to `execute` with the observed tab/ref state.
 
-To use the managed Clearcote profile, change only the Linux selector:
+For a Chrome operation, use `browser_target="linux"` with `browser_backend="chrome"`. This selects the independent managed Chrome session for that call without changing `browser-fast.json` and without closing the managed Clearcote runtime.
 
-```json
-{
-  "version": 2,
-  "linux": {
-    "browser": "clearcote",
-    "profile": "x-main"
-  },
-  "clearcote": {
-    "profiles": {
-      "x-main": {
-        "fingerprint": "x-main",
-        "platform": "linux",
-        "brand": "Chrome",
-        "headless": false,
-        "humanize": true,
-        "lightStealth": false
-      }
-    }
-  }
-}
-```
+When more than one managed Clearcote profile exists and the configured default does not identify the desired one, set `browser_profile` together with `browser_backend="clearcote"`. Otherwise omit `browser_profile`; the configured profile, or the only configured Clearcote profile, is used.
 
-Use `browser_target="linux"` and observe again. `browser-fast` starts and owns the persistent Clearcote profile beneath the bridge state directory and exposes its ephemeral debugging endpoint on loopback only. Agent Browser owns snapshots, refs, and tab IDs; Clearcote owns supported humanized input. `lightStealth` is optional and defaults off when omitted; set it to `true` only when you deliberately want Clearcote's light-stealth metadata preset. In Clearcote 0.27.0 that mode consumes the fingerprint seed while building launch arguments, so the later humanization installer does not receive that seed for its stable motor persona; persistent browser state remains on disk. Switch only between complete `browser-fast` operations and discard prior refs. The V1 external `cdpPort` form remains readable during migration but no separate `clearcote-serve` process is required for V2. Selecting `firefox` fails explicitly because the current Agent Browser observation layer is Chromium-CDP-only; Firefox needs a separate future driver adapter, not another config value.
+Managed Clearcote owns its persistent profile beneath bridge state and exposes an ephemeral debugging endpoint on loopback only. Agent Browser owns snapshots, refs, and tab IDs; Clearcote owns supported humanized input. `lightStealth` is optional and defaults off when omitted. The V1 external `cdpPort` form remains readable during migration but does not support per-call managed-profile selection. Firefox remains unsupported because the current Agent Browser observation layer is Chromium-CDP-only.

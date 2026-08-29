@@ -53,6 +53,22 @@ function targetName(value) {
   return target;
 }
 
+function browserSelection(target, backend, profile) {
+  if (target !== 'linux') {
+    if (backend !== undefined || profile !== undefined) {
+      throw fastError('INVALID_ARGUMENT', 'browser_backend and browser_profile are only valid with browser_target=linux');
+    }
+    return {};
+  }
+  if (backend !== undefined && !['chrome', 'clearcote'].includes(backend)) {
+    throw fastError('INVALID_ARGUMENT', 'browser_backend must be chrome or clearcote');
+  }
+  if (profile !== undefined && backend !== 'clearcote') {
+    throw fastError('INVALID_ARGUMENT', 'browser_profile requires browser_backend=clearcote');
+  }
+  return { browserBackend: backend, browserProfile: profile };
+}
+
 function artifactName(value) {
   const name = requiredString(value, 'upload.artifact');
   if (!/^[A-Za-z0-9._-]+$/.test(name)) throw fastError('INVALID_ARGUMENT', 'upload.artifact must contain only letters, numbers, dot, underscore, or hyphen');
@@ -471,15 +487,16 @@ export class AgentBrowserRunner {
     return { items, stderr: stderr.join('\n'), exitCode };
   }
 
-  async linuxBatch(commands, { bail = true } = {}) {
-    const selected = await this.linuxBackendResolve();
+  async linuxBatch(commands, { bail = true, browserBackend, browserProfile } = {}) {
+    const selected = await this.linuxBackendResolve({ browser: browserBackend, profile: browserProfile });
     if (selected.managed === true) {
       const runtime = await this.clearcoteRuntime.ensure(selected);
       const backend = { ...selected, cdp: runtime.cdp };
-      return this.managedLinuxBatch(backend, commands, { bail });
+      const result = await this.managedLinuxBatch(backend, commands, { bail });
+      return { ...result, browserBackend: selected.browser, browserProfile: selected.profileName };
     }
-    await this.clearcoteRuntime.close();
-    return this.linuxAgentBatch(selected, commands, { bail });
+    const result = await this.linuxAgentBatch(selected, commands, { bail });
+    return { ...result, browserBackend: selected.browser, browserProfile: null };
   }
 
   async targetBatch(target, commands, options) {
@@ -495,11 +512,15 @@ export class AgentBrowserRunner {
     return translated.stdout;
   }
 
-  async batch(target, commands, { bail = true, tab } = {}) {
+  async batch(target, commands, { bail = true, tab, browserBackend, browserProfile } = {}) {
     if (tab !== undefined) {
       try {
         const requestedTab = requiredString(tab, 'tab');
-        const listing = await this.targetBatch(target, [['tab', 'list']], { bail: true });
+        const listing = await this.targetBatch(target, [['tab', 'list']], {
+          bail: true,
+          browserBackend,
+          browserProfile
+        });
         const listed = listing.items[0];
         if (listed?.success !== true) {
           return { items: [], stderr: listing.stderr, exitCode: 1, contextError: listed?.error || 'failed to inspect current tab context' };
@@ -520,7 +541,7 @@ export class AgentBrowserRunner {
       }
     }
     try {
-      return await this.targetBatch(target, commands, { bail });
+      return await this.targetBatch(target, commands, { bail, browserBackend, browserProfile });
     } catch (error) {
       if (target !== 'windows') throw error;
       const message = error instanceof Error ? error.message : String(error);
@@ -641,26 +662,31 @@ export class FastBrowser {
     if (listed.contextError) return { error: listed.contextError };
     const item = listed.items[0];
     if (item?.success !== true) return { error: item?.error || 'tab list failed' };
-    return { tabs: item.result?.tabs ?? [] };
+    return {
+      tabs: item.result?.tabs ?? [],
+      browserBackend: listed.browserBackend,
+      browserProfile: listed.browserProfile
+    };
   }
 
-  async observeUnlocked(target, { scope = 'interactive', include_urls = true, tab } = {}) {
+  async observeUnlocked(target, { scope = 'interactive', include_urls = true, tab, browserBackend, browserProfile } = {}) {
     let selectedTab = tab === undefined ? undefined : requiredString(tab, 'tab');
+    const runnerOptions = { browserBackend, browserProfile };
     if (selectedTab === undefined) {
-      const listed = await this.listTabsUnlocked(target);
+      const listed = await this.listTabsUnlocked(target, runnerOptions);
       if (listed.error) throw fastError('BROWSER_FAST_OBSERVE_FAILED', listed.error);
       const tabs = listed.tabs;
       const current = tabs.find(item => item.active === true) ?? tabs[0];
       selectedTab = current?.targetId ?? current?.tabId;
       if (!selectedTab) throw fastError('BROWSER_FAST_OBSERVE_FAILED', 'browser has no tab available');
     }
-    const selected = await this.runner.batch(target, [['tab', selectedTab]], { bail: true });
+    const selected = await this.runner.batch(target, [['tab', selectedTab]], { bail: true, ...runnerOptions });
     if (selected.contextError) throw fastError('BROWSER_FAST_OBSERVE_FAILED', selected.contextError);
     const selectedItem = selected.items[0];
     if (selectedItem?.success !== true) throw fastError('BROWSER_FAST_OBSERVE_FAILED', selectedItem?.error || `failed to select tab ${selectedTab}`);
 
     const commands = [snapshotCommand(scope, include_urls), ['tab', 'list']];
-    const batch = await this.runner.batch(target, commands, { bail: true });
+    const batch = await this.runner.batch(target, commands, { bail: true, ...runnerOptions });
     if (batch.contextError) throw fastError('BROWSER_FAST_OBSERVE_FAILED', batch.contextError);
     const { items } = batch;
     if (items.some(item => item?.success !== true)) {
@@ -680,6 +706,10 @@ export class FastBrowser {
     const memory = await resolveBrowserMemory(origin, { root: this.memoryRoot });
     return {
       browser_target: target,
+      ...(target === 'linux' ? {
+        browser_backend: batch.browserBackend ?? browserBackend ?? null,
+        browser_profile: batch.browserProfile ?? browserProfile ?? null
+      } : {}),
       active_tab: tabs.find(item => item.active)?.tab_id ?? null,
       origin,
       snapshot: snapshotItem.snapshot ?? '',
@@ -689,13 +719,15 @@ export class FastBrowser {
     };
   }
 
-  async observe({ browser_target, scope = 'interactive', include_urls = true, tab } = {}) {
+  async observe({ browser_target, browser_backend, browser_profile, scope = 'interactive', include_urls = true, tab } = {}) {
     const target = targetName(browser_target);
-    return this.withTargetLock(target, () => this.observeUnlocked(target, { scope, include_urls, tab }));
+    const selection = browserSelection(target, browser_backend, browser_profile);
+    return this.withTargetLock(target, () => this.observeUnlocked(target, { scope, include_urls, tab, ...selection }));
   }
 
-  async execute({ browser_target, actions, stop_on_error = true, final_state = 'interactive', tab } = {}) {
+  async execute({ browser_target, browser_backend, browser_profile, actions, stop_on_error = true, final_state = 'interactive', tab } = {}) {
     const target = targetName(browser_target);
+    const selection = browserSelection(target, browser_backend, browser_profile);
     const requestedTab = requiredString(tab, 'tab');
     if (!Array.isArray(actions) || actions.length === 0) throw fastError('INVALID_ARGUMENT', 'actions must be a non-empty array');
     const preparedActions = [];
@@ -714,7 +746,7 @@ export class FastBrowser {
     const actionCommands = preparedActions.map(actionCommand);
 
     return this.withTargetLock(target, async () => {
-      const initial = await this.listTabsUnlocked(target, { tab: requestedTab });
+      const initial = await this.listTabsUnlocked(target, { tab: requestedTab, ...selection });
       if (initial.error) {
         return {
           browser_target: target,
@@ -734,7 +766,8 @@ export class FastBrowser {
 
         if (clickIndex > index) {
           const batch = await this.runner.batch(target, actionCommands.slice(index, clickIndex), {
-            bail: stop_on_error !== false
+            bail: stop_on_error !== false,
+            ...selection
           });
           if (batch.contextError) {
             transitionError = batch.contextError;
@@ -749,13 +782,13 @@ export class FastBrowser {
 
         if (index >= actionCommands.length) break;
 
-        const before = index === 0 ? initial : await this.listTabsUnlocked(target);
+        const before = index === 0 ? initial : await this.listTabsUnlocked(target, selection);
         if (before.error) {
           transitionError = `failed to inspect tabs before click: ${before.error}`;
           break;
         }
         const beforeIds = new Set(before.tabs.map(item => item.targetId ?? item.tabId).filter(Boolean));
-        const click = await this.runner.batch(target, [actionCommands[index]], { bail: true });
+        const click = await this.runner.batch(target, [actionCommands[index]], { bail: true, ...selection });
         if (click.contextError) {
           transitionError = click.contextError;
           break;
@@ -765,7 +798,7 @@ export class FastBrowser {
         index += 1;
 
         if (clickItem?.success === true || clickItem?.uncertain === true) {
-          const after = await this.listTabsUnlocked(target);
+          const after = await this.listTabsUnlocked(target, selection);
           if (after.error) {
             transitionError = `click completed but new-tab detection failed: ${after.error}`;
             break;
@@ -780,7 +813,7 @@ export class FastBrowser {
           }
           if (newTabs.length === 1) {
             const newTab = newTabs[0].targetId ?? newTabs[0].tabId;
-            const selected = await this.runner.batch(target, [['tab', newTab]], { bail: true });
+            const selected = await this.runner.batch(target, [['tab', newTab]], { bail: true, ...selection });
             const selectedItem = selected.items[0];
             if (selected.contextError || selectedItem?.success !== true) {
               transitionError = `click opened tab ${newTab}, but binding it failed: ${selected.contextError || selectedItem?.error || 'tab selection failed'}`;
@@ -817,7 +850,8 @@ export class FastBrowser {
           if (!['interactive', 'compact', 'full'].includes(final_state)) throw fastError('INVALID_ARGUMENT', `unknown final_state: ${String(final_state)}`);
           finalState = await this.observeUnlocked(target, {
             scope: final_state,
-            include_urls: true
+            include_urls: true,
+            ...selection
           });
         } catch (error) {
           finalStateError = error instanceof Error ? error.message : String(error);
@@ -826,6 +860,10 @@ export class FastBrowser {
 
       return {
         browser_target: target,
+        ...(target === 'linux' ? {
+          browser_backend: initial.browserBackend ?? browser_backend ?? null,
+          browser_profile: initial.browserProfile ?? browser_profile ?? null
+        } : {}),
         outcome,
         failed_at: failedAt,
         transition_error: transitionError,
@@ -880,7 +918,9 @@ export function createBrowserFastServer({ browser } = {}) {
       inputSchema: {
         type: 'object',
         properties: {
-          browser_target: { type: 'string', enum: ['windows', 'linux'], description: 'Omit for the dedicated persistent Windows MCP Chrome profile; use linux for the configured Linux browser backend (managed Chrome or managed Clearcote).' },
+          browser_target: { type: 'string', enum: ['windows', 'linux'], description: 'Omit for the dedicated persistent Windows MCP Chrome profile; use linux for a Linux Browser Fast backend.' },
+          browser_backend: { type: 'string', enum: ['chrome', 'clearcote'], description: 'Linux only. Select Chrome or managed Clearcote for this call without changing the shared browser-fast config. Omit to use the configured Linux default.' },
+          browser_profile: { type: 'string', minLength: 1, maxLength: 64, pattern: '^[A-Za-z0-9._-]+$', description: 'Linux Clearcote only. Select a named managed Clearcote profile; normally omit to use the configured profile or the only configured Clearcote profile.' },
           scope: { type: 'string', enum: ['interactive', 'compact', 'full'], default: 'interactive' },
           include_urls: { type: 'boolean', default: true },
           tab: { type: 'string', minLength: 1, description: 'Optional stable tab ID or CDP target ID to select before observing.' }
@@ -895,7 +935,9 @@ export function createBrowserFastServer({ browser } = {}) {
       inputSchema: {
         type: 'object',
         properties: {
-          browser_target: { type: 'string', enum: ['windows', 'linux'], description: 'Omit for the dedicated persistent Windows MCP Chrome profile; use linux for the configured Linux browser backend (managed Chrome or managed Clearcote).' },
+          browser_target: { type: 'string', enum: ['windows', 'linux'], description: 'Omit for the dedicated persistent Windows MCP Chrome profile; use linux for a Linux Browser Fast backend.' },
+          browser_backend: { type: 'string', enum: ['chrome', 'clearcote'], description: 'Linux only. Select Chrome or managed Clearcote for this call without changing the shared browser-fast config. Use the same backend returned by observe for refs/tab identity.' },
+          browser_profile: { type: 'string', minLength: 1, maxLength: 64, pattern: '^[A-Za-z0-9._-]+$', description: 'Linux Clearcote only. Use the same profile returned by observe when one is reported.' },
           tab: { type: 'string', minLength: 1, description: 'Required tab ID from the latest observe result. Execution validates that the pinned Agent Browser session is still on this exact tab and fails closed on mismatch; it does not switch tabs.' },
           actions: { type: 'array', items: ACTION_SCHEMA, minItems: 1, maxItems: 64 },
           stop_on_error: { type: 'boolean', default: true, description: 'Stop at the first failed action. The executor never retries actions automatically.' },
