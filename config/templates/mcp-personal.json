@@ -49,6 +49,18 @@
         "terminal"
       ]
     },
+    "agents": {
+      "command": "node",
+      "args": [
+        "__REPO_ROOT__/providers/agents/server.mjs"
+      ],
+      "env": {
+        "MCP_AGENT_SOCKET": "__AGENT_SOCKET__"
+      },
+      "tags": [
+        "agents"
+      ]
+    },
     "local": {
       "command": "node",
       "args": [

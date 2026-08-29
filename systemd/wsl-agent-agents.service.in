@@ -1,0 +1,21 @@
+[Unit]
+Description=WebHarness Agent Broker
+Documentation=file://@REPO_ROOT@/docs/operations.md
+ConditionPathExists=@REPO_ROOT@/providers/agents/broker.mjs
+
+[Service]
+Type=simple
+WorkingDirectory=@REPO_ROOT@
+Environment=HOME=@USER_HOME@
+Environment=PATH=@PATH@
+Environment=MCP_AGENT_SOCKET=%t/wsl-agent-agents.sock
+Environment=MCP_AGENT_STATE_ROOT=@STATE_ROOT@
+ExecStart=@NODE_BIN@ @REPO_ROOT@/providers/agents/broker.mjs
+Restart=on-failure
+RestartSec=2
+KillMode=control-group
+TimeoutStopSec=10
+UMask=0077
+
+[Install]
+WantedBy=default.target

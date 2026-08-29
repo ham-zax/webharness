@@ -274,6 +274,7 @@ export async function renderConfig(options) {
     __DEV_SPOOL_TTL_SECONDS__: String(devSpoolTtlSeconds),
     __DEV_SPOOL_MAX_TOTAL_BYTES__: String(devSpoolMaxTotalBytes),
     __TERMINAL_SOCKET__: runtimeDir ? path.join(runtimeDir, 'wsl-agent-terminal.sock') : '',
+    __AGENT_SOCKET__: runtimeDir ? path.join(runtimeDir, 'wsl-agent-agents.sock') : '',
     __TERMINAL_FRONTEND__: terminalFrontend,
     __RUNTIME_DIR__: runtimeDir ?? '',
     __LOCAL_INNER_CONFIG__: localInnerConfigPath,
