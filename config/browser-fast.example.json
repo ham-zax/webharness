@@ -1,0 +1,18 @@
+{
+  "version": 2,
+  "linux": {
+    "browser": "chrome"
+  },
+  "clearcote": {
+    "profiles": {
+      "x-main": {
+        "fingerprint": "x-main",
+        "platform": "linux",
+        "brand": "Chrome",
+        "headless": false,
+        "humanize": true,
+        "lightStealth": false
+      }
+    }
+  }
+}

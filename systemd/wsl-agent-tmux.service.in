@@ -1,0 +1,21 @@
+[Unit]
+Description=WSL Agent dedicated tmux lifetime authority
+Documentation=file://@REPO_ROOT@/docs/benchmarks/terminal-preflight.md
+ConditionPathExists=@TMUX_BIN@
+
+[Service]
+Type=simple
+Environment=HOME=@USER_HOME@
+Environment=PATH=@PATH@
+Environment=WAYLAND_DISPLAY=wayland-0
+Environment=DISPLAY=:0
+Environment=PULSE_SERVER=unix:/mnt/wslg/PulseServer
+EnvironmentFile=-@OWNER_ENV_FILE@
+ExecStart=@TMUX_BIN@ -D -L wsl-agent -f /dev/null
+Restart=on-failure
+RestartSec=2
+KillMode=control-group
+TimeoutStopSec=10
+
+[Install]
+WantedBy=default.target

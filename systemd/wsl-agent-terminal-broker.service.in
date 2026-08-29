@@ -1,0 +1,30 @@
+[Unit]
+Description=WSL Agent terminal broker
+Documentation=file://@REPO_ROOT@/docs/benchmarks/terminal-preflight.md
+Requires=wsl-agent-tmux.service
+After=wsl-agent-tmux.service
+ConditionPathExists=@REPO_ROOT@/providers/terminal/broker.mjs
+
+[Service]
+Type=simple
+WorkingDirectory=@REPO_ROOT@
+Environment=HOME=@USER_HOME@
+Environment=PATH=@PATH@
+Environment=WAYLAND_DISPLAY=wayland-0
+Environment=DISPLAY=:0
+Environment=PULSE_SERVER=unix:/mnt/wslg/PulseServer
+EnvironmentFile=-@OWNER_ENV_FILE@
+Environment=MCP_TERMINAL_SOCKET=%t/wsl-agent-terminal.sock
+Environment=MCP_TERMINAL_STATE_ROOT=@STATE_ROOT@
+Environment=MCP_TERMINAL_DEFAULT_CWD=@USER_HOME@
+Environment=MCP_TERMINAL_TMUX_SOCKET_NAME=wsl-agent
+Environment=MCP_TERMINAL_TRANSCRIPT_BUDGET_BYTES=16777216
+ExecStart=@NODE_BIN@ @REPO_ROOT@/providers/terminal/broker.mjs
+Restart=on-failure
+RestartSec=2
+KillMode=control-group
+TimeoutStopSec=10
+UMask=0077
+
+[Install]
+WantedBy=default.target

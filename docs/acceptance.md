@@ -1,77 +1,83 @@
-# Acceptance Checklist
+# Reference Qualification
 
-Use this after a fresh installation, profile change, or release upgrade.
+WebHarness has two validation layers. The portable repository gate proves source contracts without depending on a live workstation. This checklist qualifies the maintained WSL reference deployment and must be run on that machine after a public-source promotion or a material runtime change.
 
-## 1. Portable tests
+## 1. Portable source gate
 
-From the repository root:
+Run the exact portable gate in [Development](development.md) in both the source checkout and the staged public checkout. It must pass without live Cloudflare credentials, ChatGPT OAuth, Windows Chrome automation, WSLg GUI launches, or changes to user linger.
 
-```bash
-bash tests/harness.sh
-bash tests/publication.sh
-bash tests/lifecycle.sh
-npm --prefix providers/pi-dev test
-npm --prefix providers/pi-dev audit --omit=dev
-```
+## 2. Reference environment and rendered state
 
-All must pass.
-
-## 2. Render both profiles without touching live state
-
-Use a temporary deployment fixture:
+From the canonical public checkout:
 
 ```bash
-tmp="$(mktemp -d)"
-cat > "$tmp/deployment.env" <<'ENV'
-MCP_WORKSPACE_ROOT=/tmp/example-workspace
-MCP_PUBLIC_URL=https://mcp.example.test
-MCP_TUNNEL_NAME=
-ENV
-mkdir -p /tmp/example-workspace
-
-node scripts/render-config.mjs --profile restricted \
-  --env-file "$tmp/deployment.env" --state-dir "$tmp/restricted"
-node scripts/render-config.mjs --profile trusted-dev \
-  --env-file "$tmp/deployment.env" --state-dir "$tmp/trusted-dev"
+bash scripts/check-personal-toolbox.sh
+webharness doctor --profile personal
+webharness status
 ```
 
-Both rendered `mcp.json` files must contain exactly one provider: `dev`.
+Required evidence:
 
-Expected tool policy:
+- doctor reports no failures;
+- the rendered source root is the canonical public checkout;
+- generated state remains current-user-owned with restrictive modes;
+- `webharness status` reports local/public health and `issues: 0`;
+- the existing `mcp-dev-bridge`, `wsl-agent-*`, state-root, and browser-profile identifiers remain unchanged unless a separately authorized migration changed them.
+
+## 3. Harmless capability calls
+
+Use the live MCP connection and exercise each public capability boundary without destructive or consequential work:
+
+- **Dev:** read a known repository file or run a bounded `pwd`/Git inspection.
+- **Code:** resolve a known symbol or obtain bounded repository context from the canonical public checkout.
+- **Terminal:** open a named shell session, print a harmless marker, and read it back.
+- **Local:** list/discover downstream tools with a bounded query.
+
+Record the observed results in the release/commit notes or operator log; do not write credentials into the repository.
+
+## 4. Terminal lifetime across bridge restart
+
+With the harmless Terminal session from the previous step still alive:
+
+1. record the tmux/Terminal session identity;
+2. restart only `mcp-dev-bridge.service` and, when its executable source changed, `wsl-agent-terminal-broker.service`;
+3. do **not** restart `wsl-agent-tmux.service`;
+4. list/read the same Terminal session again;
+5. confirm its PTY/process survived the bridge/broker restart.
+
+This proves the ownership invariant: tmux owns PTY lifetime; MCP/1MCP do not.
+
+## 5. Local browser discovery
+
+Through Local, confirm the live catalog contains both logical browser servers:
 
 ```text
-restricted  -> read, edit, write
-trusted-dev -> read, edit, write, bash
+browser-fast
+browser-devtools
 ```
 
-## 3. Verify the live service
+Load only one harmless schema from each. A GUI launch or website mutation is not required for this discovery check. When browser execution itself changed, separately exercise the target that changed under the operator's normal browser policy.
 
-```bash
-bin/status
-```
+## 6. Public MCP/OAuth connectivity
 
-Confirm local health, public health, and zero reported issues.
+From the maintained ChatGPT/MCP client:
 
-## 4. Local MCP initialize smoke
+- connect to the configured public MCP endpoint through Cloudflare;
+- complete or reuse the expected OAuth grant;
+- refresh the catalog and confirm the intended outer provider/tool surface is available;
+- make one harmless authenticated tool call.
 
-```bash
-scripts/smoke-local.sh
-```
+Do not copy authorization codes, tokens, cookies, or tunnel credentials into acceptance notes.
 
-This proves local MCP connectivity. It does not replace tool-level acceptance.
+## 7. Promotion/cutover completion
 
-## 5. ChatGPT tool smoke
+Qualification is complete only when:
 
-After connecting/refreshing the MCP integration:
+- the canonical `webharness` checkout is the independent public Git repository at the qualified commit;
+- the live rendered `MCP_BRIDGE_ROOT` points to that checkout;
+- the public checkout passes the portable gate;
+- doctor/status and the harmless capability checks above pass;
+- the pre-cutover Terminal session survives the required bridge/broker restart;
+- no OAuth state, browser profile, state root, tmux namespace, or service name was migrated merely to change source checkout.
 
-- Read: read a harmless workspace text file.
-- Write: create a disposable file with a workspace-relative path.
-- Edit: replace one exact string in that disposable file and inspect the returned diff.
-- Read: verify the edited contents.
-- Bash (`trusted-dev` only): run a harmless command such as `pwd` inside the workspace.
-
-Clean up the disposable file afterward.
-
-## 6. Security expectation
-
-Before using `trusted-dev`, verify that the Linux service account contains only the credentials/resources you intentionally allow an unrestricted development agent to reach. Before exposing the route beyond your trusted users, verify the separate authenticated identity/access perimeter described in [Security](security.md).
+See [Development](development.md) for the public classifier/staging workflow and [Operations](operations.md#safe-source-cutover) for source-path cutover mechanics.

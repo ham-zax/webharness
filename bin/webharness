@@ -1,0 +1,115 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SELF="$(readlink -f "${BASH_SOURCE[0]}")"
+ROOT="$(cd "$(dirname "$SELF")/.." && pwd)"
+
+usage() {
+  cat <<'EOF'
+WebHarness operator CLI
+
+Usage:
+  webharness setup --profile restricted|trusted-dev|personal [--enable-startup] [--env-file PATH] [--state-dir PATH]
+  webharness doctor [--profile restricted|trusted-dev|personal] [--env-file PATH] [--state-dir PATH]
+  webharness start
+  webharness stop
+  webharness restart
+  webharness status
+  webharness extension list|install|remove ...
+  webharness help
+EOF
+}
+
+install_self() {
+  local user_bin link
+  user_bin="${WEBHARNESS_USER_BIN_DIR:-${HOME:?HOME is required}/.local/bin}"
+  link="$user_bin/webharness"
+  mkdir -p "$user_bin"
+  if { [ -e "$link" ] || [ -L "$link" ]; } && [ ! -L "$link" ]; then
+    echo "refusing to replace non-symlink $link" >&2
+    return 1
+  fi
+  ln -sfn "$ROOT/bin/webharness" "$link"
+  echo "installed webharness: $link -> $ROOT/bin/webharness"
+}
+
+setup_command() {
+  local args=("$@") profile="" i
+  for ((i = 0; i < ${#args[@]}; i += 1)); do
+    if [ "${args[$i]}" = "--profile" ]; then
+      [ $((i + 1)) -lt ${#args[@]} ] || { echo "missing value for --profile" >&2; usage >&2; return 2; }
+      profile="${args[$((i + 1))]}"
+      break
+    fi
+  done
+
+  case "$profile" in
+    restricted|trusted-dev)
+      "$ROOT/scripts/setup.sh" "${args[@]}"
+      ;;
+    personal)
+      local forwarded=()
+      for ((i = 0; i < ${#args[@]}; i += 1)); do
+        if [ "${args[$i]}" = "--profile" ]; then
+          i=$((i + 1))
+          continue
+        fi
+        forwarded+=("${args[$i]}")
+      done
+      "$ROOT/scripts/bootstrap-personal.sh" "${forwarded[@]}"
+      ;;
+    "")
+      echo "setup requires --profile restricted, --profile trusted-dev, or --profile personal" >&2
+      usage >&2
+      return 2
+      ;;
+    *)
+      echo "unknown profile: $profile" >&2
+      usage >&2
+      return 2
+      ;;
+  esac
+
+  install_self
+}
+
+COMMAND="${1:-help}"
+if [ "$#" -gt 0 ]; then shift; fi
+
+case "$COMMAND" in
+  setup)
+    setup_command "$@"
+    ;;
+  doctor)
+    exec "$ROOT/scripts/doctor.sh" "$@"
+    ;;
+  start)
+    [ "$#" -eq 0 ] || { usage >&2; exit 2; }
+    exec "$ROOT/bin/start"
+    ;;
+  stop)
+    [ "$#" -eq 0 ] || { usage >&2; exit 2; }
+    exec "$ROOT/bin/stop"
+    ;;
+  restart)
+    [ "$#" -eq 0 ] || { usage >&2; exit 2; }
+    "$ROOT/bin/stop"
+    exec "$ROOT/bin/start"
+    ;;
+  status)
+    [ "$#" -eq 0 ] || { usage >&2; exit 2; }
+    exec "$ROOT/bin/status"
+    ;;
+  extension)
+    [ "$#" -gt 0 ] || { usage >&2; exit 2; }
+    exec "$ROOT/bin/extension" "$@"
+    ;;
+  help|-h|--help)
+    usage
+    ;;
+  *)
+    echo "unknown command: $COMMAND" >&2
+    usage >&2
+    exit 2
+    ;;
+esac

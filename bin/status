@@ -16,10 +16,15 @@ else
   DESIRED="stopped"
 fi
 PUBLIC_URL="$(cat "$BRIDGE_TUNNEL_URL_FILE" 2>/dev/null || printf '%s' "${TUNNEL_URL:-}")"
+RENDERED_SOURCE_ROOT="${MCP_BRIDGE_ROOT:-$BRIDGE_ROOT}"
 
 echo "== WebHarness =="
 echo "desired state: $DESIRED"
 echo "public URL:    ${PUBLIC_URL:-unconfigured}"
+echo "rendered source root: $RENDERED_SOURCE_ROOT"
+if [ "$RENDERED_SOURCE_ROOT" != "$BRIDGE_ROOT" ]; then
+  echo "diagnostic checkout:   $BRIDGE_ROOT"
+fi
 
 echo
 echo "== 1MCP OAuth origin =="
@@ -67,7 +72,7 @@ fi
 CLOUDFLARED_UP=false
 WATCHDOG_UP=false
 bridge_pidfile_alive "$BRIDGE_CLOUDFLARED_PID_FILE" 'cloudflared tunnel run' && CLOUDFLARED_UP=true
-bridge_pidfile_alive "$BRIDGE_WATCHDOG_PID_FILE" "$BRIDGE_ROOT/lib/bridge/watchdog.sh" && WATCHDOG_UP=true
+bridge_pidfile_alive "$BRIDGE_WATCHDOG_PID_FILE" "$RENDERED_SOURCE_ROOT/lib/bridge/watchdog.sh" && WATCHDOG_UP=true
 
 echo
 echo "== Cloudflare transport + supervision =="
@@ -93,6 +98,88 @@ if [ "$DESIRED" = "running" ]; then
 else
   if [ "$MCP_COUNT" -gt 0 ] || [ "$CLOUDFLARED_UP" = true ] || [ "$WATCHDOG_UP" = true ]; then
     warn "bridge is disabled but managed processes are still present"
+  fi
+fi
+
+storage_stats() {
+  local dir="$1" pattern="$2"
+  if [ ! -d "$dir" ]; then
+    printf '0 0 0\n'
+    return 0
+  fi
+  find "$dir" -maxdepth 1 -type f -name "$pattern" -printf '%s %T@\n' 2>/dev/null | \
+    awk -v now="$(date +%s)" '
+      { count += 1; bytes += $1; if (oldest == 0 || $2 < oldest) oldest = $2 }
+      END { age = oldest ? int(now - oldest) : 0; if (age < 0) age = 0; printf "%d %d %d\n", count, bytes, age }
+    '
+}
+
+echo
+echo "== retained diagnostics =="
+read -r LOG_FILES LOG_BYTES LOG_OLDEST_AGE < <(storage_stats "$BRIDGE_STATE_DIR/logs" 'one-mcp*.log')
+LOG_MAX_SIZE="$(sed -n 's/^maxSize[[:space:]]*=[[:space:]]*\([0-9][0-9]*\)[[:space:]]*$/\1/p' "$BRIDGE_CONFIG_DIR/config.toml" 2>/dev/null | head -n1)"
+LOG_MAX_FILES="$(sed -n 's/^maxFiles[[:space:]]*=[[:space:]]*\([0-9][0-9]*\)[[:space:]]*$/\1/p' "$BRIDGE_CONFIG_DIR/config.toml" 2>/dev/null | head -n1)"
+if [[ "$LOG_MAX_SIZE" =~ ^[0-9]+$ ]] && [[ "$LOG_MAX_FILES" =~ ^[0-9]+$ ]]; then
+  LOG_POLICY_BYTES=$((LOG_MAX_SIZE * LOG_MAX_FILES))
+else
+  LOG_POLICY_BYTES=0
+fi
+echo "1MCP rotated logs: files=$LOG_FILES bytes=$LOG_BYTES policy_bytes=$LOG_POLICY_BYTES oldest_age_seconds=$LOG_OLDEST_AGE"
+if [ "$DESIRED" = "running" ] && [ ! -f "$BRIDGE_CONFIG_DIR/config.toml" ]; then
+  warn "running bridge is missing 1MCP config.toml; re-render the deployment before restart"
+elif [ "$LOG_POLICY_BYTES" -gt 0 ] && [ "$LOG_BYTES" -gt "$LOG_POLICY_BYTES" ]; then
+  warn "1MCP rotated logs exceed configured nominal retention: $LOG_BYTES > $LOG_POLICY_BYTES bytes"
+fi
+
+DEV_SPOOL_BUDGET="$(node - "$BRIDGE_CONFIG_DIR/mcp.json" 2>/dev/null <<'NODE' || true
+const fs = require('fs');
+try {
+  const cfg = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+  const value = cfg.mcpServers?.dev?.env?.MCP_DEV_SPOOL_MAX_TOTAL_BYTES;
+  if (/^[1-9][0-9]*$/.test(value ?? '')) process.stdout.write(value);
+} catch {}
+NODE
+)"
+[[ "$DEV_SPOOL_BUDGET" =~ ^[0-9]+$ ]] || DEV_SPOOL_BUDGET=0
+read -r SPOOL_FILES SPOOL_BYTES SPOOL_OLDEST_AGE < <(storage_stats "$BRIDGE_STATE_DIR/dev" 'bash-*.log')
+read -r ACTIVE_FILES ACTIVE_BYTES ACTIVE_OLDEST_AGE < <(storage_stats "$BRIDGE_STATE_DIR/dev" 'bash-*.log.active')
+echo "Bash finalized spools: files=$SPOOL_FILES bytes=$SPOOL_BYTES budget_bytes=$DEV_SPOOL_BUDGET oldest_age_seconds=$SPOOL_OLDEST_AGE"
+echo "Bash active spools: files=$ACTIVE_FILES bytes=$ACTIVE_BYTES oldest_age_seconds=$ACTIVE_OLDEST_AGE"
+if [ "$DEV_SPOOL_BUDGET" -gt 0 ] && [ "$SPOOL_BYTES" -gt "$DEV_SPOOL_BUDGET" ]; then
+  warn "Bash finalized spool storage exceeds configured budget: $SPOOL_BYTES > $DEV_SPOOL_BUDGET bytes"
+fi
+
+LEGACY_LOG="$BRIDGE_RUN_DIR/one-mcp.log"
+if [ -f "$LEGACY_LOG" ]; then
+  LEGACY_LOG_BYTES="$(stat -c %s "$LEGACY_LOG" 2>/dev/null || printf '0')"
+  echo "legacy 1MCP console log: present bytes=$LEGACY_LOG_BYTES"
+  warn "legacy unbounded 1MCP console log is still present; a fresh native-logging launch removes it"
+else
+  echo "legacy 1MCP console log: absent"
+fi
+
+if [ "${MCP_BRIDGE_PROFILE:-}" = "personal" ]; then
+  echo
+echo "== Terminal broker =="
+  TERMINAL_SOCKET="$BRIDGE_RUNTIME_BASE/wsl-agent-terminal.sock"
+  if [ -S "$TERMINAL_SOCKET" ]; then
+    echo "broker socket: present ($TERMINAL_SOCKET)"
+  else
+    echo "broker socket: absent ($TERMINAL_SOCKET)"
+    if [ "$DESIRED" = "running" ]; then
+      warn "personal bridge is running without the Terminal broker socket"
+    fi
+  fi
+
+  USER_BUS="$BRIDGE_RUNTIME_BASE/bus"
+  if command -v systemctl >/dev/null 2>&1 && [ -S "$USER_BUS" ]; then
+    UNIT_STATE="$(XDG_RUNTIME_DIR="$BRIDGE_RUNTIME_BASE" DBUS_SESSION_BUS_ADDRESS="unix:path=$USER_BUS" \
+      systemctl --user show wsl-agent-terminal-broker.service --property=ActiveState --property=NRestarts 2>/dev/null || true)"
+    ACTIVE_STATE="$(sed -n 's/^ActiveState=//p' <<<"$UNIT_STATE" | head -n1)"
+    RESTARTS="$(sed -n 's/^NRestarts=//p' <<<"$UNIT_STATE" | head -n1)"
+    echo "user-systemd: active_state=${ACTIVE_STATE:-unknown} NRestarts=${RESTARTS:-unknown}"
+  else
+    echo "user-systemd: unavailable (broker socket remains the direct runtime signal)"
   fi
 fi
 

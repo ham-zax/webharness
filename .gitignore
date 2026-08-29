@@ -1,8 +1,11 @@
 .env
+mcp-dev-bridge-wsl-private-*.tar.gz
 run/
 config/logs/
 config/sessions/
-node_modules/
-**/node_modules/
+config/*.pid
 __pycache__/
 *.pyc
+
+.worktrees/
+node_modules/

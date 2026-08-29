@@ -45,6 +45,49 @@ export async function canonicalWorkspaceRoot(root) {
   return real;
 }
 
+export async function canonicalDefaultCwd(value) {
+  if (typeof value !== 'string' || !path.isAbsolute(value)) {
+    throw new Error('MCP_DEV_DEFAULT_CWD must be an absolute path');
+  }
+  requirePiStablePath(value, 'MCP_DEV_DEFAULT_CWD');
+  const real = await fs.realpath(value);
+  requirePiStablePath(real, 'MCP_DEV_DEFAULT_CWD');
+  const stat = await fs.stat(real);
+  if (!stat.isDirectory()) throw new Error('MCP_DEV_DEFAULT_CWD must be a directory');
+  return real;
+}
+
+export async function resolveUserPath(defaultCwd, value, { mustExist = true } = {}) {
+  const canonicalDefault = await canonicalDefaultCwd(defaultCwd);
+  if (typeof value !== 'string' || value.length === 0) throw new Error('path must be non-empty');
+  if (value.includes('\0')) throw new Error('path contains a NUL byte');
+  requirePiStablePath(value, 'path');
+  const candidate = path.isAbsolute(value) ? value : path.resolve(canonicalDefault, value);
+  requirePiStablePath(candidate, 'path');
+  if (!mustExist) return candidate;
+  const real = await fs.realpath(candidate);
+  requirePiStablePath(real, 'path');
+  return real;
+}
+
+export async function resolveUserCwd(defaultCwd, value) {
+  const canonicalDefault = await canonicalDefaultCwd(defaultCwd);
+  if (value !== undefined && value !== '') {
+    if (typeof value !== 'string') throw new Error('cwd must be a string');
+    if (value.includes('\0')) throw new Error('cwd contains a NUL byte');
+    requirePiStablePath(value, 'cwd');
+  }
+  const candidate = value === undefined || value === ''
+    ? canonicalDefault
+    : (path.isAbsolute(value) ? value : path.resolve(canonicalDefault, value));
+  requirePiStablePath(candidate, 'cwd');
+  const real = await fs.realpath(candidate);
+  requirePiStablePath(real, 'cwd');
+  const stat = await fs.stat(real);
+  if (!stat.isDirectory()) throw new Error('cwd must resolve to a directory');
+  return real;
+}
+
 export async function resolveExistingWorkspacePath(root, relativePath) {
   const canonicalRoot = await canonicalWorkspaceRoot(root);
   requireRelative(relativePath, 'path');

@@ -1,23 +1,14 @@
 # WSL trusted-dev example
 
-This example is for a dedicated WSL development environment where Bash authority as the Linux service user is intentional.
+This example represents a dedicated WSL development machine where unrestricted agentic shell authority is intentional.
 
 ```bash
 cp examples/wsl-trusted-dev/.env.example .env
-# edit the workspace, public URL, and tunnel name
+# edit paths and hostname
 scripts/setup.sh --profile trusted-dev
 scripts/install-systemd-user.sh
-systemctl --user enable --now mcp-dev-bridge.service
+systemctl --user start mcp-dev-bridge.service
 bin/status
 ```
 
-Expected ChatGPT tools after connection/refresh:
-
-```text
-Read
-Edit
-Write
-Bash
-```
-
-Read [Security](../../docs/security.md) before using this profile on an account that holds sensitive credentials or broad host access.
+`trusted-dev` does not make the filesystem provider global; its configured workspace roots still come from deployment configuration. The unrestricted shell, however, has the effective access of the Linux account running the bridge.

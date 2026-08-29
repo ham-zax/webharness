@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SELF="$(readlink -f "${BASH_SOURCE[0]}")"
+ROOT="$(cd "$(dirname "$SELF")/.." && pwd)"
+exec "${TERMINAL_NODE_BIN:-node}" "$ROOT/providers/terminal/cli.mjs" "$@"

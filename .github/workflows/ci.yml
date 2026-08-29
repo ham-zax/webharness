@@ -4,34 +4,40 @@ on:
   push:
   pull_request:
 
-permissions:
-  contents: read
-
 jobs:
-  test:
+  portable:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: '24'
-          cache: npm
-          cache-dependency-path: providers/pi-dev/package-lock.json
-      - name: Install Pi provider dependencies
-        run: npm --prefix providers/pi-dev ci
-      - name: Shell syntax
-        run: bash -n bin/* lib/bridge/*.sh scripts/*.sh tests/*.sh
-      - name: Node syntax
+
+      - name: Install pinned provider dependencies
+        shell: bash
         run: |
-          node --check scripts/render-config.mjs
-          node --check providers/pi-dev/server.mjs
-      - name: Harness tests
-        run: bash tests/harness.sh
-      - name: Publication tests
-        run: bash tests/publication.sh
-      - name: Lifecycle tests
-        run: bash tests/lifecycle.sh
-      - name: Pi provider tests
-        run: npm --prefix providers/pi-dev test
-      - name: Dependency audit
-        run: npm --prefix providers/pi-dev audit --omit=dev
+          set -euo pipefail
+          npm --prefix providers/pi-dev ci --omit=dev
+          npm --prefix providers/terminal ci --omit=dev
+          npm --prefix providers/code-router ci --omit=dev
+          npm --prefix providers/browser ci --omit=dev
+          npm --prefix providers/browser-fast ci --omit=dev
+          npm --prefix providers/local-tools ci --omit=dev
+
+      - name: Run portable repository gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash tests/harness.sh
+          bash tests/publication.sh
+          bash tests/lifecycle.sh
+          (cd providers/pi-dev && npm test)
+          (cd providers/terminal && npm test)
+          (cd providers/code-router && npm test)
+          (cd providers/browser && npm test)
+          (cd providers/browser-fast && npm test)
+          (cd providers/local-tools && npm test)
+          node scripts/check-doc-links.mjs
+          bash -n bin/* lib/bridge/*.sh scripts/*.sh tests/*.sh
+          node --check scripts/*.mjs providers/pi-dev/*.mjs providers/terminal/*.mjs providers/code-router/*.mjs providers/browser/*.mjs providers/browser-fast/*.mjs providers/local-tools/*.mjs
+          git diff --check

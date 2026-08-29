@@ -2,6 +2,26 @@
   "$schema": "https://docs.1mcp.app/schemas/v1.0.0/mcp-config.json",
   "version": "1.0.0",
   "mcpServers": {
+    "shell": {
+      "command": "uvx",
+      "args": [
+        "--from",
+        "mcp-shell-server==1.1.8",
+        "python",
+        "__REPO_ROOT__/providers/legacy-shell/server.py"
+      ],
+      "env": {
+        "ALLOW_COMMANDS": "__SHELL_ALLOW_COMMANDS__",
+        "ALLOW_PATTERNS": "__SHELL_ALLOW_PATTERNS__",
+        "MCP_SHELL_ALLOW_DANGEROUS": "__SHELL_ALLOW_DANGEROUS__",
+        "MCP_SHELL_DEFAULT_TIMEOUT_SECONDS": "30",
+        "MCP_SHELL_MAX_TIMEOUT_SECONDS": "300",
+        "MCP_SHELL_OUTPUT_LIMIT_BYTES": "1048576"
+      },
+      "tags": [
+        "shell"
+      ]
+    },
     "dev": {
       "command": "node",
       "args": [
@@ -11,7 +31,10 @@
         "MCP_DEV_SHELL_MODE": "__SHELL_MODE__",
         "MCP_DEV_WORKSPACE_ROOT": "__WORKSPACE_ROOT__",
         "MCP_DEV_STATE_DIR": "__DEV_STATE_DIR__",
-        "MCP_DEV_MAX_OUTPUT_BYTES": "__DEV_MAX_OUTPUT_BYTES__"
+        "MCP_DEV_MAX_OUTPUT_BYTES": "__DEV_MAX_OUTPUT_BYTES__",
+        "MCP_DEV_MAX_SPOOL_BYTES": "__DEV_MAX_SPOOL_BYTES__",
+        "MCP_DEV_SPOOL_TTL_SECONDS": "__DEV_SPOOL_TTL_SECONDS__",
+        "MCP_DEV_SPOOL_MAX_TOTAL_BYTES": "__DEV_SPOOL_MAX_TOTAL_BYTES__"
       },
       "tags": [
         "dev"

@@ -1,17 +1,25 @@
-# Security Policy
+# Security
 
-WebHarness exposes development capabilities on the Linux account that runs it. Security issues that could escape the documented workspace boundary, bypass the selected trust profile, disclose credentials/state, or weaken the authentication/lifecycle boundary are considered high priority.
+WebHarness exposes development capabilities to ChatGPT and other MCP clients. The security boundary is the selected trust profile plus the Linux account running the runtime.
 
-## Supported release
+## Profiles
 
-Security fixes currently target the latest public beta on `main`.
+- `restricted` keeps Files workspace-bounded and uses a separate allowlisted shell.
+- `trusted-dev` keeps Files workspace-bounded but gives native Bash the authority of the Linux service user.
+- `personal` is the full Personal Workstation reference profile with WSL-user Files/Bash authority plus Code, persistent Terminal, waits, and Local/Browser capabilities.
 
-## Reporting a vulnerability
+Use `trusted-dev` or `personal` only when that authority is deliberate. WebHarness must never store, infer, log, transmit, or auto-fill a sudo password; elevated commands remain an explicit human/operator action.
 
-Please do not open a public issue for a suspected vulnerability. Use GitHub private vulnerability reporting when enabled for the repository, or contact the maintainer privately through the repository's published contact channel.
+Read the full [Security and trust profiles](docs/security.md) guide before deployment.
 
-Include the affected version/commit, deployment profile, reproduction steps, observed impact, and any suggested mitigation. Avoid including real credentials, tokens, private keys, or unrelated user data in the report.
+## Public exposure
 
-## Security model
+1MCP listens on loopback. Cloudflare supplies the public HTTPS path. OAuth remains required for the public MCP origin.
 
-The concise threat/authority model lives in [docs/security.md](docs/security.md). In particular, `trusted-dev` Bash is intentionally not sandboxed, while `restricted` exposes only workspace-confined Read/Edit/Write primitives.
+## Sensitive state
+
+Generated configuration, OAuth/session state, runtime files, logs, and deployment identity live outside Git by default. Do not commit `.env`, credentials, tunnel secrets, OAuth state, or operator logs.
+
+## Reporting
+
+For a public GitHub release, use GitHub private vulnerability reporting. Do not publish secrets or machine-local deployment data in a public issue.

@@ -59,6 +59,7 @@ TUNNEL_NAME="${TUNNEL_NAME:-${MCP_TUNNEL_NAME:-}}"
 BRIDGE_ENABLED_FILE="$BRIDGE_RUN_DIR/cloudflare-oauth.enabled"
 BRIDGE_LOCK_FILE="$BRIDGE_RUN_DIR/lifecycle.lock"
 BRIDGE_ONE_MCP_PID_FILE="$BRIDGE_RUN_DIR/one-mcp.pid"
+BRIDGE_ONE_MCP_LOG_FILE="${BRIDGE_ONE_MCP_LOG_FILE:-$BRIDGE_STATE_DIR/logs/one-mcp.log}"
 BRIDGE_CLOUDFLARED_PID_FILE="$BRIDGE_RUN_DIR/cloudflared.pid"
 BRIDGE_WATCHDOG_PID_FILE="$BRIDGE_RUN_DIR/watchdog.pid"
 BRIDGE_TUNNEL_URL_FILE="$BRIDGE_RUN_DIR/tunnel.url"
@@ -256,6 +257,29 @@ bridge_stop_1mcp() {
   rm -f "$BRIDGE_ONE_MCP_PID_FILE" "$BRIDGE_CONFIG_DIR/server.pid"
 }
 
+bridge_prune_stale_1mcp_logs() {
+  local max_files log_dir log_name stem path name suffix
+  [ -r "$BRIDGE_CONFIG_DIR/config.toml" ] || return 0
+  max_files="$(sed -n 's/^maxFiles[[:space:]]*=[[:space:]]*\([0-9][0-9]*\)[[:space:]]*$/\1/p' "$BRIDGE_CONFIG_DIR/config.toml" | head -n1)"
+  [[ "$max_files" =~ ^[1-9][0-9]*$ ]] || return 0
+
+  log_dir="$(dirname "$BRIDGE_ONE_MCP_LOG_FILE")"
+  log_name="$(basename "$BRIDGE_ONE_MCP_LOG_FILE")"
+  [[ "$log_name" == *.log ]] || return 0
+  [ -d "$log_dir" ] || return 0
+  stem="${log_name%.log}"
+
+  while IFS= read -r -d '' path; do
+    name="${path##*/}"
+    suffix="${name#"$stem"}"
+    suffix="${suffix%.log}"
+    [[ "$suffix" =~ ^[0-9]+$ ]] || continue
+    if [ "$suffix" -ge "$max_files" ]; then
+      rm -f -- "$path"
+    fi
+  done < <(find "$log_dir" -maxdepth 1 -type f -name "${stem}[0-9]*.log" -print0 2>/dev/null)
+}
+
 bridge_start_1mcp() {
   local external="$1" entry
   [ -n "$external" ] || { echo "external URL is required" >&2; return 2; }
@@ -263,19 +287,27 @@ bridge_start_1mcp() {
   [ -f "$entry" ] || { echo "1MCP entry not found: $entry" >&2; return 1; }
 
   rm -f "$BRIDGE_ONE_MCP_PID_FILE"
+  # Remove the legacy unbounded console capture and stale pre-tailable rotations before launch.
+  rm -f "$BRIDGE_RUN_DIR/one-mcp.log"
+  bridge_prune_stale_1mcp_logs
   (
     cd "${BRIDGE_WORKSPACE_ROOT:-$BRIDGE_ROOT}"
+    umask 077
     setsid node "$entry" serve \
       --config-dir "$BRIDGE_CONFIG_DIR" \
       --enable-auth \
       --external-url "$external" \
-      9>&- >>"$BRIDGE_RUN_DIR/one-mcp.log" 2>&1 </dev/null &
+      9>&- >/dev/null 2>&1 </dev/null &
     printf '%s\n' "$!" > "$BRIDGE_ONE_MCP_PID_FILE"
   )
 
   if ! bridge_wait_url http://127.0.0.1:3050/health/ready \
     "${BRIDGE_LOCAL_HEALTH_ATTEMPTS:-15}" "${BRIDGE_LOCAL_HEALTH_INTERVAL:-1}" 3; then
     echo "1MCP did not become healthy" >&2
+    if [ -r "$BRIDGE_ONE_MCP_LOG_FILE" ]; then
+      echo "recent 1MCP log output:" >&2
+      tail -n 40 "$BRIDGE_ONE_MCP_LOG_FILE" >&2 || true
+    fi
     bridge_stop_1mcp
     return 1
   fi

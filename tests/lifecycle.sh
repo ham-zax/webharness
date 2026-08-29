@@ -20,7 +20,10 @@ contains() { grep -Eq "$2" "$1"; }
 # ---------- Source-level contracts ----------
 
 test_scripts_are_executable() {
-  [ -x "$ROOT/scripts/setup.sh" ] && \
+  local script
+  for script in setup.sh install-bridge-runtime.sh bootstrap-personal.sh start.sh stop.sh status.sh tunnel-up.sh tunnel-down.sh; do
+    [ -x "$ROOT/scripts/$script" ] || return 1
+  done
   [ -x "$ROOT/bin/start" ] && [ -x "$ROOT/bin/status" ] && [ -x "$ROOT/bin/stop" ] && \
     [ -x "$ROOT/lib/bridge/watchdog.sh" ] && [ -x "$ROOT/tests/lifecycle.sh" ]
 }
@@ -30,17 +33,63 @@ test_no_global_process_matching() {
 }
 
 test_dependencies_are_pinned() {
-  contains "$ROOT/scripts/setup.sh" 'ONE_MCP_VERSION="0\.34\.4"' && \
+  contains "$ROOT/scripts/install-bridge-runtime.sh" 'ONE_MCP_VERSION="0\.36\.0"' && \
   contains "$ROOT/providers/pi-dev/package.json" '"@earendil-works/pi-coding-agent"[[:space:]]*:[[:space:]]*"0\.84\.1"' && \
-  ! contains "$ROOT/config/templates/mcp.json" 'mcp-shell-server' && \
-  ! contains "$ROOT/scripts/setup.sh" 'mcp-shell-server' && \
-  [ ! -e "$ROOT/providers/legacy-shell/server.py" ]
+  contains "$ROOT/config/templates/mcp.json" 'mcp-shell-server==1\.1\.8'
 }
 
-test_oauth_csp_patch_is_preserved() {
-  contains "$ROOT/scripts/setup.sh" "form-action 'self' https:" && \
-  contains "$ROOT/scripts/setup.sh" "form-action 'self'" && \
-  contains "$ROOT/scripts/setup.sh" 'unexpected 1MCP .* OAuth provider contents; refusing blind patch'
+test_native_1mcp_rotation_capability_is_guarded() {
+  local helper="$ROOT/scripts/install-bridge-runtime.sh"
+  contains "$helper" 'logger/loggingConfig\.js' &&
+  contains "$helper" 'logger/logger\.js' &&
+  contains "$helper" 'maxSize' &&
+  contains "$helper" 'maxFiles' &&
+  contains "$helper" 'tailable: options\.maxFiles > 1' &&
+  contains "$helper" 'restart-stable native size/file-count rotation'
+}
+
+test_stale_incrementing_1mcp_logs_are_pruned_before_restart() {
+  local sandbox="$TMP/log-prune"
+  local state="$sandbox/state"
+  mkdir -p "$state/1mcp" "$state/logs" "$sandbox/run"
+  cat > "$state/1mcp/config.toml" <<EOF
+[logging]
+file = "$state/logs/one-mcp.log"
+maxSize = 10485760
+maxFiles = 3
+EOF
+  : > "$state/logs/one-mcp.log"
+  : > "$state/logs/one-mcp1.log"
+  : > "$state/logs/one-mcp2.log"
+  : > "$state/logs/one-mcp3.log"
+  : > "$state/logs/one-mcp9.log"
+  BRIDGE_STATE_DIR="$state" BRIDGE_CONFIG_DIR="$state/1mcp" BRIDGE_RUN_DIR="$sandbox/run" \
+    BRIDGE_ONE_MCP_LOG_FILE="$state/logs/one-mcp.log" bash -c '
+      source "$1/lib/bridge/common.sh"
+      bridge_prune_stale_1mcp_logs
+    ' _ "$ROOT" || return 1
+  [ -f "$state/logs/one-mcp.log" ] &&
+    [ -f "$state/logs/one-mcp1.log" ] &&
+    [ -f "$state/logs/one-mcp2.log" ] &&
+    [ ! -e "$state/logs/one-mcp3.log" ] &&
+    [ ! -e "$state/logs/one-mcp9.log" ]
+}
+
+test_1mcp_https_callback_csp_compatibility_is_guarded() {
+  local helper="$ROOT/scripts/install-bridge-runtime.sh"
+  contains "$helper" 'auth/sdkOAuthServerProvider\.js' &&
+  contains "$helper" "requested\.protocol === 'https:'" &&
+  contains "$helper" 'registeredRedirectUris\.includes\(requestedRedirectUri\)' &&
+  contains "$helper" 'refusing an unsafe patch'
+}
+
+test_shared_bridge_runtime_installer_is_used() {
+  local helper="$ROOT/scripts/install-bridge-runtime.sh"
+  [ -x "$helper" ] && \
+  contains "$ROOT/scripts/setup.sh" 'install-bridge-runtime\.sh' && \
+  contains "$ROOT/scripts/bootstrap-personal.sh" 'install-bridge-runtime\.sh' && \
+  contains "$helper" 'npm install -g "@1mcp/agent@\$ONE_MCP_VERSION"' && \
+  contains "$helper" 'for cmd in node npm npx uv uvx cloudflared curl flock'
 }
 
 test_cloudflare_oauth_is_canonical() {
@@ -61,6 +110,12 @@ test_no_internal_1mcp_background_supervisor() {
   ! grep -R -nE 'serve --background' "$ROOT/bin" "$ROOT/lib/bridge" "$ROOT/scripts" >/dev/null
 }
 
+test_1mcp_runtime_does_not_append_an_unbounded_console_log() {
+  local common="$ROOT/lib/bridge/common.sh"
+  ! grep -Eq '>>[^[:space:]]*one-mcp\.log|one-mcp\.log[^[:space:]]*2>&1' "$common" &&
+  grep -Fq 'rm -f "$BRIDGE_RUN_DIR/one-mcp.log"' "$common"
+}
+
 test_start_orders_origin_before_watchdog() {
   local origin_line watchdog_line
   origin_line="$(grep -n 'bridge_reconcile_1mcp' "$ROOT/bin/start" | head -n1 | cut -d: -f1)"
@@ -75,10 +130,21 @@ test_watchdog_starts_only_after_public_health() {
   [ -n "$health_line" ] && [ -n "$watchdog_line" ] && [ "$health_line" -lt "$watchdog_line" ]
 }
 
+test_compatibility_wrappers_are_thin() {
+  contains "$ROOT/scripts/start.sh" 'exec .*bin/start' && \
+  contains "$ROOT/scripts/status.sh" 'exec .*bin/status' && \
+  contains "$ROOT/scripts/stop.sh" 'exec .*bin/stop' && \
+  contains "$ROOT/scripts/tunnel-up.sh" 'exec .*scripts/start\.sh' && \
+  contains "$ROOT/scripts/tunnel-down.sh" 'exec .*scripts/stop\.sh'
+}
+
 test_status_has_core_diagnostics() {
   contains "$ROOT/bin/status" 'WebHarness' && \
   contains "$ROOT/bin/status" 'duplicate 1MCP' && \
-  contains "$ROOT/bin/status" 'PID/listener mismatch'
+  contains "$ROOT/bin/status" 'PID/listener mismatch' && \
+  contains "$ROOT/bin/status" 'retained diagnostics' && \
+  contains "$ROOT/bin/status" 'Terminal broker' && \
+  contains "$ROOT/bin/status" 'NRestarts'
 }
 
 test_systemd_user_autostart_contract() {
@@ -97,6 +163,28 @@ test_systemd_installer_handles_missing_home() {
   contains "$ROOT/scripts/install-systemd-user.sh" 'getent passwd'
 }
 
+test_terminal_systemd_owner_env_handoff() {
+  local sandbox="$TMP/terminal-owner-env"
+  local target="$sandbox/systemd"
+  local owner_env="$sandbox/owner.env"
+  mkdir -p "$sandbox/home" "$target"
+  : > "$owner_env"
+  HOME="$sandbox/home" TERMINAL_SYSTEMD_TARGET_DIR="$target" TERMINAL_OWNER_ENV_FILE="$owner_env" \
+    TERMINAL_SYSTEMD_DRY_RUN=1 "$ROOT/scripts/install-terminal-broker-user.sh" >/dev/null || return 1
+  grep -Fq "EnvironmentFile=-$owner_env" "$target/wsl-agent-tmux.service" && \
+    grep -Fq "EnvironmentFile=-$owner_env" "$target/wsl-agent-terminal-broker.service"
+}
+
+test_personal_bootstrap_startup_consent_contract() {
+  local script="$ROOT/scripts/bootstrap-personal.sh"
+  [ -x "$script" ] && \
+  contains "$script" '\-\-enable-startup' && \
+  contains "$script" 'startup services were not installed' && \
+  contains "$script" 'loginctl enable-linger' && \
+  contains "$script" 'systemctl --user enable --now' && \
+  ! contains "$script" 'wsl\.exe|schtasks|Task Scheduler'
+}
+
 test_lifecycle_lock_is_used_everywhere() {
   contains "$ROOT/lib/bridge/common.sh" 'bridge_lock_acquire' && \
   contains "$ROOT/bin/start" 'bridge_lock_acquire' && \
@@ -107,16 +195,118 @@ test_lifecycle_lock_is_used_everywhere() {
 run_test 'lifecycle entrypoint scripts remain executable' test_scripts_are_executable
 run_test 'no global pkill/pgrep lifecycle management' test_no_global_process_matching
 run_test 'privileged MCP dependencies are pinned' test_dependencies_are_pinned
-run_test '1MCP OAuth consent CSP compatibility patch is preserved' test_oauth_csp_patch_is_preserved
+run_test 'pinned 1MCP native rotation capability is guarded' test_native_1mcp_rotation_capability_is_guarded
+run_test 'stale incrementing 1MCP logs are pruned before restart' test_stale_incrementing_1mcp_logs_are_pruned_before_restart
+run_test 'pinned 1MCP permits its exact registered HTTPS OAuth callback' test_1mcp_https_callback_csp_compatibility_is_guarded
+run_test 'public and personal setup share the pinned bridge runtime installer' test_shared_bridge_runtime_installer_is_used
 run_test 'Cloudflare OAuth Bridge is the only canonical stack' test_cloudflare_oauth_is_canonical
 run_test 'start.sh is the canonical Cloudflare OAuth entrypoint' test_start_is_canonical_entrypoint
 run_test 'direct 1MCP startup is used without serve --background' test_no_internal_1mcp_background_supervisor
+run_test '1MCP runtime avoids an unbounded console append log' test_1mcp_runtime_does_not_append_an_unbounded_console_log
 run_test '1MCP origin is reconciled before watchdog startup' test_start_orders_origin_before_watchdog
 run_test 'watchdog starts only after public health succeeds' test_watchdog_starts_only_after_public_health
+run_test 'legacy tunnel scripts are thin start/stop aliases' test_compatibility_wrappers_are_thin
 run_test 'status keeps duplicate and PID/listener diagnostics' test_status_has_core_diagnostics
 run_test 'systemd user unit autostarts the canonical bridge' test_systemd_user_autostart_contract
 run_test 'systemd installer derives user home when HOME is missing' test_systemd_installer_handles_missing_home
+run_test 'Terminal systemd units consume the rendered owner environment' test_terminal_systemd_owner_env_handoff
+run_test 'personal bootstrap keeps startup behind explicit consent' test_personal_bootstrap_startup_consent_contract
 run_test 'manual lifecycle and watchdog share an exclusive lock' test_lifecycle_lock_is_used_everywhere
+
+test_status_reports_bounded_diagnostic_storage() {
+  local sandbox="$TMP/status-storage"
+  local state="$sandbox/state"
+  local run="$sandbox/run"
+  local fakebin="$sandbox/fakebin"
+  local fakeproc="$sandbox/proc"
+  mkdir -p "$state/1mcp" "$state/logs" "$state/dev" "$run" "$fakebin" "$fakeproc"
+  cat > "$state/bridge.env" <<EOF
+MCP_BRIDGE_PROFILE='personal'
+MCP_WORKSPACE_ROOT='$sandbox/workspace'
+MCP_PUBLIC_URL=''
+MCP_TUNNEL_NAME=''
+MCP_BRIDGE_ROOT='$ROOT'
+BRIDGE_STATE_DIR='$state'
+EOF
+  cat > "$state/1mcp/mcp.json" <<'JSON'
+{"mcpServers":{"dev":{"env":{"MCP_DEV_SPOOL_MAX_TOTAL_BYTES":"4096"}}}}
+JSON
+  cat > "$state/1mcp/config.toml" <<EOF
+[logging]
+file = "$state/logs/one-mcp.log"
+level = "info"
+maxSize = 1024
+maxFiles = 3
+EOF
+  printf '%01024d' 0 > "$state/logs/one-mcp.log"
+  printf '%01024d' 0 > "$state/logs/one-mcp1.log"
+  printf '%02048d' 0 > "$state/dev/bash-old.log"
+  printf '%01024d' 0 > "$state/dev/bash-new.log"
+  printf '%00512d' 0 > "$state/dev/bash-live.log.active"
+  cat > "$fakebin/curl" <<'SH'
+#!/usr/bin/env bash
+exit 1
+SH
+  cat > "$fakebin/ss" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+  chmod +x "$fakebin/curl" "$fakebin/ss"
+
+  local output
+  output="$(BRIDGE_STATE_DIR="$state" BRIDGE_RUN_DIR="$run" BRIDGE_CONFIG_DIR="$state/1mcp" \
+    BRIDGE_PROC_ROOT="$fakeproc" PATH="$fakebin:$PATH" bash "$ROOT/bin/status" 2>&1 || true)"
+  grep -Fq '== retained diagnostics ==' <<<"$output" &&
+  grep -Fq '1MCP rotated logs: files=2 bytes=2048 policy_bytes=3072' <<<"$output" &&
+  grep -Fq 'Bash finalized spools: files=2 bytes=3072 budget_bytes=4096' <<<"$output" &&
+  grep -Fq 'Bash active spools: files=1 bytes=512' <<<"$output"
+}
+
+run_test 'status reports bounded log and Bash spool storage' test_status_reports_bounded_diagnostic_storage
+test_status_matches_watchdog_against_rendered_live_source_root() {
+  local sandbox="$TMP/status-source-root"
+  local state="$sandbox/state"
+  local run="$sandbox/run"
+  local fakebin="$sandbox/fakebin"
+  local fakeproc="$sandbox/proc"
+  local live_root="$sandbox/live-root"
+  mkdir -p "$state/1mcp" "$state/logs" "$state/dev" "$run" "$fakebin" "$fakeproc/101" "$live_root/lib/bridge"
+  cat > "$state/bridge.env" <<EOF
+MCP_BRIDGE_PROFILE='trusted-dev'
+MCP_WORKSPACE_ROOT='$sandbox/workspace'
+MCP_PUBLIC_URL='https://example.test'
+MCP_TUNNEL_NAME=''
+MCP_BRIDGE_ROOT='$live_root'
+BRIDGE_STATE_DIR='$state'
+EOF
+  printf '{}\n' > "$state/1mcp/mcp.json"
+  cat > "$state/1mcp/config.toml" <<EOF
+[logging]
+file = "$state/logs/one-mcp.log"
+maxSize = 1048576
+maxFiles = 2
+EOF
+  : > "$run/cloudflare-oauth.enabled"
+  printf '101\n' > "$run/watchdog.pid"
+  printf '%s\0' bash "$live_root/lib/bridge/watchdog.sh" > "$fakeproc/101/cmdline"
+  cat > "$fakebin/curl" <<'SH'
+#!/usr/bin/env bash
+exit 1
+SH
+  cat > "$fakebin/ss" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+  chmod +x "$fakebin/curl" "$fakebin/ss"
+
+  local output
+  output="$(BRIDGE_STATE_DIR="$state" BRIDGE_RUN_DIR="$run" BRIDGE_CONFIG_DIR="$state/1mcp" \
+    BRIDGE_PROC_ROOT="$fakeproc" PATH="$fakebin:$PATH" bash "$ROOT/bin/status" 2>&1 || true)"
+  grep -Fq 'watchdog:    running' <<<"$output" &&
+  grep -Fq "rendered source root: $live_root" <<<"$output"
+}
+
+run_test 'status matches watchdog ownership against the rendered live source root' test_status_matches_watchdog_against_rendered_live_source_root
 
 # ---------- Runtime/state selection ----------
 
@@ -418,7 +608,7 @@ run_stack_env() {
 test_full_stack_start_stop() {
   local sandbox="$TMP/full-stack"
   make_fake_stack "$sandbox"
-  run_stack_env "$sandbox" "$ROOT/bin/start" >"$sandbox/start.log" 2>&1 || { cat "$sandbox/start.log" >&2; return 1; }
+  run_stack_env "$sandbox" "$ROOT/scripts/start.sh" >"$sandbox/start.log" 2>&1 || { cat "$sandbox/start.log" >&2; return 1; }
 
   [ -f "$sandbox/run/cloudflare-oauth.enabled" ] || return 1
   [ "$(cat "$sandbox/run/tunnel.url")" = 'https://test.example' ] || return 1
@@ -429,7 +619,7 @@ test_full_stack_start_stop() {
   count="$(run_stack_env "$sandbox" bash -c 'source "$1/lib/bridge/common.sh"; bridge_1mcp_count' _ "$ROOT")"
   [ "$count" = 1 ] || return 1
 
-  run_stack_env "$sandbox" "$ROOT/bin/stop" >"$sandbox/stop.log" 2>&1 || { cat "$sandbox/stop.log" >&2; return 1; }
+  run_stack_env "$sandbox" "$ROOT/scripts/stop.sh" >"$sandbox/stop.log" 2>&1 || { cat "$sandbox/stop.log" >&2; return 1; }
   [ ! -e "$sandbox/run/cloudflare-oauth.enabled" ] || return 1
   [ ! -e "$sandbox/run/one-mcp.pid" ] || return 1
   [ ! -e "$sandbox/run/cloudflared.pid" ] || return 1
@@ -442,7 +632,7 @@ test_failed_cloudflared_start_rolls_back() {
   local sandbox="$TMP/cloudflared-fail"
   make_fake_stack "$sandbox" healthy fail
   set +e
-  run_stack_env "$sandbox" "$ROOT/bin/start" >"$sandbox/start.log" 2>&1
+  run_stack_env "$sandbox" "$ROOT/scripts/start.sh" >"$sandbox/start.log" 2>&1
   local rc=$?
   set -e
   [ "$rc" -ne 0 ] || return 1
@@ -457,7 +647,7 @@ test_failed_public_health_rolls_back() {
   local sandbox="$TMP/public-fail"
   make_fake_stack "$sandbox" fail healthy
   set +e
-  run_stack_env "$sandbox" "$ROOT/bin/start" >"$sandbox/start.log" 2>&1
+  run_stack_env "$sandbox" "$ROOT/scripts/start.sh" >"$sandbox/start.log" 2>&1
   local rc=$?
   set -e
   [ "$rc" -ne 0 ] || return 1
@@ -471,7 +661,7 @@ test_failed_public_health_rolls_back() {
 test_watchdog_recovers_both_daemons() {
   local sandbox="$TMP/recovery"
   make_fake_stack "$sandbox"
-  run_stack_env "$sandbox" "$ROOT/bin/start" >"$sandbox/start.log" 2>&1 || return 1
+  run_stack_env "$sandbox" "$ROOT/scripts/start.sh" >"$sandbox/start.log" 2>&1 || return 1
 
   # Stop the long-running watchdog so this test controls exactly one cycle.
   run_stack_env "$sandbox" bash -c 'source "$1/lib/bridge/common.sh"; bridge_lock_acquire 2; bridge_stop_watchdog; bridge_lock_release' _ "$ROOT" || return 1
@@ -494,7 +684,7 @@ test_watchdog_recovers_both_daemons() {
      [ -f "$sandbox/local-ready" ] && [ -f "$sandbox/public-ready" ]; then
     ok=1
   fi
-  run_stack_env "$sandbox" "$ROOT/bin/stop" >/dev/null 2>&1 || true
+  run_stack_env "$sandbox" "$ROOT/scripts/stop.sh" >/dev/null 2>&1 || true
   [ "$ok" -eq 1 ]
 }
 

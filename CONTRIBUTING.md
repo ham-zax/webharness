@@ -1,27 +1,31 @@
 # Contributing
 
-Thanks for helping improve WebHarness.
+Keep changes small, explicit, and easy to verify. This repository has a public bridge surface plus private personal-harness extensions; preserve that boundary.
 
-## Before you start
+## Before changing code
 
-Read [docs/development.md](docs/development.md) for the code layout, supported runtime, and verification commands. Behavior changes should include a test that fails before the change and passes afterward.
+Read:
 
-## Pull requests
+- [Architecture](docs/architecture.md)
+- [Security](docs/security.md)
+- [Development](docs/development.md)
 
-Keep changes focused. Explain the user-visible behavior, the trust/security impact if any, and the verification you ran.
+If a change affects trust profiles, generated configuration, lifecycle, OAuth continuity, Terminal lifetime, or the model-facing tool surface, update the relevant current documentation in the same change.
 
-At minimum, run:
+## Verification
 
-```bash
-bash tests/harness.sh
-bash tests/publication.sh
-bash tests/lifecycle.sh
-npm --prefix providers/pi-dev ci
-npm --prefix providers/pi-dev test
-```
+Use the smallest validation that directly establishes the changed behavior or contract. See [Development](docs/development.md) for available syntax/static checks and long-running command guidance.
 
-Do not commit `.env`, OAuth/session state, logs, runtime PID files, generated `node_modules`, or real deployment credentials/hostnames.
+For documentation-only changes, run `node scripts/check-doc-links.mjs`, scan for stale paths/claims, and use `git diff --check`.
 
-## Security changes
+## Documentation rules
 
-If a change touches path confinement, process execution, OAuth, lifecycle ownership, or credential/state handling, describe the threat it addresses and add a regression test for that boundary.
+- Primary docs describe the current accepted system, not project chronology.
+- Put benchmark/design/plan archaeology under `docs/history/`.
+- Do not copy private deployment identity, OAuth/session state, or credentials into public-facing files.
+- Keep important old documentation URLs as small compatibility pointers when paths move.
+- Prefer one authoritative explanation and links over duplicated guidance.
+
+## Git hygiene
+
+Use focused commits. Do not rewrite or force-delete other worktrees/branches without explicit ownership. Do not commit `.env`, generated state, OAuth/session files, logs, or runtime directories.

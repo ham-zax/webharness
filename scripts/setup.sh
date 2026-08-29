@@ -3,17 +3,16 @@ set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$DIR"
 
-ONE_MCP_VERSION="0.34.4"
-
 usage() {
   cat <<'EOF'
 Usage: scripts/setup.sh --profile <restricted|trusted-dev> [options]
 
 Required:
-  --profile restricted   Workspace-confined Read/Edit/Write only
-  --profile trusted-dev  Read/Edit/Write plus unrestricted Bash as the Linux service user
+  --profile restricted   Conservative shell policy for general installs
+  --profile trusted-dev  Unrestricted agentic shell as the Linux service user
 
 Options:
+  --enable-startup       Explicitly install, enable, and start the user service
   --env-file PATH        Deployment env file (default: .env)
   --state-dir PATH       Persistent state root override
   --help                 Show this help
@@ -23,8 +22,13 @@ EOF
 PROFILE=""
 ENV_FILE="$DIR/.env"
 STATE_DIR=""
+ENABLE_STARTUP=0
 while [ "$#" -gt 0 ]; do
   case "$1" in
+    --enable-startup)
+      ENABLE_STARTUP=1
+      shift
+      ;;
     --profile)
       [ "$#" -ge 2 ] || { echo "missing value for --profile" >&2; usage >&2; exit 2; }
       PROFILE="$2"
@@ -67,36 +71,7 @@ case "$PROFILE" in
 esac
 
 if [ "${BRIDGE_SETUP_SKIP_INSTALL:-0}" != "1" ]; then
-  echo "== installing pinned 1MCP aggregator =="
-  npm install -g "@1mcp/agent@$ONE_MCP_VERSION"
-
-  echo "== applying verified upstream 1MCP patch =="
-  SDK_PROVIDER="$(npm root -g)/@1mcp/agent/build/auth/sdkOAuthServerProvider.js"
-  if [ ! -f "$SDK_PROVIDER" ]; then
-    echo "expected 1MCP OAuth provider missing: $SDK_PROVIDER" >&2
-    exit 1
-  fi
-  if grep -Fq "form-action 'self' https:" "$SDK_PROVIDER"; then
-    echo "  OAuth consent CSP patch already applied"
-  elif grep -Fq "form-action 'self'" "$SDK_PROVIDER"; then
-    sed -i "s/form-action 'self'/form-action 'self' https:/g" "$SDK_PROVIDER"
-    grep -Fq "form-action 'self' https:" "$SDK_PROVIDER" || {
-      echo "failed to verify OAuth consent CSP patch" >&2
-      exit 1
-    }
-    echo "  patched OAuth consent CSP (form-action https:) in $SDK_PROVIDER"
-  else
-    echo "unexpected 1MCP $ONE_MCP_VERSION OAuth provider contents; refusing blind patch" >&2
-    exit 1
-  fi
-
-  echo "== verifying WebHarness prerequisites =="
-  for cmd in node npm npx cloudflared curl flock; do
-    command -v "$cmd" >/dev/null 2>&1 || { echo "$cmd missing" >&2; exit 1; }
-  done
-  echo "  1MCP:          @1mcp/agent@$ONE_MCP_VERSION"
-  echo "  cloudflared:     $(cloudflared --version 2>/dev/null | head -n1)"
-  echo "  node:            $(node -v)"
+  "$DIR/scripts/install-bridge-runtime.sh"
 
   echo "== installing pinned Pi dev provider dependencies =="
   npm --prefix "$DIR/providers/pi-dev" ci --omit=dev
@@ -117,8 +92,37 @@ fi
 echo "== rendering deployment state =="
 node "$DIR/scripts/render-config.mjs" "${RENDER_ARGS[@]}"
 
+if [ "$ENABLE_STARTUP" -eq 1 ]; then
+  USER_NAME="$(id -un)"
+  RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+  EFFECTIVE_STATE_DIR="${STATE_DIR:-${MCP_BRIDGE_STATE_DIR:-${XDG_STATE_HOME:-${HOME:?HOME is required}/.local/state}/mcp-dev-bridge}}"
+
+  echo "== installing WebHarness user service =="
+  HOME="$HOME" BRIDGE_STATE_DIR="$EFFECTIVE_STATE_DIR" "$DIR/scripts/install-systemd-user.sh"
+  command -v systemctl >/dev/null 2>&1 || { echo "systemctl is required for --enable-startup" >&2; exit 1; }
+  command -v loginctl >/dev/null 2>&1 || { echo "loginctl is required for --enable-startup" >&2; exit 1; }
+  export XDG_RUNTIME_DIR="$RUNTIME_DIR"
+  export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=$XDG_RUNTIME_DIR/bus}"
+  [ -S "$XDG_RUNTIME_DIR/bus" ] || { echo "systemd user bus is unavailable at $XDG_RUNTIME_DIR/bus" >&2; exit 1; }
+
+  if [ "$(loginctl show-user "$USER_NAME" -p Linger --value 2>/dev/null || true)" != yes ]; then
+    if ! loginctl enable-linger "$USER_NAME"; then
+      command -v sudo >/dev/null 2>&1 || { echo "failed to enable linger for $USER_NAME and sudo is unavailable" >&2; exit 1; }
+      sudo loginctl enable-linger "$USER_NAME"
+    fi
+  fi
+  [ "$(loginctl show-user "$USER_NAME" -p Linger --value 2>/dev/null || true)" = yes ] || { echo "user linger is still disabled for $USER_NAME" >&2; exit 1; }
+
+  systemctl --user daemon-reload
+  systemctl --user enable --now mcp-dev-bridge.service
+  systemctl --user is-active mcp-dev-bridge.service >/dev/null
+  echo "WebHarness startup service is installed and active"
+else
+  echo "startup service was not installed; rerun with --enable-startup to explicitly consent"
+fi
+
 echo "== next steps =="
-echo "  autostart: scripts/install-systemd-user.sh"
-echo "  start:     bin/start"
-echo "  inspect:   bin/status"
-echo "  stop:      bin/stop"
+echo "  doctor: webharness doctor --profile $PROFILE"
+echo "  start:  webharness start"
+echo "  status: webharness status"
+echo "  stop:   webharness stop"

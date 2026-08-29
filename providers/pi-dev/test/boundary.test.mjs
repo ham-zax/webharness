@@ -4,9 +4,12 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {
+  canonicalDefaultCwd,
   canonicalWorkspaceRoot,
   resolveExistingWorkspacePath,
   resolveNewWorkspacePath,
+  resolveUserCwd,
+  resolveUserPath,
   resolveWorkspaceCwd
 } from '../boundary.mjs';
 
@@ -73,6 +76,44 @@ test('bash cwd defaults to root and accepts only relative inside directories', a
   assert.equal(await resolveWorkspaceCwd(root, 'repo'), await fs.realpath(path.join(root, 'repo')));
   await assert.rejects(() => resolveWorkspaceCwd(root, '/tmp'), /relative/);
   await assert.rejects(() => resolveWorkspaceCwd(root, '../outside'), /\.\./);
+});
+
+test('user default cwd must be an absolute existing directory', async () => {
+  await assert.rejects(() => canonicalDefaultCwd('relative/root'), /absolute/);
+  const root = await tempDir('pi-user-default-');
+  assert.equal(await canonicalDefaultCwd(root), await fs.realpath(root));
+  const file = path.join(root, 'file.txt');
+  await fs.writeFile(file, 'x');
+  await assert.rejects(() => canonicalDefaultCwd(file), /directory/);
+});
+
+test('user paths resolve relative to the stable default and accept absolute paths', async () => {
+  const root = await tempDir('pi-user-path-');
+  await fs.mkdir(path.join(root, 'repo'));
+  await fs.writeFile(path.join(root, 'repo', 'x.txt'), 'x');
+  assert.equal(
+    await resolveUserPath(root, 'repo/x.txt'),
+    await fs.realpath(path.join(root, 'repo', 'x.txt'))
+  );
+  assert.equal(await resolveUserPath(root, '/etc/os-release'), await fs.realpath('/etc/os-release'));
+  assert.equal(
+    await resolveUserPath(root, 'new.txt', { mustExist: false }),
+    path.resolve(root, 'new.txt')
+  );
+});
+
+test('user cwd has no mutable state and accepts relative or absolute directories', async () => {
+  const root = await tempDir('pi-user-cwd-');
+  await fs.mkdir(path.join(root, 'repo'));
+  assert.equal(await resolveUserCwd(root), await fs.realpath(root));
+  assert.equal(await resolveUserCwd(root, 'repo'), await fs.realpath(path.join(root, 'repo')));
+  assert.equal(await resolveUserCwd(root, '/tmp'), await fs.realpath('/tmp'));
+});
+
+test('user mode rejects Unicode space characters that Pi would normalize', async () => {
+  const root = await tempDir('pi-user-unicode-');
+  await fs.writeFile(path.join(root, 'a\u00a0b.txt'), 'weird');
+  await assert.rejects(() => resolveUserPath(root, 'a\u00a0b.txt'), /Unicode space.*not supported/i);
 });
 
 test('workspace rejects Unicode space characters that Pi would normalize after validation', async () => {
