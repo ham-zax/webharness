@@ -9,9 +9,13 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprot
 export const INNER_TOOL_SEPARATOR = '_1mcp_';
 export const DEFAULT_LIST_LIMIT = 25;
 export const MAX_LIST_LIMIT = 100;
+export const DEFAULT_BATCH_CONCURRENCY = 4;
+export const MAX_BATCH_CONCURRENCY = 16;
+export const MAX_BATCH_CALLS = 32;
 
 const CURSOR_VERSION = 1;
 const MAX_CURSOR_LENGTH = 4096;
+const MAX_BATCH_ID_LENGTH = 128;
 
 function brokerError(code, message, cause) {
   const error = new Error(`${code}: ${message}`, cause ? { cause } : undefined);
@@ -115,15 +119,45 @@ function jsonResult(value) {
   };
 }
 
-function errorResult(error) {
+function errorDetails(error) {
   const code = typeof error?.code === 'string' ? error.code : 'LOCAL_BROKER_FAILED';
   const raw = error instanceof Error ? error.message : String(error);
   const message = raw.startsWith(`${code}: `) ? raw.slice(code.length + 2) : raw;
+  return { code, message };
+}
+
+function errorResult(error) {
+  const { code, message } = errorDetails(error);
   return {
     isError: true,
     content: [{ type: 'text', text: `${code}: ${message}` }],
     structuredContent: { error: { code, message } }
   };
+}
+
+function batchResult(value) {
+  const content = [];
+  for (const entry of value.results) {
+    const label = entry.id === undefined ? String(entry.index) : `${entry.index} (${entry.id})`;
+    if (entry.status === 'rejected') {
+      content.push({ type: 'text', text: `call ${label}: rejected ${entry.error.code}: ${entry.error.message}` });
+      continue;
+    }
+    content.push({
+      type: 'text',
+      text: `call ${label}: fulfilled${entry.result?.isError === true ? ' (downstream isError)' : ''}`
+    });
+    if (Array.isArray(entry.result?.content)) content.push(...entry.result.content);
+  }
+  return { content, structuredContent: value };
+}
+
+function normalizeBatchConcurrency(value, callCount) {
+  const concurrency = value === undefined ? DEFAULT_BATCH_CONCURRENCY : value;
+  if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > MAX_BATCH_CONCURRENCY) {
+    throw brokerError('INVALID_ARGUMENT', `concurrency must be an integer from 1 to ${MAX_BATCH_CONCURRENCY}`);
+  }
+  return Math.min(concurrency, callCount);
 }
 
 export class InnerDirect1Mcp {
@@ -164,9 +198,13 @@ export class InnerDirect1Mcp {
     return this.client.listTools(cursor === undefined ? undefined : { cursor });
   }
 
-  async callTool(name, args = {}) {
+  async callTool(name, args = {}, signal) {
     if (!this.alive) throw brokerError('INNER_UNAVAILABLE', 'inner 1MCP is not running');
-    return this.client.callTool({ name, arguments: args });
+    return this.client.callTool(
+      { name, arguments: args },
+      undefined,
+      signal === undefined ? undefined : { signal }
+    );
   }
 
   async close() {
@@ -288,19 +326,78 @@ export class LocalToolBroker {
     }
   }
 
-  async call({ server, tool, arguments: args = {} } = {}) {
-    if (this.closed) throw brokerError('LOCAL_BROKER_CLOSED', 'local tool broker is shut down');
+  prepareRoute({ server, tool } = {}, allowedServers) {
     const selectedServer = validateServerName(server);
     const selectedTool = requiredString(tool, 'tool');
-    if (args === null || typeof args !== 'object' || Array.isArray(args)) throw brokerError('INVALID_ARGUMENT', 'arguments must be an object');
-    const allowedServers = await this.configuredServers();
     if (!allowedServers.has(selectedServer)) throw brokerError('UNKNOWN_SERVER', `unknown local server: ${selectedServer}`);
+    return { server: selectedServer, tool: selectedTool };
+  }
+
+  prepareArguments(args = {}) {
+    if (args === null || typeof args !== 'object' || Array.isArray(args)) {
+      throw brokerError('INVALID_ARGUMENT', 'arguments must be an object');
+    }
+    return args;
+  }
+
+  async dispatch({ server, tool }, args, signal) {
     try {
-      return await this.inner.callTool(qualifiedName(selectedServer, selectedTool), args);
+      return await this.inner.callTool(qualifiedName(server, tool), args, signal);
     } catch (error) {
       if (error?.code === 'INNER_UNAVAILABLE') throw error;
-      throw brokerError('INNER_CALL_FAILED', `failed to call ${selectedServer}/${selectedTool}`, error);
+      throw brokerError('INNER_CALL_FAILED', `failed to call ${server}/${tool}`, error);
     }
+  }
+
+  async call({ server, tool, arguments: args = {} } = {}, signal) {
+    if (this.closed) throw brokerError('LOCAL_BROKER_CLOSED', 'local tool broker is shut down');
+    const allowedServers = await this.configuredServers();
+    const route = this.prepareRoute({ server, tool }, allowedServers);
+    return this.dispatch(route, this.prepareArguments(args), signal);
+  }
+
+  async batch({ server, tool, calls, concurrency } = {}, signal) {
+    if (this.closed) throw brokerError('LOCAL_BROKER_CLOSED', 'local tool broker is shut down');
+    if (!Array.isArray(calls) || calls.length < 1 || calls.length > MAX_BATCH_CALLS) {
+      throw brokerError('INVALID_ARGUMENT', `calls must contain from 1 to ${MAX_BATCH_CALLS} entries`);
+    }
+    const allowedServers = await this.configuredServers();
+    const route = this.prepareRoute({ server, tool }, allowedServers);
+    const prepared = calls.map((call, index) => {
+      if (call === null || typeof call !== 'object' || Array.isArray(call)) {
+        throw brokerError('INVALID_ARGUMENT', `calls[${index}] must be an object`);
+      }
+      const { id, arguments: args = {} } = call;
+      if (id !== undefined && (typeof id !== 'string' || id.length === 0 || id.length > MAX_BATCH_ID_LENGTH)) {
+        throw brokerError('INVALID_ARGUMENT', `id must be a non-empty string up to ${MAX_BATCH_ID_LENGTH} characters`);
+      }
+      return { ...(id === undefined ? {} : { id }), arguments: this.prepareArguments(args) };
+    });
+    const workerCount = normalizeBatchConcurrency(concurrency, prepared.length);
+    const results = new Array(prepared.length);
+    let nextIndex = 0;
+
+    const runWorker = async () => {
+      while (true) {
+        if (signal?.aborted) return;
+        const index = nextIndex;
+        nextIndex += 1;
+        if (index >= prepared.length) return;
+        if (signal?.aborted) return;
+        const call = prepared[index];
+        const identity = { index, ...(call.id === undefined ? {} : { id: call.id }) };
+        try {
+          results[index] = { ...identity, status: 'fulfilled', result: await this.dispatch(route, call.arguments, signal) };
+        } catch (error) {
+          if (signal?.aborted) return;
+          results[index] = { ...identity, status: 'rejected', error: errorDetails(error) };
+        }
+      }
+    };
+
+    await Promise.all(Array.from({ length: workerCount }, () => runWorker()));
+    if (signal?.aborted) throw signal.reason ?? brokerError('REQUEST_CANCELLED', 'tool batch was cancelled');
+    return { server: route.server, tool: route.tool, results };
   }
 
   async shutdown() {
@@ -317,7 +414,7 @@ export function createLocalBrokerServer({ broker } = {}) {
 
   const server = new Server(
     { name: 'local-tools', version: '0.1.0' },
-    { capabilities: { tools: {} }, instructions: 'Stable local tool broker. Discover narrowly, load one schema when needed, then call by logical server/tool.' }
+    { capabilities: { tools: {} }, instructions: 'Stable local tool broker. Discover narrowly, load one schema when needed, then call by logical server/tool. Use tool_batch for several independent downstream calls instead of shell/CLI orchestration.' }
   );
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: [
     {
@@ -363,13 +460,45 @@ export function createLocalBrokerServer({ broker } = {}) {
         required: ['server', 'tool'],
         additionalProperties: false
       }
+    },
+    {
+      name: 'tool_batch',
+      description: 'Call the same downstream tool several times with bounded concurrency. Set server/tool once and pass structured arguments per call. Prefer this over shell or CLI loops for independent repeated MCP calls. All call envelopes are validated before dispatch. Results preserve input order; downstream isError results are fulfilled entries, while broker or transport failures are rejected entries.',
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          server: { type: 'string', minLength: 1 },
+          tool: { type: 'string', minLength: 1 },
+          calls: {
+            type: 'array',
+            minItems: 1,
+            maxItems: MAX_BATCH_CALLS,
+            items: {
+              type: 'object',
+              properties: {
+                id: { type: 'string', minLength: 1, maxLength: MAX_BATCH_ID_LENGTH, description: 'Optional caller label echoed in the corresponding result.' },
+                arguments: { type: 'object', additionalProperties: true }
+              },
+              additionalProperties: false
+            }
+          },
+          concurrency: { type: 'integer', minimum: 1, maximum: MAX_BATCH_CONCURRENCY, default: DEFAULT_BATCH_CONCURRENCY }
+        },
+        required: ['server', 'tool', 'calls'],
+        additionalProperties: false
+      }
     }
   ] }));
-  server.setRequestHandler(CallToolRequestSchema, async request => {
+  server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
     try {
       if (request.params.name === 'tool_list') return jsonResult(await broker.list(request.params.arguments ?? {}));
       if (request.params.name === 'tool_schema') return jsonResult(await broker.schema(request.params.arguments ?? {}));
-      if (request.params.name === 'tool_call') return broker.call(request.params.arguments ?? {});
+      if (request.params.name === 'tool_call') return broker.call(request.params.arguments ?? {}, extra.signal);
+      if (request.params.name === 'tool_batch') {
+        if (typeof broker.batch !== 'function') throw brokerError('LOCAL_BATCH_UNAVAILABLE', 'local broker does not implement batch dispatch');
+        return batchResult(await broker.batch(request.params.arguments ?? {}, extra.signal));
+      }
       return errorResult(brokerError('UNKNOWN_BROKER_TOOL', `unknown broker tool: ${request.params.name}`));
     } catch (error) {
       return errorResult(error);

@@ -22,7 +22,7 @@ async function configFile(t, servers = ['browser']) {
   return file;
 }
 
-function fakeInner({ pages, callResult = { content: [{ type: 'text', text: 'ok' }] } }) {
+function fakeInner({ pages, callResult = { content: [{ type: 'text', text: 'ok' }] }, callHandler }) {
   const listCalls = [];
   const callCalls = [];
   let closed = false;
@@ -37,20 +37,22 @@ function fakeInner({ pages, callResult = { content: [{ type: 'text', text: 'ok' 
       if (page instanceof Error) throw page;
       return structuredClone(page ?? { tools: [] });
     },
-    async callTool(name, args) {
+    async callTool(name, args, signal) {
       callCalls.push({ name, args });
+      if (callHandler) return callHandler(name, args, signal);
       return callResult;
     },
     async close() { closed = true; }
   };
 }
 
-test('model-facing broker exposes exactly list, schema, and call', async t => {
+test('model-facing broker exposes list, schema, call, and batch', async t => {
   const image = { content: [{ type: 'image', data: 'cG5n', mimeType: 'image/png' }] };
   const broker = {
     async list() { return { tools: [], hasMore: false }; },
     async schema() { return { server: 'browser', tool: 'take_screenshot', definition: {} }; },
-    async call() { return image; }
+    async call() { return image; },
+    async batch() { return { server: 'browser', tool: 'take_screenshot', results: [] }; }
   };
   const server = createLocalBrokerServer({ broker });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -63,10 +65,13 @@ test('model-facing broker exposes exactly list, schema, and call', async t => {
   await client.connect(clientTransport);
 
   const { tools } = await client.listTools();
-  assert.deepEqual(tools.map(tool => tool.name).sort(), ['tool_call', 'tool_list', 'tool_schema']);
+  assert.deepEqual(tools.map(tool => tool.name).sort(), ['tool_batch', 'tool_call', 'tool_list', 'tool_schema']);
   const call = tools.find(tool => tool.name === 'tool_call');
+  const batch = tools.find(tool => tool.name === 'tool_batch');
   assert.equal(call.annotations.readOnlyHint, false);
   assert.equal(call.annotations.openWorldHint, true);
+  assert.equal(batch.annotations.destructiveHint, true);
+  assert.equal(batch.annotations.openWorldHint, true);
 
   const result = await client.callTool({ name: 'tool_call', arguments: { server: 'browser', tool: 'take_screenshot' } });
   assert.deepEqual(result.content, image.content);
@@ -180,6 +185,106 @@ test('tool_call validates only routing fields and returns downstream rich result
   const errorBroker = new LocalToolBroker({ inner: errorInner, configPath });
   const errorResult = await errorBroker.call({ server: 'browser', tool: 'missing' });
   assert.strictEqual(errorResult, downstreamError);
+});
+
+test('tool_batch preflights all entries, bounds concurrency, preserves order, and separates downstream errors from dispatch rejection', async t => {
+  const configPath = await configFile(t);
+  let active = 0;
+  let maxActive = 0;
+  const inner = fakeInner({
+    pages: { FIRST: { tools: [] } },
+    callHandler: async (_name, args) => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      try {
+        await new Promise(resolve => setTimeout(resolve, args.delay));
+        if (args.kind === 'throw') throw new Error('transport failed');
+        if (args.kind === 'downstream') return { isError: true, content: [{ type: 'text', text: 'downstream error' }] };
+        return { content: [{ type: 'text', text: args.kind }] };
+      } finally {
+        active -= 1;
+      }
+    }
+  });
+  const broker = new LocalToolBroker({ inner, configPath });
+
+  const result = await broker.batch({
+    server: 'browser',
+    tool: 'observe',
+    concurrency: 2,
+    calls: [
+      { id: 'slow', arguments: { kind: 'ok', delay: 40 } },
+      { id: 'downstream', arguments: { kind: 'downstream', delay: 5 } },
+      { id: 'rejected', arguments: { kind: 'throw', delay: 5 } }
+    ]
+  });
+
+  assert.equal(maxActive, 2);
+  assert.deepEqual(result.results.map(entry => entry.id), ['slow', 'downstream', 'rejected']);
+  assert.equal(result.results[0].status, 'fulfilled');
+  assert.equal(result.results[1].status, 'fulfilled');
+  assert.equal(result.results[1].result.isError, true);
+  assert.equal(result.results[2].status, 'rejected');
+  assert.equal(result.results[2].error.code, 'INNER_CALL_FAILED');
+
+  const dispatched = inner.callCalls.length;
+  await assert.rejects(() => broker.batch({
+    server: 'browser',
+    tool: 'observe',
+    calls: [{ arguments: {} }, { arguments: [] }]
+  }), /arguments must be an object/);
+  assert.equal(inner.callCalls.length, dispatched);
+});
+
+test('tool_batch cancellation stops queued dispatches', async t => {
+  const configPath = await configFile(t);
+  let dispatches = 0;
+  let completed = 0;
+  const inner = fakeInner({
+    pages: { FIRST: { tools: [] } },
+    callHandler: async (_name, _args, signal) => {
+      dispatches += 1;
+      return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+          completed += 1;
+          resolve({ content: [{ type: 'text', text: 'ok' }] });
+        }, 120);
+        const abort = () => {
+          clearTimeout(timer);
+          reject(signal.reason ?? new Error('aborted'));
+        };
+        signal?.addEventListener('abort', abort, { once: true });
+        if (signal?.aborted) abort();
+      });
+    }
+  });
+  const broker = new LocalToolBroker({ inner, configPath });
+  const server = createLocalBrokerServer({ broker });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const client = new Client({ name: 'local-tools-cancel-test', version: '1.0.0' });
+  t.after(async () => {
+    await client.close();
+    await server.close();
+  });
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+
+  const controller = new AbortController();
+  const pending = client.callTool({
+    name: 'tool_batch',
+    arguments: {
+      server: 'browser',
+      tool: 'observe',
+      concurrency: 2,
+      calls: [{ arguments: {} }, { arguments: {} }, { arguments: {} }, { arguments: {} }]
+    }
+  }, undefined, { signal: controller.signal });
+  setTimeout(() => controller.abort(new Error('review-cancel')), 20);
+
+  await assert.rejects(() => pending, /review-cancel/);
+  await new Promise(resolve => setTimeout(resolve, 160));
+  assert.equal(dispatches, 2);
+  assert.equal(completed, 0);
 });
 
 test('inner transport failures are bounded errors and shutdown closes the private child', async t => {
