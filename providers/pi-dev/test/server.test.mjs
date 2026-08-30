@@ -201,13 +201,18 @@ test('owner context is published as MCP initialization instructions', async () =
   });
 });
 
-test('trusted-dev exposes four tools and minimal schemas', async () => {
+test('trusted-dev exposes structured exec alongside Bash and minimal schemas', async () => {
   const { env } = await fixture('unrestricted');
   await withClient(env, async client => {
     const listed = await client.listTools();
-    assert.deepEqual(listed.tools.map(x => x.name).sort(), ['bash', 'edit', 'read', 'write']);
+    assert.deepEqual(listed.tools.map(x => x.name).sort(), ['bash', 'edit', 'exec', 'read', 'write']);
+    const exec = listed.tools.find(x => x.name === 'exec');
+    assert.match(exec.description, /structured argv/i);
+    assert.match(exec.description, /no shell parsing/i);
+    assert.deepEqual(Object.keys(exec.inputSchema.properties).sort(), ['argv', 'cwd', 'timeout_seconds']);
     const bash = listed.tools.find(x => x.name === 'bash');
     assert.match(bash.description, /bounded retained-output path/i);
+    assert.match(bash.description, /prefer exec/i);
     assert.deepEqual(Object.keys(bash.inputSchema.properties).sort(), ['command', 'cwd', 'timeout_seconds']);
     const read = listed.tools.find(x => x.name === 'read');
     assert.deepEqual(Object.keys(read.inputSchema.properties).sort(), ['limit', 'offset', 'path']);
@@ -221,7 +226,7 @@ test('trusted-dev exposes four tools and minimal schemas', async () => {
   });
 });
 
-test('restricted omits unrestricted Pi bash', async () => {
+test('restricted omits unrestricted Pi exec and bash', async () => {
   const { env } = await fixture('allowlist');
   await withClient(env, async client => {
     const listed = await client.listTools();
@@ -236,18 +241,23 @@ test('personal user mode exposes file_ops alongside edit with user-path descript
   const { env } = await userFixture();
   await withClient(env, async client => {
     const listed = await client.listTools();
-    assert.deepEqual(listed.tools.map(x => x.name).sort(), ['bash', 'edit', 'file_ops', 'pc_sleep', 'read', 'wait', 'write']);
+    assert.deepEqual(listed.tools.map(x => x.name).sort(), ['bash', 'edit', 'exec', 'file_ops', 'pc_sleep', 'read', 'wait', 'write']);
     const read = listed.tools.find(x => x.name === 'read');
     assert.match(read.description, /UTF-8|text/i);
     assert.match(read.description, /1-based/i);
     assert.match(read.description, /truncat|bounded/i);
     assert.match(read.description, /cat|sed/i);
     assert.match(read.inputSchema.properties.path.description, /relative.*default.*absolute/i);
+    const exec = listed.tools.find(x => x.name === 'exec');
+    assert.match(exec.description, /structured argv/i);
+    assert.match(exec.description, /passed literally|literal arguments/i);
+    assert.match(exec.inputSchema.properties.cwd.description, /relative.*default.*absolute/i);
     const bash = listed.tools.find(x => x.name === 'bash');
     assert.match(bash.description, /bounded.*noninteractive|noninteractive.*bounded/i);
     assert.match(bash.description, /30.*300/i);
     assert.match(bash.description, /Terminal.*persist|persist.*Terminal/i);
-    assert.match(bash.description, /large.*unfamiliar.*rg|rg.*large.*unfamiliar/i);
+    assert.match(exec.description, /rg/i);
+    assert.match(bash.description, /tool_batch/i);
     assert.match(bash.inputSchema.properties.cwd.description, /relative.*default.*absolute/i);
     const edit = listed.tools.find(x => x.name === 'edit');
     assertEditV2Schema(edit);
@@ -756,7 +766,7 @@ test('workspace-mode pi-dev loads from a smaller-profile fixture with the Termin
   const { env } = await fixture('unrestricted');
   await withClientAt(path.join(copiedPi, 'server.mjs'), env, async client => {
     const listed = await client.listTools();
-    assert.deepEqual(listed.tools.map(tool => tool.name).sort(), ['bash', 'edit', 'read', 'write']);
+    assert.deepEqual(listed.tools.map(tool => tool.name).sort(), ['bash', 'edit', 'exec', 'read', 'write']);
   });
 });
 

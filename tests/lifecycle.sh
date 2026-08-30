@@ -241,8 +241,8 @@ EOF
   printf '%01024d' 0 > "$state/logs/one-mcp.log"
   printf '%01024d' 0 > "$state/logs/one-mcp1.log"
   printf '%02048d' 0 > "$state/dev/bash-old.log"
-  printf '%01024d' 0 > "$state/dev/bash-new.log"
-  printf '%00512d' 0 > "$state/dev/bash-live.log.active"
+  printf '%01024d' 0 > "$state/dev/exec-new.log"
+  printf '%00512d' 0 > "$state/dev/exec-live.log.active"
   cat > "$fakebin/curl" <<'SH'
 #!/usr/bin/env bash
 exit 1
@@ -258,11 +258,11 @@ SH
     BRIDGE_PROC_ROOT="$fakeproc" PATH="$fakebin:$PATH" bash "$ROOT/bin/status" 2>&1 || true)"
   grep -Fq '== retained diagnostics ==' <<<"$output" &&
   grep -Fq '1MCP rotated logs: files=2 bytes=2048 policy_bytes=3072' <<<"$output" &&
-  grep -Fq 'Bash finalized spools: files=2 bytes=3072 budget_bytes=4096' <<<"$output" &&
-  grep -Fq 'Bash active spools: files=1 bytes=512' <<<"$output"
+  grep -Fq 'Dev finalized spools: files=2 bytes=3072 budget_bytes=4096' <<<"$output" &&
+  grep -Fq 'Dev active spools: files=1 bytes=512' <<<"$output"
 }
 
-run_test 'status reports bounded log and Bash spool storage' test_status_reports_bounded_diagnostic_storage
+run_test 'status reports bounded log and Dev command spool storage' test_status_reports_bounded_diagnostic_storage
 test_status_matches_watchdog_against_rendered_live_source_root() {
   local sandbox="$TMP/status-source-root"
   local state="$sandbox/state"

@@ -9,11 +9,13 @@ import {
 import { lstat, readdir, truncate, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { spawn } from 'node:child_process';
 import { createLocalBashOperations } from '@earendil-works/pi-coding-agent';
 import { resolveUserCwd, resolveWorkspaceCwd } from './boundary.mjs';
 
 const DEFAULT_TIMEOUT_SECONDS = 30;
 const MAX_TIMEOUT_SECONDS = 300;
+const EXIT_STDIO_GRACE_MS = 100;
 const MAX_POLICY_BYTES = 16 * 1024 * 1024;
 const DEFAULT_MAX_SPOOL_BYTES = 64 * 1024 * 1024;
 const MAX_SPOOL_BYTES = 256 * 1024 * 1024;
@@ -51,7 +53,7 @@ function decodeBoundedUtf8Tail(buffer, limit) {
 }
 
 function activeSpoolIdentity(name) {
-  const match = name.match(/^bash-(\d+)-(\d+)-.*\.log\.active$/);
+  const match = name.match(/^(?:bash|exec)-(\d+)-(\d+)-.*\.log\.active$/);
   if (!match) return null;
   return { createdAtMs: Number(match[1]), pid: Number(match[2]) };
 }
@@ -127,7 +129,7 @@ export async function pruneBashSpools({
       }
       continue;
     }
-    if (!/^bash-.*\.log$/.test(entry.name)) continue;
+    if (!/^(?:bash|exec)-.*\.log$/.test(entry.name)) continue;
     const file = path.join(stateDir, entry.name);
     let stats;
     try {
@@ -193,23 +195,21 @@ export async function pruneBashSpools({
   return result;
 }
 
-export async function runBash({
-  pathMode = 'workspace',
-  defaultCwd,
-  workspaceRoot,
-  command,
-  cwd,
-  timeout_seconds = DEFAULT_TIMEOUT_SECONDS,
+async function resolveExecutionCwd({ pathMode, defaultCwd, workspaceRoot, cwd }) {
+  if (pathMode === 'workspace') return resolveWorkspaceCwd(workspaceRoot, cwd);
+  if (pathMode === 'user') return resolveUserCwd(defaultCwd, cwd);
+  throw new Error('MCP_DEV_PATH_MODE must be workspace or user');
+}
+
+function validateCapturePolicy({
+  timeoutSeconds,
   maxOutputBytes,
-  maxSpoolBytes = DEFAULT_MAX_SPOOL_BYTES,
-  spoolTtlSeconds = DEFAULT_SPOOL_TTL_SECONDS,
-  maxSpoolTotalBytes = DEFAULT_SPOOL_MAX_TOTAL_BYTES,
-  stateDir
-}, signal) {
-  if (typeof command !== 'string' || command.length === 0) {
-    throw new Error('command must be a non-empty string');
-  }
-  positiveNumber('timeout_seconds', timeout_seconds, MAX_TIMEOUT_SECONDS);
+  maxSpoolBytes,
+  spoolTtlSeconds,
+  maxSpoolTotalBytes,
+  stateDir,
+}) {
+  positiveNumber('timeout_seconds', timeoutSeconds, MAX_TIMEOUT_SECONDS);
   positiveNumber('MCP_DEV_MAX_OUTPUT_BYTES', maxOutputBytes, MAX_POLICY_BYTES);
   positiveNumber('MCP_DEV_MAX_SPOOL_BYTES', maxSpoolBytes, MAX_SPOOL_BYTES);
   positiveNumber('MCP_DEV_SPOOL_TTL_SECONDS', spoolTtlSeconds, MAX_SPOOL_TTL_SECONDS);
@@ -220,17 +220,160 @@ export async function runBash({
   if (typeof stateDir !== 'string' || !path.isAbsolute(stateDir)) {
     throw new Error('MCP_DEV_STATE_DIR must be an absolute path');
   }
+}
 
-  let resolvedCwd;
-  if (pathMode === 'workspace') resolvedCwd = await resolveWorkspaceCwd(workspaceRoot, cwd);
-  else if (pathMode === 'user') resolvedCwd = await resolveUserCwd(defaultCwd, cwd);
-  else throw new Error('MCP_DEV_PATH_MODE must be workspace or user');
+function killProcessTree(child) {
+  if (!Number.isSafeInteger(child.pid) || child.pid <= 0) return;
+  try {
+    process.kill(-child.pid, 'SIGKILL');
+    return;
+  } catch {
+    // The process may have exited before its group was signalled, or may not own a group.
+  }
+  try {
+    child.kill('SIGKILL');
+  } catch {
+    // Already gone.
+  }
+}
+
+function executeArgv(file, args, cwd, { onData, signal, timeout }) {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new Error('aborted'));
+      return;
+    }
+
+    let settled = false;
+    let exited = false;
+    let exitCode = null;
+    let termination = null;
+    let deadlineTimer = null;
+    let postExitTimer = null;
+    let stdoutEnded = false;
+    let stderrEnded = false;
+    let child;
+    try {
+      child = spawn(file, args, {
+        cwd,
+        shell: false,
+        detached: true,
+        windowsHide: true,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+    } catch (error) {
+      reject(error);
+      return;
+    }
+
+    stdoutEnded = child.stdout === null;
+    stderrEnded = child.stderr === null;
+
+    const cleanup = () => {
+      if (deadlineTimer !== null) clearTimeout(deadlineTimer);
+      if (postExitTimer !== null) clearTimeout(postExitTimer);
+      signal?.removeEventListener('abort', abort);
+      child.removeListener('error', handleError);
+      child.removeListener('exit', handleExit);
+      child.removeListener('close', handleClose);
+      child.stdout?.removeListener('data', handleData);
+      child.stdout?.removeListener('end', handleStdoutEnd);
+      child.stderr?.removeListener('data', handleData);
+      child.stderr?.removeListener('end', handleStderrEnd);
+    };
+    const finish = (error, code = exitCode) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      child.stdout?.destroy();
+      child.stderr?.destroy();
+      if (error) reject(error);
+      else resolve({ exitCode: code });
+    };
+    const finishAfterExit = () => {
+      if (!exited || settled) return;
+      if (stdoutEnded && stderrEnded) {
+        finish(termination === null ? null : new Error(termination));
+      }
+    };
+    const armPostExitTimer = () => {
+      if (postExitTimer !== null) clearTimeout(postExitTimer);
+      postExitTimer = setTimeout(
+        () => finish(termination === null ? null : new Error(termination)),
+        EXIT_STDIO_GRACE_MS
+      );
+    };
+    const terminate = reason => {
+      if (settled || termination !== null) return;
+      termination = reason;
+      killProcessTree(child);
+    };
+    const abort = () => terminate('aborted');
+    const handleData = data => {
+      onData(data);
+      if (exited && !settled) armPostExitTimer();
+    };
+    const handleStdoutEnd = () => {
+      stdoutEnded = true;
+      finishAfterExit();
+    };
+    const handleStderrEnd = () => {
+      stderrEnded = true;
+      finishAfterExit();
+    };
+    const handleError = error => finish(error);
+    const handleExit = code => {
+      exited = true;
+      exitCode = code;
+      if (deadlineTimer !== null) {
+        clearTimeout(deadlineTimer);
+        deadlineTimer = null;
+      }
+      finishAfterExit();
+      if (!settled) armPostExitTimer();
+    };
+    const handleClose = code => finish(termination === null ? null : new Error(termination), code);
+
+    child.stdout?.on('data', handleData);
+    child.stdout?.once('end', handleStdoutEnd);
+    child.stderr?.on('data', handleData);
+    child.stderr?.once('end', handleStderrEnd);
+    child.once('error', handleError);
+    child.once('exit', handleExit);
+    child.once('close', handleClose);
+    deadlineTimer = setTimeout(() => terminate(`timeout: ${timeout}`), timeout * 1000);
+    signal?.addEventListener('abort', abort, { once: true });
+    if (signal?.aborted) abort();
+  });
+}
+
+async function runCaptured({
+  spoolPrefix,
+  pathMode = 'workspace',
+  defaultCwd,
+  workspaceRoot,
+  cwd,
+  timeoutSeconds = DEFAULT_TIMEOUT_SECONDS,
+  maxOutputBytes,
+  maxSpoolBytes = DEFAULT_MAX_SPOOL_BYTES,
+  spoolTtlSeconds = DEFAULT_SPOOL_TTL_SECONDS,
+  maxSpoolTotalBytes = DEFAULT_SPOOL_MAX_TOTAL_BYTES,
+  stateDir,
+}, signal, execute) {
+  validateCapturePolicy({
+    timeoutSeconds,
+    maxOutputBytes,
+    maxSpoolBytes,
+    spoolTtlSeconds,
+    maxSpoolTotalBytes,
+    stateDir,
+  });
+
+  const resolvedCwd = await resolveExecutionCwd({ pathMode, defaultCwd, workspaceRoot, cwd });
   mkdirSync(stateDir, { recursive: true, mode: 0o700 });
-  const spool = path.join(stateDir, `bash-${Date.now()}-${process.pid}-${randomUUID()}.log`);
+  const spool = path.join(stateDir, `${spoolPrefix}-${Date.now()}-${process.pid}-${randomUUID()}.log`);
   const activeSpool = `${spool}.active`;
   const fd = openSync(activeSpool, 'wx', 0o600);
-
-  const ops = createLocalBashOperations();
   const started = process.hrtime.bigint();
   let tail = Buffer.alloc(0);
   let outputBytes = 0;
@@ -255,10 +398,11 @@ export async function runBash({
   };
 
   try {
-    ({ exitCode } = await ops.exec(command, resolvedCwd, {
+    ({ exitCode } = await execute({
+      cwd: resolvedCwd,
       onData,
       signal,
-      timeout: timeout_seconds
+      timeout: timeoutSeconds,
     }));
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -291,7 +435,7 @@ export async function runBash({
       protectedPaths: truncated ? [spool] : [],
     });
   } catch (error) {
-    console.error(`Pi Dev Bash spool GC warning: ${error instanceof Error ? error.message : String(error)}`);
+    console.error(`Pi Dev command spool GC warning: ${error instanceof Error ? error.message : String(error)}`);
   }
 
   return {
@@ -305,6 +449,49 @@ export async function runBash({
     truncated,
     spool_truncated: spoolTruncated,
     full_output_path: truncated ? spool : null,
-    timeout_seconds
+    timeout_seconds: timeoutSeconds,
   };
+}
+
+export async function runBash({
+  command,
+  timeout_seconds = DEFAULT_TIMEOUT_SECONDS,
+  ...options
+}, signal) {
+  if (typeof command !== 'string' || command.length === 0) {
+    throw new Error('command must be a non-empty string');
+  }
+  const ops = createLocalBashOperations();
+  return runCaptured({
+    ...options,
+    spoolPrefix: 'bash',
+    timeoutSeconds: timeout_seconds,
+  }, signal, ({ cwd, onData, signal: executionSignal, timeout }) => ops.exec(command, cwd, {
+    onData,
+    signal: executionSignal,
+    timeout,
+  }));
+}
+
+export async function runExec({
+  argv,
+  timeout_seconds = DEFAULT_TIMEOUT_SECONDS,
+  ...options
+}, signal) {
+  if (!Array.isArray(argv) || argv.length < 1 || argv.length > 256) {
+    throw new Error('argv must contain from 1 to 256 strings');
+  }
+  if (argv.some(value => typeof value !== 'string' || value.includes('\0')) || argv[0].length === 0) {
+    throw new Error('argv must contain strings without null bytes and argv[0] must be non-empty');
+  }
+  const [file, ...args] = argv;
+  return runCaptured({
+    ...options,
+    spoolPrefix: 'exec',
+    timeoutSeconds: timeout_seconds,
+  }, signal, ({ cwd, onData, signal: executionSignal, timeout }) => executeArgv(file, args, cwd, {
+    onData,
+    signal: executionSignal,
+    timeout,
+  }));
 }

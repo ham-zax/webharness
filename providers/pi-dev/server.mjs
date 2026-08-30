@@ -7,7 +7,7 @@ import { z } from 'zod';
 import { canonicalDefaultCwd, canonicalWorkspaceRoot } from './boundary.mjs';
 import { runRead, runEdit, runWrite } from './files.mjs';
 import { runFileOps } from './file-ops.mjs';
-import { pruneBashSpools, runBash } from './shell.mjs';
+import { pruneBashSpools, runBash, runExec } from './shell.mjs';
 import {
   renderBashText,
   renderEditPartial,
@@ -105,10 +105,10 @@ try {
     maxTotalBytes: maxSpoolTotalBytes,
   });
   if (gc.deletedFiles > 0 || gc.deletedActiveFiles > 0 || gc.truncatedFiles > 0) {
-    console.error(`Pi Dev Bash spool GC: deleted_files=${gc.deletedFiles} deleted_bytes=${gc.deletedBytes} deleted_active_files=${gc.deletedActiveFiles} deleted_active_bytes=${gc.deletedActiveBytes} truncated_files=${gc.truncatedFiles} truncated_bytes=${gc.truncatedBytes} retained_files=${gc.retainedFiles} retained_bytes=${gc.retainedBytes}`);
+    console.error(`Pi Dev command spool GC: deleted_files=${gc.deletedFiles} deleted_bytes=${gc.deletedBytes} deleted_active_files=${gc.deletedActiveFiles} deleted_active_bytes=${gc.deletedActiveBytes} truncated_files=${gc.truncatedFiles} truncated_bytes=${gc.truncatedBytes} retained_files=${gc.retainedFiles} retained_bytes=${gc.retainedBytes}`);
   }
 } catch (error) {
-  console.error(`Pi Dev Bash spool GC warning: ${error instanceof Error ? error.message : String(error)}`);
+  console.error(`Pi Dev command spool GC warning: ${error instanceof Error ? error.message : String(error)}`);
 }
 
 let waitEngine = null;
@@ -199,8 +199,8 @@ function renderWaitResult(result) {
 
 server.registerTool('read', {
   description: pathMode === 'user'
-    ? 'Read focused UTF-8/text available to the WSL user; prefer this over Bash cat/sed for ordinary bounded file reads. offset is a 1-based line number, limit is a line count, and large text is bounded/truncated with continuation guidance; this Dev wrapper is text-only. Relative paths use the configured default cwd and absolute paths are accepted'
-    : 'Read focused UTF-8/text below the configured workspace root; prefer this over Bash cat/sed for ordinary bounded file reads. offset is a 1-based line number, limit is a line count, and large text is bounded/truncated with continuation guidance; this Dev wrapper is text-only',
+    ? 'Read focused UTF-8 text available to the WSL user. Prefer this over command execution for ordinary file reads. offset is a 1-based line number; limit is a line count. Large text is bounded with continuation guidance. Relative paths use the configured default cwd and absolute paths are accepted.'
+    : 'Read focused UTF-8 text below the configured workspace root. Prefer this over command execution for ordinary file reads. offset is a 1-based line number; limit is a line count. Large text is bounded with continuation guidance.',
   inputSchema: {
     path: modelPath,
     offset: z.number().int().positive().optional(),
@@ -262,7 +262,7 @@ if (pathMode === 'user') {
   }));
 
   server.registerTool('wait', {
-    description: 'Create, resume, or cancel one durable named condition/timer wait; prefer this over Bash polling/sleep loops. A wait persists local condition state only; it does not start, wake, push, or schedule a ChatGPT/model turn. Arm with name+condition and resume later with name only. A pending result leaves the same wait durable and must be explicitly resumed by an active current or successor model turn. timeout_seconds is the durable safety deadline (default 300s, max 24h); hold_seconds only bounds this invocation (default 10s, max 15s). Use timer.after_seconds or timezone-qualified timer.at for elapsed/absolute timer conditions and keep the safety deadline later than the timer target. Event conditions cover Terminal output/exit, process exit, TCP listen, file exists/change, HTTP readiness, and user-systemd state. Terminal-output waits match only output produced after arming and do not consume the Terminal model cursor.',
+    description: 'Create, resume, or cancel one durable named condition/timer wait. Prefer this over polling or sleep loops. Arm with name+condition and resume later with name only. A pending wait stays durable and must be resumed by a later active model turn; it does not start one. timeout_seconds is the durable deadline (default 300s, max 24h); hold_seconds bounds only this invocation (default 10s, max 15s). Supports timer, Terminal output/exit, process exit, TCP listen, file exists/change, HTTP readiness, and user-systemd conditions. Terminal-output waits observe only output produced after arming and do not consume the Terminal model cursor.',
     inputSchema: waitInputSchema,
   }, async (args, extra) => invokeWait(async () => {
     const result = await waitEngine.run(args, extra.signal);
@@ -298,10 +298,32 @@ if (pathMode === 'user') {
 }
 
 if (mode === 'unrestricted') {
+  server.registerTool('exec', {
+    description: pathMode === 'user'
+      ? 'Run one executable directly with structured argv and no shell parsing. Prefer this for ordinary Git, builds, tests, rg, repository inspection, and other noninteractive commands. argv[0] is the executable; later elements are passed literally. Use bash only when shell syntax is required, and Terminal for persistent or interactive work. Default timeout is 30 seconds, maximum 300 seconds; large output may be truncated to a retained-output file. cwd defaults to the configured default cwd and may be relative or absolute.'
+      : 'Run one executable directly with structured argv and no shell parsing. Prefer this for ordinary bounded commands; argv[0] is the executable and later elements are passed literally. Use bash only when shell syntax is required. Default timeout is 30 seconds, maximum 300 seconds; large output may be truncated with a bounded retained-output path. cwd is optional and workspace-relative.',
+    inputSchema: {
+      argv: z.array(z.string()).min(1).max(256).describe('Executable name/path followed by literal arguments. Do not add shell quoting around individual elements.'),
+      cwd: cwdPath.optional(),
+      timeout_seconds: z.number().positive().max(300).optional()
+    }
+  }, async (args, extra) => invoke(async () => {
+    const result = await runExec({
+      ...pathPolicy,
+      ...args,
+      maxOutputBytes,
+      maxSpoolBytes,
+      spoolTtlSeconds,
+      maxSpoolTotalBytes,
+      stateDir
+    }, extra.signal);
+    return { content: [{ type: 'text', text: renderBashText(result) }] };
+  }));
+
   server.registerTool('bash', {
     description: pathMode === 'user'
-      ? 'Run one bounded, noninteractive native Bash command as the WSL user; prefer for short commands, Git, builds, tests, rg, repository inspection, and ordinary execution. Default timeout is 30 seconds, maximum 300 seconds, and large output may be truncated with a bounded retained-output path. Use Terminal for processes that must persist or need a PTY/interactive workflow. For a large or unfamiliar repository, Bash with rg plus focused read is the lower-cost discovery path before potentially heavyweight CodeDB-backed Code tools. Do not use raw tmux or wsl-term through Bash to bypass human Terminal ownership. cwd defaults to the configured default cwd and may be relative to it or absolute'
-      : 'Run one bounded, noninteractive native Bash command; prefer for short commands, Git, builds, tests, and ordinary execution. Default timeout is 30 seconds, maximum 300 seconds, and large output may be truncated with a bounded retained-output path; cwd is optional and workspace-relative',
+      ? 'Run one bounded, noninteractive Bash program. Use this only when shell syntax such as pipes, redirects, substitutions, variables, loops, or compound commands is required. Prefer exec for ordinary commands and Local tool_batch for repeated MCP calls. Use Terminal for persistent or interactive work. Default timeout is 30 seconds, maximum 300 seconds; large output may be truncated to a retained-output file. Do not use Bash to bypass Terminal human ownership. cwd defaults to the configured default cwd and may be relative or absolute.'
+      : 'Run one bounded, noninteractive Bash program. Use this only when shell syntax such as pipes, redirects, substitutions, variables, loops, or compound commands is required; prefer exec for ordinary commands. Default timeout is 30 seconds, maximum 300 seconds; large output may be truncated with a bounded retained-output path. cwd is optional and workspace-relative.',
     inputSchema: {
       command: z.string().min(1),
       cwd: cwdPath.optional(),

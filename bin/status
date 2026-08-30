@@ -102,13 +102,16 @@ else
 fi
 
 storage_stats() {
-  local dir="$1" pattern="$2"
+  local dir="$1" pattern="$2" second_pattern="${3:-}"
   if [ ! -d "$dir" ]; then
     printf '0 0 0\n'
     return 0
   fi
-  find "$dir" -maxdepth 1 -type f -name "$pattern" -printf '%s %T@\n' 2>/dev/null | \
-    awk -v now="$(date +%s)" '
+  if [ -n "$second_pattern" ]; then
+    find "$dir" -maxdepth 1 -type f \( -name "$pattern" -o -name "$second_pattern" \) -printf '%s %T@\n' 2>/dev/null
+  else
+    find "$dir" -maxdepth 1 -type f -name "$pattern" -printf '%s %T@\n' 2>/dev/null
+  fi | awk -v now="$(date +%s)" '
       { count += 1; bytes += $1; if (oldest == 0 || $2 < oldest) oldest = $2 }
       END { age = oldest ? int(now - oldest) : 0; if (age < 0) age = 0; printf "%d %d %d\n", count, bytes, age }
     '
@@ -141,12 +144,12 @@ try {
 NODE
 )"
 [[ "$DEV_SPOOL_BUDGET" =~ ^[0-9]+$ ]] || DEV_SPOOL_BUDGET=0
-read -r SPOOL_FILES SPOOL_BYTES SPOOL_OLDEST_AGE < <(storage_stats "$BRIDGE_STATE_DIR/dev" 'bash-*.log')
-read -r ACTIVE_FILES ACTIVE_BYTES ACTIVE_OLDEST_AGE < <(storage_stats "$BRIDGE_STATE_DIR/dev" 'bash-*.log.active')
-echo "Bash finalized spools: files=$SPOOL_FILES bytes=$SPOOL_BYTES budget_bytes=$DEV_SPOOL_BUDGET oldest_age_seconds=$SPOOL_OLDEST_AGE"
-echo "Bash active spools: files=$ACTIVE_FILES bytes=$ACTIVE_BYTES oldest_age_seconds=$ACTIVE_OLDEST_AGE"
+read -r SPOOL_FILES SPOOL_BYTES SPOOL_OLDEST_AGE < <(storage_stats "$BRIDGE_STATE_DIR/dev" 'bash-*.log' 'exec-*.log')
+read -r ACTIVE_FILES ACTIVE_BYTES ACTIVE_OLDEST_AGE < <(storage_stats "$BRIDGE_STATE_DIR/dev" 'bash-*.log.active' 'exec-*.log.active')
+echo "Dev finalized spools: files=$SPOOL_FILES bytes=$SPOOL_BYTES budget_bytes=$DEV_SPOOL_BUDGET oldest_age_seconds=$SPOOL_OLDEST_AGE"
+echo "Dev active spools: files=$ACTIVE_FILES bytes=$ACTIVE_BYTES oldest_age_seconds=$ACTIVE_OLDEST_AGE"
 if [ "$DEV_SPOOL_BUDGET" -gt 0 ] && [ "$SPOOL_BYTES" -gt "$DEV_SPOOL_BUDGET" ]; then
-  warn "Bash finalized spool storage exceeds configured budget: $SPOOL_BYTES > $DEV_SPOOL_BUDGET bytes"
+  warn "Dev finalized spool storage exceeds configured budget: $SPOOL_BYTES > $DEV_SPOOL_BUDGET bytes"
 fi
 
 LEGACY_LOG="$BRIDGE_RUN_DIR/one-mcp.log"

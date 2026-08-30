@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { pruneBashSpools, runBash } from '../shell.mjs';
+import { pruneBashSpools, runBash, runExec } from '../shell.mjs';
 
 const tempDir = prefix => fs.mkdtemp(path.join(os.tmpdir(), prefix));
 
@@ -28,6 +28,49 @@ async function waitFor(predicate, timeoutMs = 2000) {
   }
   throw new Error('condition did not become true before timeout');
 }
+
+test('structured exec passes argv literally without shell interpretation', async () => {
+  const workspaceRoot = await tempDir('pi-exec-root-');
+  const result = await runExec({
+    workspaceRoot,
+    argv: [process.execPath, '-e', "console.log(process.argv.slice(1).map(value => `<${value}>`).join('|'))", 'a b', '$HOME', 'x;y'],
+    maxOutputBytes: 1024 * 1024,
+    stateDir: await tempDir('pi-exec-state-')
+  });
+  assert.equal(result.exit_code, 0);
+  assert.equal(result.output.trim(), '<a b>|<$HOME>|<x;y>');
+});
+
+test('structured exec settles from parent exit without waiting for detached inherited stdio', async () => {
+  const workspaceRoot = await tempDir('pi-exec-inherited-stdio-');
+  const code = [
+    "const { spawn } = require('node:child_process')",
+    "const child = spawn('/bin/sleep', ['30'], { detached: true, stdio: 'inherit' })",
+    "console.log(`child=${child.pid}`)",
+    'child.unref()',
+    "console.log('parent-exit')"
+  ].join('; ');
+  const started = Date.now();
+  const result = await runExec({
+    workspaceRoot,
+    argv: [process.execPath, '-e', code],
+    timeout_seconds: 0.1,
+    maxOutputBytes: 1024 * 1024,
+    stateDir: await tempDir('pi-exec-inherited-stdio-state-')
+  });
+  const wallMs = Date.now() - started;
+  const childPid = Number(result.output.match(/child=(\d+)/)?.[1]);
+  try {
+    assert.equal(result.timed_out, false);
+    assert.equal(result.exit_code, 0);
+    assert.match(result.output, /parent-exit/);
+    assert.ok(wallMs < 1000, `exec waited ${wallMs}ms for inherited stdio`);
+  } finally {
+    if (Number.isSafeInteger(childPid) && childPid > 0) {
+      try { process.kill(-childPid, 'SIGKILL'); } catch {}
+    }
+  }
+});
 
 test('native compound command runs from immutable workspace root by default', async () => {
   const workspaceRoot = await tempDir('pi-bash-root-');
