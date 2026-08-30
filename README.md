@@ -12,7 +12,7 @@ Agents should reason about four capability domains rather than individual backen
 
 | Capability | Use it for | Important boundary |
 |---|---|---|
-| **Dev** | files, guarded edits, structured argv execution, native Bash, durable waits, local host actions | execution has the authority of the selected trust profile |
+| **Dev** | files, guarded edits, native file import, aggregate Git review, structured argv execution, native Bash, durable waits, local host actions | execution and file mutation have the authority of the selected trust profile |
 | **Code** | repository structure, symbols, semantic context, callers/dependencies | routes to the nearest canonical Git root; raw CodeDB tools stay hidden |
 | **Terminal** | long-running or interactive commands and human handoff | tmux owns PTY/process lifetime; the broker owns transcript and control state |
 | **Local** | high-cardinality local capabilities without bloating the outer MCP catalog | exposes only `tool_list`, `tool_schema`, `tool_call`, and `tool_batch`; Browser is currently the main downstream domain |
@@ -20,7 +20,7 @@ Agents should reason about four capability domains rather than individual backen
 The full workstation composition is deliberately small at the client boundary:
 
 ```text
-Dev       read edit write file_ops wait exec bash pc_sleep
+Dev       read edit write import_file file_ops review_changes wait exec bash pc_sleep
 Code      code_search code_context code_symbol
 Terminal  terminal_open terminal_read terminal_send terminal_resize terminal_list terminal_yield terminal_close
 Local     tool_list tool_schema tool_call tool_batch
@@ -108,6 +108,8 @@ Use the narrowest domain that owns the task:
 | Task | Route |
 |---|---|
 | inspect or mutate known files; Git/build/test; bounded command | Dev |
+| import a ChatGPT attached/generated file into WSL | Dev -> `import_file` |
+| inspect the aggregate current Git diff after related mutations | Dev -> `review_changes` |
 | understand symbols/callers/dependencies after initial repository orientation | Code |
 | command must persist, needs a PTY, or may need human input | Terminal |
 | routine navigation/forms/clicks in a resource-local browser | Local -> `browser-fast` |

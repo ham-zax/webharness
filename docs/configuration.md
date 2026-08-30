@@ -16,6 +16,7 @@ MCP_WORKSPACE_ROOT=/absolute/path/to/code
 MCP_PUBLIC_URL=https://mcp.example.com
 MCP_TUNNEL_NAME=
 MCP_DEV_MAX_OUTPUT_BYTES=1048576
+MCP_DEV_IMPORT_MAX_BYTES=104857600
 MCP_DEV_MAX_SPOOL_BYTES=67108864
 MCP_DEV_SPOOL_TTL_SECONDS=604800
 MCP_DEV_SPOOL_MAX_TOTAL_BYTES=536870912
@@ -60,7 +61,7 @@ Linux `browser-fast` reads the current-user-owned `~/.config/mcp-dev-bridge/brow
 The maintained full reference composition is:
 
 ```text
-Dev       read edit write file_ops wait exec bash pc_sleep
+Dev       read edit write import_file file_ops review_changes wait exec bash pc_sleep
 Code      code_search code_context code_symbol
 Terminal  terminal_open terminal_read terminal_send terminal_resize terminal_list terminal_yield terminal_close
 Local     tool_list tool_schema tool_call tool_batch
@@ -68,7 +69,7 @@ Local     tool_list tool_schema tool_call tool_batch
             `-- browser-devtools  Chrome DevTools diagnostics
 ```
 
-The renderer resolves one absolute personal default cwd from `MCP_PERSONAL_DEFAULT_CWD` when supplied, otherwise from the actual WSL user's `$HOME`, and uses it for both Dev and Code. No tracked personal profile/template carries a machine-specific home path. Dev `exec` passes `argv[]` directly to an executable without shell parsing; Dev `bash` remains the explicit shell-program path when pipes, redirects, substitutions, variables, loops, or compound shell syntax are required. Terminal communicates through the WebHarness broker socket and receives one normalized `MCP_TERMINAL_FRONTEND` presentation preference; tracked source keeps `kitty` as the compatibility default while a local deployment may select `windows-terminal`.
+The renderer resolves one absolute personal default cwd from `MCP_PERSONAL_DEFAULT_CWD` when supplied, otherwise from the actual WSL user's `$HOME`, and uses it for both Dev and Code. No tracked personal profile/template carries a machine-specific home path. Personal Dev also exposes create-only `import_file` for ChatGPT-native files and read-only `review_changes` for bounded aggregate Git review. `MCP_DEV_IMPORT_MAX_BYTES` controls the per-file import ceiling, defaults to 104857600 bytes (100 MiB), and is capped at 1073741824 bytes (1 GiB). Dev `exec` passes `argv[]` directly to an executable without shell parsing; Dev `bash` remains the explicit shell-program path when pipes, redirects, substitutions, variables, loops, or compound shell syntax are required. Terminal communicates through the WebHarness broker socket and receives one normalized `MCP_TERMINAL_FRONTEND` presentation preference; tracked source keeps `kitty` as the compatibility default while a local deployment may select `windows-terminal`.
 
 For personal rendering, the outer config contains `local`, `code`, `dev`, and `terminal`. The outer `local` provider is tagged only `local` and points at the repository Local broker. The renderer also atomically materializes a Local inner config at the bridge state root containing `browser-devtools` and `browser-fast`, and writes that inner config before publishing the outer config so config reload cannot start Local against a missing file. The Local broker starts pinned 1MCP over stdio in direct mode and exposes only bounded discovery/schema/single-call/batch metatools.
 
@@ -125,7 +126,7 @@ Generated provider commands contain the repository root used during rendering. I
 
 ## Output policy
 
-`MCP_DEV_MAX_OUTPUT_BYTES` is deployment policy, not a model-facing tool argument. Increase it only when the operator deliberately wants a larger model-visible Bash result budget.
+`MCP_DEV_MAX_OUTPUT_BYTES` is deployment policy, not a model-facing tool argument. Increase it only when the operator deliberately wants a larger model-visible command-result budget. `MCP_DEV_IMPORT_MAX_BYTES` is likewise deployment policy for Personal `import_file`; it defaults to 104857600 bytes (100 MiB), is capped at 1073741824 bytes (1 GiB), and is enforced while the native file stream is read.
 
 Pi Dev also bounds retained Bash diagnostics independently of the model-visible tail. `MCP_DEV_MAX_SPOOL_BYTES` is an internal deployment/provider limit with a 64 MiB default and a 256 MiB maximum; the renderer propagates it into the Dev provider environment but it never appears as a model-facing MCP tool argument. `MCP_DEV_SPOOL_TTL_SECONDS` defaults to 604800 seconds (7 days), and `MCP_DEV_SPOOL_MAX_TOTAL_BYTES` defaults to 536870912 bytes (512 MiB) and must be at least the per-spool cap. Finalized spools are pruned on provider startup and opportunistically after every Bash command: expired files are removed, legacy oversized files are capped, and the oldest finalized files are evicted until the aggregate budget is satisfied. Active `.log.active` spools are excluded from GC. When command output exceeds the per-spool cap, `output_bytes` still counts the full observed stream, the model still receives the configured bounded tail, and any retained-output file is explicitly labeled as capped rather than complete.
 

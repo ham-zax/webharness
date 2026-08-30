@@ -5,7 +5,7 @@ The `personal` profile is the full WebHarness reference deployment. It runs with
 ## Mental model
 
 ```text
-Dev       read edit write file_ops wait exec bash pc_sleep
+Dev       read edit write import_file file_ops review_changes wait exec bash pc_sleep
 Code      code_search code_context code_symbol
 Terminal  terminal_open terminal_read terminal_send terminal_resize terminal_list terminal_yield terminal_close
 Local     tool_list tool_schema tool_call tool_batch
@@ -15,7 +15,7 @@ Local     tool_list tool_schema tool_call tool_batch
 
 Think in four model-facing domains:
 
-- **Dev** handles focused text/file work, bounded execution, durable waits, and explicit Windows-host sleep. Prefer `exec` with structured `argv[]` for ordinary executable invocation; use `bash` only when shell syntax is actually required.
+- **Dev** handles focused text/file work, ChatGPT-native file ingress, aggregate Git review, bounded execution, durable waits, and explicit Windows-host sleep. Prefer `exec` with structured `argv[]` for ordinary executable invocation; use `bash` only when shell syntax is actually required.
 - **Code** provides rooted indexed repository intelligence without exposing raw CodeDB mechanics; first use may create or update heavyweight persistent index state.
 - **Terminal** owns durable PTY/process lifetime and human/model terminal ownership.
 - **Local/Browser** exposes only four stable broker tools. Use `tool_call` for one downstream invocation and `tool_batch` when the same logical `{server, tool}` should receive several independent structured argument objects; do not rebuild that batching in Bash. Use logical `server="browser-fast"` for routine interaction: `observe` once, consume any returned `memory` that applies to the current host, then pass the returned `active_tab` to `execute` with the mechanical sequence. Policy memory is local operator policy; exact-site memory is more specific than reusable platform memory; live browser state wins when strategy memory is stale. Unknown/custom sites need no predefined ATS entry and continue through the generic observe/execute flow. `execute.tab` is required and stale/unavailable tab context fails before action dispatch. A click follows exactly one newly opened target before later actions; multiple new targets stop the sequence without guessing and require another observation. Upload uses an observed file-input ref plus a logical artifact key from `~/.config/mcp-dev-bridge/browser-artifacts.json`; never substitute an arbitrary filesystem path. Use logical `server="browser-devtools"` for DevTools diagnostics and load only the specific DevTools schema needed. Omit `arguments.browser_target` for the dedicated persistent Windows MCP Chrome profile; use `arguments.browser_target="linux"` for WSLg. The Windows MCP profile is separate from everyday Chrome and keeps its own persistent sign-ins; Windows MCP and Linux browser state remain separate.
@@ -141,9 +141,17 @@ For multiple existing text files, add more target records to the same request ra
 
 Use only for new text-file creation. It refuses to overwrite an existing path.
 
+### `import_file`
+
+Use when ChatGPT supplies or generates a native file that does not yet exist on the WSL host. The tool streams the file directly to a requested WSL destination, refuses to overwrite an existing path, requires the parent directory to exist, enforces the deployment byte limit, and accepts only trusted OpenAI file-download hosts. Do not recreate binary files with `write`, base64, or shell download commands. Importing a file does not add it to the Browser artifact upload allowlist.
+
 ### `file_ops`
 
 Use only to move or delete existing regular files. Final-component symlinks are rejected. A move stays on one filesystem, creates a no-overwrite hard link to the same inode, then removes the source name under stale-state guards; there is no copy fallback. See [Security](../security.md) for the cooperative serialization and final-path race boundary.
+
+### `review_changes`
+
+Use once after the final related file mutation when you need the aggregate current Git review. It returns status, tracked line counts, and a bounded unified patch; untracked file contents are included when they fit the same patch budget. `paths` narrows the review to literal repository paths when unrelated dirty work exists. The tool is read-only and does not create review refs, commits, or temporary Git index state.
 
 ### `exec`
 

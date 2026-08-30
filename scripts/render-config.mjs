@@ -156,7 +156,7 @@ export async function renderConfig(options) {
   const deployment = {
     ...(await readEnvFile(envFile, { optional: true })),
     ...Object.fromEntries(
-      ['MCP_WORKSPACE_ROOT', 'MCP_PUBLIC_URL', 'MCP_TUNNEL_NAME', 'MCP_DEV_MAX_OUTPUT_BYTES', 'MCP_DEV_MAX_SPOOL_BYTES', 'MCP_DEV_SPOOL_TTL_SECONDS', 'MCP_DEV_SPOOL_MAX_TOTAL_BYTES', 'MCP_ONE_MCP_LOG_MAX_SIZE_BYTES', 'MCP_ONE_MCP_LOG_MAX_FILES', 'MCP_PERSONAL_DEFAULT_CWD', 'MCP_TERMINAL_FRONTEND', 'MCP_OWNER_CONTEXT_FILE', 'MCP_OWNER_ENV_FILE', 'BRIDGE_ONE_MCP_ENTRY'].filter((key) => process.env[key] !== undefined).map((key) => [key, process.env[key]]),
+      ['MCP_WORKSPACE_ROOT', 'MCP_PUBLIC_URL', 'MCP_TUNNEL_NAME', 'MCP_DEV_MAX_OUTPUT_BYTES', 'MCP_DEV_IMPORT_MAX_BYTES', 'MCP_DEV_MAX_SPOOL_BYTES', 'MCP_DEV_SPOOL_TTL_SECONDS', 'MCP_DEV_SPOOL_MAX_TOTAL_BYTES', 'MCP_ONE_MCP_LOG_MAX_SIZE_BYTES', 'MCP_ONE_MCP_LOG_MAX_FILES', 'MCP_PERSONAL_DEFAULT_CWD', 'MCP_TERMINAL_FRONTEND', 'MCP_OWNER_CONTEXT_FILE', 'MCP_OWNER_ENV_FILE', 'BRIDGE_ONE_MCP_ENTRY'].filter((key) => process.env[key] !== undefined).map((key) => [key, process.env[key]]),
     ),
   };
   const profileValues = await readEnvFile(path.join(repoRoot, 'config', 'profiles', `${profile}.env`));
@@ -215,6 +215,11 @@ export async function renderConfig(options) {
   if (!Number.isInteger(devMaxOutputBytes) || devMaxOutputBytes <= 0 || devMaxOutputBytes > 16 * 1024 * 1024) {
     throw new Error('MCP_DEV_MAX_OUTPUT_BYTES must be an integer from 1 to 16777216');
   }
+  const devImportMaxBytesRaw = deployment.MCP_DEV_IMPORT_MAX_BYTES ?? String(100 * 1024 * 1024);
+  const devImportMaxBytes = Number(devImportMaxBytesRaw);
+  if (!Number.isInteger(devImportMaxBytes) || devImportMaxBytes <= 0 || devImportMaxBytes > 1024 * 1024 * 1024) {
+    throw new Error('MCP_DEV_IMPORT_MAX_BYTES must be an integer from 1 to 1073741824');
+  }
   const devMaxSpoolBytesRaw = deployment.MCP_DEV_MAX_SPOOL_BYTES ?? String(64 * 1024 * 1024);
   const devMaxSpoolBytes = Number(devMaxSpoolBytesRaw);
   if (!Number.isInteger(devMaxSpoolBytes) || devMaxSpoolBytes <= 0 || devMaxSpoolBytes > 256 * 1024 * 1024) {
@@ -270,6 +275,7 @@ export async function renderConfig(options) {
     __SHELL_MODE__: shellMode,
     __DEV_STATE_DIR__: path.join(stateDir, 'dev'),
     __DEV_MAX_OUTPUT_BYTES__: String(devMaxOutputBytes),
+    __DEV_IMPORT_MAX_BYTES__: String(devImportMaxBytes),
     __DEV_MAX_SPOOL_BYTES__: String(devMaxSpoolBytes),
     __DEV_SPOOL_TTL_SECONDS__: String(devSpoolTtlSeconds),
     __DEV_SPOOL_MAX_TOTAL_BYTES__: String(devSpoolMaxTotalBytes),

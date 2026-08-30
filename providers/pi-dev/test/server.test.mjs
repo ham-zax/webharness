@@ -5,16 +5,19 @@ import http from 'node:http';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { BrokerClient } from '../../terminal/broker-client.mjs';
 import { makeSandbox, onceExit, startBroker } from '../../terminal/test/helpers.mjs';
+import { runReviewChanges } from '../review-changes.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const server = path.resolve(here, '..', 'server.mjs');
 const tempDir = prefix => fs.mkdtemp(path.join(os.tmpdir(), prefix));
+const execFileAsync = promisify(execFile);
 
 async function fixture(mode = 'unrestricted', maxBytes = '1048576') {
   const workspaceRoot = await tempDir('pi-dev-workspace-');
@@ -241,7 +244,7 @@ test('personal user mode exposes file_ops alongside edit with user-path descript
   const { env } = await userFixture();
   await withClient(env, async client => {
     const listed = await client.listTools();
-    assert.deepEqual(listed.tools.map(x => x.name).sort(), ['bash', 'edit', 'exec', 'file_ops', 'pc_sleep', 'read', 'wait', 'write']);
+    assert.deepEqual(listed.tools.map(x => x.name).sort(), ['bash', 'edit', 'exec', 'file_ops', 'import_file', 'pc_sleep', 'read', 'review_changes', 'wait', 'write']);
     const read = listed.tools.find(x => x.name === 'read');
     assert.match(read.description, /UTF-8|text/i);
     assert.match(read.description, /1-based/i);
@@ -297,6 +300,28 @@ test('personal user mode exposes file_ops alongside edit with user-path descript
     assert.match(JSON.stringify(fileOps.inputSchema), /to/);
     assert.match(fileOps.inputSchema.properties.cwd.description, /relative.*default.*absolute/i);
   });
+});
+
+test('review_changes supports unborn repositories and repository-root path selection', async () => {
+  const root = await tempDir('pi-dev-review-unborn-');
+  await execFileAsync('git', ['init', '-q'], { cwd: root });
+  await fs.writeFile(path.join(root, 'staged.txt'), 'staged\n');
+  await fs.writeFile(path.join(root, 'loose.txt'), 'loose\n');
+  await execFileAsync('git', ['add', 'staged.txt'], { cwd: root });
+
+  const result = await runReviewChanges({ defaultCwd: root, paths: ['.'] });
+
+  assert.deepEqual(result.summary, {
+    files: 2,
+    trackedAdditions: 1,
+    trackedRemovals: 0,
+    untracked: 1,
+  });
+  assert.ok(result.files.some(file => file.status === 'A ' && file.path === 'staged.txt'));
+  assert.ok(result.files.some(file => file.status === '??' && file.path === 'loose.txt'));
+  assert.match(result.patch, /staged/);
+  assert.match(result.patch, /loose/);
+  assert.equal(result.patchTruncated, false);
 });
 
 test('wait schema enforces create, resume, and cancel modes plus exact first-phase condition kinds', async () => {

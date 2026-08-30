@@ -5,7 +5,7 @@
 ```text
 bin/                 WebHarness operator, lifecycle, extension, and Terminal entrypoints
 lib/bridge/          lifecycle/process supervision internals
-providers/pi-dev/    Dev read/edit/write/file_ops/exec/Bash/wait provider
+providers/pi-dev/    Dev read/edit/write/import_file/file_ops/review_changes/exec/Bash/wait provider
 providers/code-router/ Code facade + rooted CodeDB router
 providers/terminal/  Terminal MCP, broker, tmux/transcript logic
 providers/browser/   Chrome DevTools facade + resource-local child routing

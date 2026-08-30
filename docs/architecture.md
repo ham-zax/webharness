@@ -24,15 +24,15 @@ Linux / WSL host
 
 ### Dev
 
-Dev owns Files, shell-free structured argv execution, native Bash, regular-file topology operations, durable waits, and the personal Windows-host sleep boundary.
+Dev owns Files, ChatGPT-native file ingress, aggregate Git working-tree review, shell-free structured argv execution, native Bash, regular-file topology operations, durable waits, and the personal Windows-host sleep boundary.
 
 Personal surface:
 
 ```text
-read edit write file_ops wait exec bash pc_sleep
+read edit write import_file file_ops review_changes wait exec bash pc_sleep
 ```
 
-`edit` owns guarded mutation of existing text across one or more files. One exact `oldText` match always wins; only zero exact matches trigger tolerance for line endings, trailing whitespace, and common Unicode punctuation or space differences, and the fallback must still be unique. Exact and tolerant edits sharing a line must be merged. Callers inspect with `read`, `rg`, Code, or ast-grep and include enough context when needed. `write` owns new text-file creation, and `file_ops` owns move/delete for existing regular files. `exec` passes one `argv[]` directly to an executable without a shell parser and is the default for ordinary commands; Bash remains the explicit path for pipes, redirects, substitutions, loops, compound commands, and other shell semantics. Syntax-shaped discovery/codemods can therefore run ast-grep through `exec` when no shell composition is needed and normally feed guarded `edit`; an existing authoritative `.patch`/`.diff` artifact may still use Bash for the guarded `git apply --check -- "$patch" && git apply -- "$patch"` compound command.
+`edit` owns guarded mutation of existing text across one or more files. One exact `oldText` match always wins; only zero exact matches trigger tolerance for line endings, trailing whitespace, and common Unicode punctuation or space differences, and the fallback must still be unique. Exact and tolerant edits sharing a line must be merged. Callers inspect with `read`, `rg`, Code, or ast-grep and include enough context when needed. `write` owns new text-file creation, `import_file` owns create-only ingress of one ChatGPT-native file into a WSL-user path, and `file_ops` owns move/delete for existing regular files. `review_changes` owns one bounded read-only aggregate view of a Git working tree, including untracked file content when it fits the patch budget; it creates no refs, commits, or temporary Git index state. `exec` passes one `argv[]` directly to an executable without a shell parser and is the default for ordinary commands; Bash remains the explicit path for pipes, redirects, substitutions, loops, compound commands, and other shell semantics. Syntax-shaped discovery/codemods can therefore run ast-grep through `exec` when no shell composition is needed and normally feed guarded `edit`; an existing authoritative `.patch`/`.diff` artifact may still use Bash for the guarded `git apply --check -- "$patch" && git apply -- "$patch"` compound command.
 
 `wait` owns durable named wait state and generic local readiness checks. Terminal-specific waits use private broker transcript/session observations, but `wait` is not a Terminal MCP action.
 

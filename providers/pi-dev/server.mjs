@@ -7,6 +7,8 @@ import { z } from 'zod';
 import { canonicalDefaultCwd, canonicalWorkspaceRoot } from './boundary.mjs';
 import { runRead, runEdit, runWrite } from './files.mjs';
 import { runFileOps } from './file-ops.mjs';
+import { runImportFile } from './import-file.mjs';
+import { runReviewChanges } from './review-changes.mjs';
 import { pruneBashSpools, runBash, runExec } from './shell.mjs';
 import {
   renderBashText,
@@ -14,6 +16,8 @@ import {
   renderEditText,
   renderFileOpsPartial,
   renderFileOpsText,
+  renderImportFileText,
+  renderReviewChangesText,
   renderWriteText,
 } from './render.mjs';
 import { WaitEngine } from './wait-engine.mjs';
@@ -72,6 +76,12 @@ if (typeof stateDir !== 'string' || !path.isAbsolute(stateDir)) {
 const maxOutputBytes = Number(process.env.MCP_DEV_MAX_OUTPUT_BYTES ?? '1048576');
 if (!Number.isInteger(maxOutputBytes) || maxOutputBytes <= 0 || maxOutputBytes > 16 * 1024 * 1024) {
   console.error('MCP_DEV_MAX_OUTPUT_BYTES must be an integer from 1 to 16777216');
+  process.exit(2);
+}
+
+const importMaxBytes = Number(process.env.MCP_DEV_IMPORT_MAX_BYTES ?? String(100 * 1024 * 1024));
+if (!Number.isInteger(importMaxBytes) || importMaxBytes <= 0 || importMaxBytes > 1024 * 1024 * 1024) {
+  console.error('MCP_DEV_IMPORT_MAX_BYTES must be an integer from 1 to 1073741824');
   process.exit(2);
 }
 
@@ -243,6 +253,54 @@ server.registerTool('write', {
 }));
 
 if (pathMode === 'user') {
+  server.registerTool('import_file', {
+    description: 'Import one ChatGPT-native attached or generated file into the WSL filesystem. This is create-only: the destination parent must already exist and an existing destination is never overwritten. Use this for binary or external file ingress instead of base64, shell downloads, or invented host paths. The source must be a native ChatGPT file value from a trusted OpenAI file host. Relative destinations resolve from the configured default cwd; absolute paths are accepted.',
+    inputSchema: {
+      file: z.object({
+        download_url: z.string(),
+        file_id: z.string().min(1),
+        mime_type: z.string().nullable().optional(),
+        file_name: z.string().nullable().optional(),
+        name: z.string().nullable().optional(),
+        size: z.number().int().nonnegative().nullable().optional(),
+      }).describe('Native file value supplied by ChatGPT'),
+      path: modelPath.describe('Create-only destination path; parent directory must already exist'),
+    },
+    _meta: { 'openai/fileParams': ['file'] },
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: true,
+    },
+  }, async (args, extra) => invoke(async () => {
+    const result = await runImportFile({ defaultCwd, ...args, maxBytes: importMaxBytes }, extra.signal);
+    return {
+      content: [{ type: 'text', text: renderImportFileText(result) }],
+      structuredContent: result,
+    };
+  }));
+
+  server.registerTool('review_changes', {
+    description: 'Return one bounded aggregate review of the current Git working-tree changes: status, tracked line counts, and a unified patch including untracked file contents when they fit the shared patch budget. Use this once after the final related file mutation instead of repeatedly calling Git status/diff. cwd selects the repository; optional paths narrow review to literal files or directories and are useful when unrelated dirty work is present. This tool is read-only and creates no Git refs, commits, or temporary index state.',
+    inputSchema: {
+      cwd: cwdPath.optional(),
+      paths: z.array(z.string().min(1)).min(1).max(256).optional().describe('Optional literal paths relative to cwd, or absolute paths inside the selected repository'),
+    },
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+  }, async (args, extra) => invoke(async () => {
+    const result = await runReviewChanges({ defaultCwd, ...args }, extra.signal);
+    return {
+      content: [{ type: 'text', text: renderReviewChangesText(result) }],
+      structuredContent: result,
+    };
+  }));
+
   server.registerTool('pc_sleep', {
     title: 'Sleep Windows PC',
     description: 'Put the Windows host into sleep after a 10-second grace period. Optionally schedule one Windows Task Scheduler wake time first. This personal-only destructive action requires confirm=true from a direct user request. wake_at must be an ISO 8601 timestamp with Z or an explicit UTC offset and must be at least two minutes in the future. Omitting wake_at clears the previous MCP wake task before sleeping.',

@@ -43,6 +43,25 @@ export function renderWriteText(relativePath) {
   return `Created ${relativePath}`;
 }
 
+export function renderImportFileText(result) {
+  return `Imported ${result.path}\nsize: ${result.size} bytes\nsha256: ${result.sha256}`;
+}
+
+export function renderReviewChangesText(result) {
+  const { summary } = result;
+  const lines = [
+    `${summary.files} changed ${summary.files === 1 ? 'file' : 'files'} (+${summary.trackedAdditions} -${summary.trackedRemovals} tracked lines${summary.untracked ? `, ${summary.untracked} untracked` : ''})`,
+  ];
+  for (const file of result.files) {
+    const rename = file.previousPath ? ` <- ${file.previousPath}` : '';
+    const stats = file.status === '??' ? '' : ` +${file.additions} -${file.removals}`;
+    lines.push(`${file.status} ${file.path}${rename}${stats}`);
+  }
+  if (result.patch) lines.push('', '--- patch ---', result.patch);
+  if (result.patchTruncated) lines.push('', '[patch truncated; narrow with paths=[...]]');
+  return lines.join('\n');
+}
+
 function fileOpLabel(operation) {
   return operation.kind === 'move'
     ? `move ${operation.path} -> ${operation.to}`

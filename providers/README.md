@@ -4,15 +4,15 @@ WebHarness is organized around capability boundaries, not one tool per package.
 
 ## Dev — `providers/pi-dev/`
 
-Files, shell-free structured argv execution, native Bash, regular-file topology operations, durable local waits, and personal Windows-host sleep.
+Files, ChatGPT-native file ingress, aggregate Git change review, shell-free structured argv execution, native Bash, regular-file topology operations, durable local waits, and personal Windows-host sleep.
 
 Personal Workstation surface:
 
 ```text
-read edit write file_ops wait exec bash pc_sleep
+read edit write import_file file_ops review_changes wait exec bash pc_sleep
 ```
 
-`restricted` and `trusted-dev` expose smaller subsets according to their trust policy.
+`import_file` and `review_changes` are Personal Workstation tools: the former streams one trusted ChatGPT-native file to a create-only WSL destination, while the latter returns a bounded aggregate view of the current Git working tree without creating checkpoints or refs. `restricted` and `trusted-dev` expose smaller subsets according to their trust policy.
 
 ## Code — `providers/code-router/`
 

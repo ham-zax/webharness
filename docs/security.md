@@ -25,6 +25,8 @@ Use only on a dedicated development host where unrestricted shell authority is i
 Full reference-workstation authority.
 
 - Files use user-mode paths and may accept absolute paths.
+- `import_file` can create one new WSL-user-accessible file from a ChatGPT-native file reference; it never overwrites an existing destination.
+- `review_changes` can inspect Git working trees reachable by the WSL user and returns a bounded aggregate patch without creating Git refs or commits.
 - `exec` and Bash have the authority of the WSL user.
 - Code can inspect Git repositories reachable by that user.
 - Terminal can create and control persistent tmux-backed PTYs.
@@ -34,6 +36,8 @@ Full reference-workstation authority.
 This profile is intentionally powerful. Treat it like giving a coding agent an interactive shell as your WSL user plus, when `tag:local` is granted, access to the local capability domain, which currently includes authenticated browser control.
 
 The outer `local` provider is the `tag:local` authorization boundary. Its generic `tool_call(server, tool, arguments)` and same-route `tool_batch(server, tool, calls)` mean every downstream MCP admitted to that broker instance shares that authority. Batch concurrency changes orchestration, not authorization: every member stays inside the selected Local trust domain. The `browser-devtools` and `browser-fast` logical servers intentionally share this local browser trust domain. A genuinely different trust domain needs a separate broker/scope or direct exposure.
+
+Personal Dev `import_file` is an ingress boundary, not a general downloader. Its `file` argument is declared as a ChatGPT native file parameter, the provider accepts only the expected host-supplied file-reference shape, requires HTTPS on explicitly trusted OpenAI file hosts (including validated redirects), streams into an exclusive private partial, enforces `MCP_DEV_IMPORT_MAX_BYTES`, fsyncs and size-checks the completed bytes, then publishes with a no-overwrite hard link under the same cooperative mutation coordinator used by other Dev writes. Signed source URLs are not returned in normal tool output. The destination parent must already exist. Import does not grant Browser upload authority and does not modify the Browser artifact manifest.
 
 The DevTools `browser-devtools` facade intentionally does not advertise MCP filesystem roots to its internal Chrome DevTools MCP clients. Upstream path-bearing browser tools therefore remain restricted to the relevant OS temp directory. `browser-fast` has two narrow filesystem reads owned by the facade. Observation may read Markdown plus platform `match.json` beneath `~/.config/mcp-dev-bridge/browser-memory/` and return bounded content as strategy/policy metadata. Upload may read `~/.config/mcp-dev-bridge/browser-artifacts.json`, resolve one explicitly named approved file, and hand that file path to Agent Browser. The model never supplies a raw path, and an unlisted artifact is rejected before browser action dispatch. The artifact manifest is an upload allowlist, so it should contain only files the operator is willing to send to websites; it is not a destination allowlist and does not remove the need to verify the current form/site before uploading.
 
