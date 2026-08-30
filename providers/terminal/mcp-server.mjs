@@ -84,7 +84,7 @@ export function createTerminalMcpServer({ client, frontend } = {}) {
   const dimension = z.number().int().positive().max(1000);
 
   server.registerTool('terminal_open', {
-    description: 'Open one model-owned durable tmux PTY/process in the WebHarness tmux namespace (production default wsl-agent), not the user\'s default tmux server. Use this for interactive or persistent work that should survive MCP or broker restart; prefer Dev Bash for bounded noninteractive commands. Omitting command starts the normal interactive shell. Headless is the default; set present=true only when the human should see a visible collaborative frontend from the start.',
+    description: 'Open one durable model-owned tmux PTY/process in the WebHarness namespace. Use this for persistent or interactive work that should survive MCP or broker restart. Prefer Dev exec for ordinary bounded noninteractive commands and Dev bash only when shell syntax is required. Omit command for an interactive shell. Headless is the default; set present=true only when the human should see the PTY from the start.',
     inputSchema: {
       name,
       command: z.string().optional(),
@@ -139,7 +139,7 @@ export function createTerminalMcpServer({ client, frontend } = {}) {
   });
 
   server.registerTool('terminal_send', {
-    description: 'Send exactly one of literal text or one recognized control/navigation key to a WebHarness Terminal session. text is literal and does not append Enter, so executing a shell command normally requires a text send followed by key=ENTER. Writable human ownership blocks model mutation with HUMAN_HAS_CONTROL; do not bypass ownership through Dev Bash, raw tmux, or operator wsl-term commands.',
+    description: 'Send exactly one of literal text or one control/navigation key to a WebHarness Terminal session. text does not append Enter, so executing a command normally requires a text send followed by key=ENTER. Writable human ownership blocks model mutation with HUMAN_HAS_CONTROL; do not bypass it through Dev exec/bash, raw tmux, or operator wsl-term commands.',
     inputSchema: sendSchema,
   }, async (args) => invoke(async () => {
     const params = args.key === undefined

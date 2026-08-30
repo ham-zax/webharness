@@ -7,21 +7,21 @@ WebHarness treats the model-facing MCP surface as a public contract. Provider im
 The full Personal Workstation exposes these outer provider identities:
 
 ```text
-Dev       read edit write file_ops wait bash pc_sleep
+Dev       read edit write file_ops wait exec bash pc_sleep
 Code      code_search code_context code_symbol
 Terminal  terminal_open terminal_read terminal_send terminal_resize
           terminal_list terminal_yield terminal_close
-Local     tool_list tool_schema tool_call
+Local     tool_list tool_schema tool_call tool_batch
 ```
 
 The current outer provider IDs are `dev`, `code`, `terminal`, and `local`. `restricted` and `trusted-dev` intentionally expose smaller compositions.
 
-Local is one authorization domain. Its three broker tools address downstream MCPs by logical `{server, tool}` identity. The maintained Personal Workstation composes:
+Local is one authorization domain. Its four broker tools address downstream MCPs by logical `{server, tool}` identity. The maintained Personal Workstation composes:
 
 - `browser-fast` for routine observe/execute interaction;
 - `browser-devtools` for Chrome DevTools diagnostics.
 
-`tool_list` returns bounded live catalog results, `tool_schema` returns the exact downstream tool definition, and `tool_call` forwards the downstream `CallToolResult` rather than translating it into a second result model.
+`tool_list` returns bounded live catalog results, `tool_schema` returns the exact downstream tool definition, and `tool_call` forwards the downstream `CallToolResult` rather than translating it into a second result model. `tool_batch` applies several structured argument objects to one selected `{server, tool}` route with bounded concurrency; its member envelope adds attribution/status while each fulfilled downstream result remains intact.
 
 ## Compatibility rules
 

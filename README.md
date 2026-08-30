@@ -12,18 +12,18 @@ Agents should reason about four capability domains rather than individual backen
 
 | Capability | Use it for | Important boundary |
 |---|---|---|
-| **Dev** | files, guarded edits, native Bash, durable waits, local host actions | execution has the authority of the selected trust profile |
+| **Dev** | files, guarded edits, structured argv execution, native Bash, durable waits, local host actions | execution has the authority of the selected trust profile |
 | **Code** | repository structure, symbols, semantic context, callers/dependencies | routes to the nearest canonical Git root; raw CodeDB tools stay hidden |
 | **Terminal** | long-running or interactive commands and human handoff | tmux owns PTY/process lifetime; the broker owns transcript and control state |
-| **Local** | high-cardinality local capabilities without bloating the outer MCP catalog | exposes only `tool_list`, `tool_schema`, and `tool_call`; Browser is currently the main downstream domain |
+| **Local** | high-cardinality local capabilities without bloating the outer MCP catalog | exposes only `tool_list`, `tool_schema`, `tool_call`, and `tool_batch`; Browser is currently the main downstream domain |
 
 The full workstation composition is deliberately small at the client boundary:
 
 ```text
-Dev       read edit write file_ops wait bash pc_sleep
+Dev       read edit write file_ops wait exec bash pc_sleep
 Code      code_search code_context code_symbol
 Terminal  terminal_open terminal_read terminal_send terminal_resize terminal_list terminal_yield terminal_close
-Local     tool_list tool_schema tool_call
+Local     tool_list tool_schema tool_call tool_batch
             |-- browser-fast      observe / execute
             `-- browser-devtools  Chrome DevTools diagnostics
 ```
@@ -63,9 +63,9 @@ There is no silent default. Pick the authority you intend to give the agent.
 
 | Profile | Authority | Reference role |
 |---|---|---|
-| `personal` | WSL-user paths, native Bash, Code, persistent Terminal, waits, Local/Browser, optional Windows host sleep | maintained full Personal Workstation reference |
+| `personal` | WSL-user paths, structured argv execution and native Bash, Code, persistent Terminal, waits, Local/Browser, optional Windows host sleep | maintained full Personal Workstation reference |
 | `restricted` | workspace-bounded files plus an allowlisted legacy shell | conservative smaller example |
-| `trusted-dev` | workspace-bounded files plus unrestricted Bash as the Linux service user | smaller trusted-development example; use only on a dedicated host |
+| `trusted-dev` | workspace-bounded files plus unrestricted structured argv execution and Bash as the Linux service user | smaller trusted-development example; use only on a dedicated host |
 
 `trusted-dev` and `personal` can act with the Linux account's authority. The `personal` Local domain can additionally control its dedicated Windows MCP Chrome profile after explicit `tag:local` authorization. Read [Security](docs/security.md) before enabling either powerful profile.
 
@@ -113,7 +113,7 @@ Use the narrowest domain that owns the task:
 | routine navigation/forms/clicks in a resource-local browser | Local -> `browser-fast` |
 | network/console/performance/screenshot/DevTools investigation | Local -> `browser-devtools` |
 
-For large or unfamiliar repositories, begin with bounded Bash/`rg` and focused reads before paying the cost of a new CodeDB index unless indexed intelligence is specifically useful.
+For large or unfamiliar repositories, begin with `exec(argv=["rg", ...])` and focused reads before paying the cost of a new CodeDB index unless indexed intelligence is specifically useful. Use Bash only when the discovery command itself needs shell composition.
 
 For `browser-fast`, observe first and pass the returned `active_tab` to `execute`. Execution validates that exact pinned CDP target before using observation refs. `observe` is the recovery/rebind boundary if the old target disappears. A click follows exactly one newly created target before later actions; multiple new targets stop the sequence rather than guessing. Failed, partial, or unknown actions are never automatically replayed.
 
@@ -180,7 +180,7 @@ webharness stop
 | Event-driven waiting | Dev `wait` persists named process/port/file/HTTP/systemd/timer conditions | a wait does not itself create a new model turn |
 | Browser interaction | `browser-fast` provides compact observe/execute with persistent browser state | Chromium/CDP is the qualified browser family |
 | Browser diagnostics | `browser-devtools` provides the full Chrome DevTools MCP surface | shares the Local authorization domain with routine Browser |
-| High-cardinality local MCPs | Local keeps only three outer metatools and discovers downstream schemas on demand | all MCPs admitted to one Local broker share its authorization domain |
+| High-cardinality local MCPs | Local keeps four outer metatools, including same-route `tool_batch`, and discovers downstream schemas on demand | all MCPs admitted to one Local broker share its authorization domain |
 | First-class delegated workers | not implemented in the stabilized runtime | Chat WSL-style Agents and cross-chat recordings are the primary current capability gap |
 
 The next planned additive capability is a small Agents surface—`spawn`, `message`, `status`, `finish`—backed by an Agent Broker. It is intentionally not part of this stabilization and does not require a Workspace/worktree/project-authority subsystem. See the [Agents implementation plan](docs/superpowers/plans/2026-08-29-webharness-agents-implementation.md) for that follow-on.

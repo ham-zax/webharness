@@ -24,15 +24,15 @@ Linux / WSL host
 
 ### Dev
 
-Dev owns Files, native Bash, regular-file topology operations, durable waits, and the personal Windows-host sleep boundary.
+Dev owns Files, shell-free structured argv execution, native Bash, regular-file topology operations, durable waits, and the personal Windows-host sleep boundary.
 
 Personal surface:
 
 ```text
-read edit write file_ops wait bash pc_sleep
+read edit write file_ops wait exec bash pc_sleep
 ```
 
-`edit` owns guarded mutation of existing text across one or more files. One exact `oldText` match always wins; only zero exact matches trigger tolerance for line endings, trailing whitespace, and common Unicode punctuation or space differences, and the fallback must still be unique. Exact and tolerant edits sharing a line must be merged. Callers inspect with `read`, `rg`, Code, or ast-grep and include enough context when needed. `write` owns new text-file creation, and `file_ops` owns move/delete for existing regular files. Syntax-shaped discovery/codemods use ast-grep through Bash and normally feed guarded `edit`; an existing authoritative `.patch`/`.diff` artifact uses native `git apply --check -- "$patch" && git apply -- "$patch"`.
+`edit` owns guarded mutation of existing text across one or more files. One exact `oldText` match always wins; only zero exact matches trigger tolerance for line endings, trailing whitespace, and common Unicode punctuation or space differences, and the fallback must still be unique. Exact and tolerant edits sharing a line must be merged. Callers inspect with `read`, `rg`, Code, or ast-grep and include enough context when needed. `write` owns new text-file creation, and `file_ops` owns move/delete for existing regular files. `exec` passes one `argv[]` directly to an executable without a shell parser and is the default for ordinary commands; Bash remains the explicit path for pipes, redirects, substitutions, loops, compound commands, and other shell semantics. Syntax-shaped discovery/codemods can therefore run ast-grep through `exec` when no shell composition is needed and normally feed guarded `edit`; an existing authoritative `.patch`/`.diff` artifact may still use Bash for the guarded `git apply --check -- "$patch" && git apply -- "$patch"` compound command.
 
 `wait` owns durable named wait state and generic local readiness checks. Terminal-specific waits use private broker transcript/session observations, but `wait` is not a Terminal MCP action.
 
@@ -46,7 +46,7 @@ Code owns:
 code_search code_context code_symbol
 ```
 
-The router resolves the nearest canonical Git root for the requested cwd and keeps one correctly rooted CodeDB child per active repository. Per-call project switching and the raw CodeDB catalog are hidden from the model-facing surface. First use may start a persistent CodeDB child and create or update substantial on-disk index state, so Code is not a cost-free read abstraction; on large or unfamiliar repositories with unknown CodeDB state, start with Dev Bash/`rg` plus focused `read` unless indexing-backed repository intelligence is specifically needed. This is model-routing guidance, not an enforced size threshold.
+The router resolves the nearest canonical Git root for the requested cwd and keeps one correctly rooted CodeDB child per active repository. Per-call project switching and the raw CodeDB catalog are hidden from the model-facing surface. First use may start a persistent CodeDB child and create or update substantial on-disk index state, so Code is not a cost-free read abstraction; on large or unfamiliar repositories with unknown CodeDB state, start with Dev `exec` + `rg` plus focused `read` unless indexing-backed repository intelligence is specifically needed. Use Bash there only when the search itself requires shell composition. This is model-routing guidance, not an enforced size threshold.
 
 ### Terminal
 
@@ -106,10 +106,10 @@ Restart the broker without restarting tmux when only broker/provider code change
 Personal Workstation local capabilities are model-facing through one `local` provider under `tag:local`. Browser capabilities are logical servers behind it. The provider exposes exactly:
 
 ```text
-tool_list tool_schema tool_call
+tool_list tool_schema tool_call tool_batch
 ```
 
-The Local broker owns stable logical `{server, tool}` routing and connects over stdio to an inner 1MCP running in normal direct mode. V1 keeps no broker catalog/schema cache: discovery and schema lookup consult current inner `tools/list`, while `tool_call` dispatches the qualified inner tool directly and returns the downstream `CallToolResult` unchanged. Discovery is bounded with an opaque self-contained cursor; downstream catalog churn does not change the outer three-tool surface.
+The Local broker owns stable logical `{server, tool}` routing and connects over stdio to an inner 1MCP running in normal direct mode. V1 keeps no broker catalog/schema cache: discovery and schema lookup consult current inner `tools/list`, `tool_call` dispatches one qualified inner tool and returns its downstream `CallToolResult` unchanged, and `tool_batch` states one route once then dispatches a bounded set of structured argument objects with bounded concurrency. Batch routing fields and argument-object shapes are preflighted before dispatch; downstream MCPs retain ownership of their own tool-schema validation. Member results preserve input order and distinguish broker/transport rejection from a fulfilled downstream result whose own `isError` may be true. Discovery is bounded with an opaque self-contained cursor; downstream catalog churn does not change the outer four-tool surface.
 
 ### Browser
 

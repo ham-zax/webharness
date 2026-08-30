@@ -154,4 +154,4 @@ curl -sf -m 5 -X POST "$URL" \
   -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"smoke","version":"1.0.0"}}}'
 echo
 echo
-echo "(connectivity check only; inspect dev plus restricted-only shell for public profiles, or Dev/Code/Terminal plus the three-tool Local broker for personal composition)"
+echo "(connectivity check only; inspect dev plus restricted-only shell for public profiles, or Dev/Code/Terminal plus the four-tool Local broker for personal composition)"

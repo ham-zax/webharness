@@ -51,7 +51,7 @@ Linux `browser-fast` reads the current-user-owned `~/.config/mcp-dev-bridge/brow
 ### `trusted-dev`
 
 - Dev Files: workspace-bounded `read`, `edit`, `write`.
-- Dev Bash: unrestricted native Bash as the Linux service user.
+- Dev execution: unrestricted shell-free `exec(argv[])` and native Bash as the Linux service user.
 - No Code provider.
 - No Terminal provider.
 
@@ -60,21 +60,21 @@ Linux `browser-fast` reads the current-user-owned `~/.config/mcp-dev-bridge/brow
 The maintained full reference composition is:
 
 ```text
-Dev       read edit write file_ops wait bash pc_sleep
+Dev       read edit write file_ops wait exec bash pc_sleep
 Code      code_search code_context code_symbol
 Terminal  terminal_open terminal_read terminal_send terminal_resize terminal_list terminal_yield terminal_close
-Local     tool_list tool_schema tool_call
+Local     tool_list tool_schema tool_call tool_batch
             |-- browser-fast      routine observe/execute interaction
             `-- browser-devtools  Chrome DevTools diagnostics
 ```
 
-The renderer resolves one absolute personal default cwd from `MCP_PERSONAL_DEFAULT_CWD` when supplied, otherwise from the actual WSL user's `$HOME`, and uses it for both Dev and Code. No tracked personal profile/template carries a machine-specific home path. Terminal communicates through the WebHarness broker socket and receives one normalized `MCP_TERMINAL_FRONTEND` presentation preference; tracked source keeps `kitty` as the compatibility default while a local deployment may select `windows-terminal`.
+The renderer resolves one absolute personal default cwd from `MCP_PERSONAL_DEFAULT_CWD` when supplied, otherwise from the actual WSL user's `$HOME`, and uses it for both Dev and Code. No tracked personal profile/template carries a machine-specific home path. Dev `exec` passes `argv[]` directly to an executable without shell parsing; Dev `bash` remains the explicit shell-program path when pipes, redirects, substitutions, variables, loops, or compound shell syntax are required. Terminal communicates through the WebHarness broker socket and receives one normalized `MCP_TERMINAL_FRONTEND` presentation preference; tracked source keeps `kitty` as the compatibility default while a local deployment may select `windows-terminal`.
 
-For personal rendering, the outer config contains `local`, `code`, `dev`, and `terminal`. The outer `local` provider is tagged only `local` and points at the repository Local broker. The renderer also atomically materializes a Local inner config at the bridge state root containing `browser-devtools` and `browser-fast`, and writes that inner config before publishing the outer config so config reload cannot start Local against a missing file. The Local broker starts pinned 1MCP over stdio in direct mode and exposes only bounded discovery/schema/call metatools.
+For personal rendering, the outer config contains `local`, `code`, `dev`, and `terminal`. The outer `local` provider is tagged only `local` and points at the repository Local broker. The renderer also atomically materializes a Local inner config at the bridge state root containing `browser-devtools` and `browser-fast`, and writes that inner config before publishing the outer config so config reload cannot start Local against a missing file. The Local broker starts pinned 1MCP over stdio in direct mode and exposes only bounded discovery/schema/single-call/batch metatools.
 
 `browser-devtools` is the full Chrome DevTools MCP facade for diagnostics and rich results; its tools default to the dedicated persistent Windows MCP Chrome profile and use `browser_target=linux` for WSLg. `browser-fast` exposes only `observe` and `execute` for routine interaction and uses pinned Agent Browser 0.35.0 on both targets. The Windows target remains the dedicated shared MCP Chrome runtime. On Linux, `browser-fast.json` defines the default and Clearcote profile catalog, while each call can select Chrome or Clearcote through `browser_backend` without mutating that shared file. The maintained V2 Clearcote path owns a named persistent profile and ephemeral loopback CDP endpoint; Chrome keeps its independent Agent Browser session, and selecting Chrome no longer closes the Clearcote runtime. The legacy V1 external `cdpPort` form remains readable during migration. Each observation also checks the WSL-user browser-memory root at `~/.config/mcp-dev-bridge/browser-memory/`. `policies/<host>/` and `sites/<host>/` are exact canonical-host lookups; `platforms/<name>/match.json` can declare `hosts`, `host_suffixes`, or `url_prefixes` for reusable platform memory. Missing memory is valid and unknown/custom company sites continue through the generic browser flow. Upload actions use logical names from `~/.config/mcp-dev-bridge/browser-artifacts.json`, whose values are absolute WSL paths to intentionally browser-shareable files. The action schema never accepts a raw file path. Windows uploads translate the approved WSL path to its `\\wsl.localhost` form before calling Agent Browser; Linux uses the path directly. Windows keeps the MCP Chrome data directory at `%LOCALAPPDATA%\\mcp-dev-bridge\\chrome-profile`; a shared runtime launches that visible profile with an ephemeral debugging port and supplies its `DevToolsActivePort` endpoint to both logical servers. The everyday Chrome user-data directory is not attached or copied. The tracked templates carry only generic WSLg plumbing. Personal runtime/browser policy comes from the optional owner env: Dev, the Terminal MCP provider, and the Terminal/tmux services receive the validated GUI values; both Linux browser surfaces may receive `GALLIUM_DRIVER`; and Linux `browser-fast` alone may receive `AGENT_BROWSER_PROFILE` plus `AGENT_BROWSER_EXECUTABLE_PATH`. A named profile lets Agent Browser snapshot the source Chrome profile into its controlled session instead of making the harness own or mutate that Chrome user-data directory. This keeps workstation-specific browser and GUI choices out of active tracked configuration. Both browser surfaces stay behind the same `tag:local` authorization boundary.
 
-`pc_sleep` is registered only in this personal user-path mode and uses Windows Task Scheduler for an optional wake time. Code has no repository-size preflight or threshold: first use may start a persistent CodeDB child and create or update substantial on-disk index state, potentially consuming significant disk and RAM. Tool descriptions steer large or unfamiliar repository discovery toward Dev Bash/`rg` and focused `read` first; that guidance is not runtime enforcement.
+`pc_sleep` is registered only in this personal user-path mode and uses Windows Task Scheduler for an optional wake time. Code has no repository-size preflight or threshold: first use may start a persistent CodeDB child and create or update substantial on-disk index state, potentially consuming significant disk and RAM. Tool descriptions steer large or unfamiliar repository discovery toward Dev `exec` + `rg` and focused `read` first, with Bash reserved for searches that actually need shell composition; that guidance is not runtime enforcement.
 
 ## Rendering
 

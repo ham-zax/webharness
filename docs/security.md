@@ -7,7 +7,7 @@ The effective security boundary is the selected profile plus the Linux account r
 Use when conservative workspace-bounded authority is required.
 
 - Files are confined to the configured workspace.
-- Dev does not expose unrestricted Bash.
+- Dev does not expose unrestricted `exec` or Bash.
 - A separate legacy shell provider enforces an allowlist policy.
 - Code and Terminal are not present in this profile.
 
@@ -16,8 +16,8 @@ Use when conservative workspace-bounded authority is required.
 Use only on a dedicated development host where unrestricted shell authority is intentional.
 
 - Files remain workspace-bounded.
-- Dev exposes native Bash with the permissions of the Linux service user.
-- Bash may reach files, processes, network resources, developer tools, and credentials accessible to that account even when the Files tools are workspace-bounded.
+- Dev exposes shell-free structured argv execution and native Bash with the permissions of the Linux service user.
+- Both `exec` and Bash may reach files, processes, network resources, developer tools, and credentials accessible to that account even when the Files tools are workspace-bounded. `exec` removes shell parsing; it is not a privilege boundary.
 - Code and Terminal are not present in this profile.
 
 ## `personal` — Personal Workstation
@@ -25,7 +25,7 @@ Use only on a dedicated development host where unrestricted shell authority is i
 Full reference-workstation authority.
 
 - Files use user-mode paths and may accept absolute paths.
-- Bash has the authority of the WSL user.
+- `exec` and Bash have the authority of the WSL user.
 - Code can inspect Git repositories reachable by that user.
 - Terminal can create and control persistent tmux-backed PTYs.
 - Durable waits can observe local process/port/file/HTTP/systemd and WebHarness Terminal state.
@@ -33,7 +33,7 @@ Full reference-workstation authority.
 
 This profile is intentionally powerful. Treat it like giving a coding agent an interactive shell as your WSL user plus, when `tag:local` is granted, access to the local capability domain, which currently includes authenticated browser control.
 
-The outer `local` provider is the `tag:local` authorization boundary. Its generic `tool_call(server, tool, arguments)` means every downstream MCP admitted to that broker instance shares that authority. The `browser-devtools` and `browser-fast` logical servers intentionally share this local browser trust domain. A genuinely different trust domain needs a separate broker/scope or direct exposure.
+The outer `local` provider is the `tag:local` authorization boundary. Its generic `tool_call(server, tool, arguments)` and same-route `tool_batch(server, tool, calls)` mean every downstream MCP admitted to that broker instance shares that authority. Batch concurrency changes orchestration, not authorization: every member stays inside the selected Local trust domain. The `browser-devtools` and `browser-fast` logical servers intentionally share this local browser trust domain. A genuinely different trust domain needs a separate broker/scope or direct exposure.
 
 The DevTools `browser-devtools` facade intentionally does not advertise MCP filesystem roots to its internal Chrome DevTools MCP clients. Upstream path-bearing browser tools therefore remain restricted to the relevant OS temp directory. `browser-fast` has two narrow filesystem reads owned by the facade. Observation may read Markdown plus platform `match.json` beneath `~/.config/mcp-dev-bridge/browser-memory/` and return bounded content as strategy/policy metadata. Upload may read `~/.config/mcp-dev-bridge/browser-artifacts.json`, resolve one explicitly named approved file, and hand that file path to Agent Browser. The model never supplies a raw path, and an unlisted artifact is rejected before browser action dispatch. The artifact manifest is an upload allowlist, so it should contain only files the operator is willing to send to websites; it is not a destination allowlist and does not remove the need to verify the current form/site before uploading.
 
@@ -45,9 +45,9 @@ Extensions do not receive additional Browser authority. `bin/extension` is an op
 
 ## CodeDB resource guidance
 
-The Personal Workstation Code tools are description-guided, not resource-enforced. A first Code call for a repository may start a persistent rooted CodeDB child and create or update substantial on-disk index state. On large repositories this can consume significant disk and RAM. The model-facing descriptions therefore direct large or unfamiliar repository discovery toward bounded Dev Bash/`rg` and focused `read` before CodeDB-backed intelligence when CodeDB state/cost is unknown.
+The Personal Workstation Code tools are description-guided, not resource-enforced. A first Code call for a repository may start a persistent rooted CodeDB child and create or update substantial on-disk index state. On large repositories this can consume significant disk and RAM. The model-facing descriptions therefore direct large or unfamiliar repository discovery toward bounded Dev `exec` with `rg` (or Bash when shell syntax is needed) plus focused `read` before CodeDB-backed intelligence when CodeDB state/cost is unknown.
 
-There is no repository-size preflight, threshold, cgroup, or approval database in this design. Because Personal Workstation Bash intentionally has the WSL user's authority, description text cannot form a privilege boundary against deliberate raw CLI use; it is routing guidance intended to prevent accidental expensive work.
+There is no repository-size preflight, threshold, cgroup, or approval database in this design. Because Personal Workstation `exec` and Bash intentionally have the WSL user's authority, description text cannot form a privilege boundary against deliberate raw CLI use; it is routing guidance intended to prevent accidental expensive work.
 
 
 ## Edit mutation guarantees
@@ -90,7 +90,7 @@ Human keystrokes are never copied into a separate broker-side input log. Sudo/pa
 
 Pinned 1MCP 0.36.0 permits only loopback OAuth callback origins in its consent-page CSP. The reference installer applies a fail-closed compatibility patch that also permits the exact registered HTTPS callback origin; it does not permit arbitrary HTTPS form destinations. Requalify this patch when changing the pinned 1MCP version.
 
-Local capability authority is separate from Dev/Code/Terminal: `tag:local` exposes the three-tool Local broker, whose inner 1MCP contains `browser-devtools` and `browser-fast`. Both can reach resource-local browser state only after explicit client authorization at that outer domain.
+Local capability authority is separate from Dev/Code/Terminal: `tag:local` exposes the four-tool Local broker, whose inner 1MCP contains `browser-devtools` and `browser-fast`. Both can reach resource-local browser state only after explicit client authorization at that outer domain.
 
 ## Sensitive state
 

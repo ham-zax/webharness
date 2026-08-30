@@ -5,7 +5,7 @@
 ```text
 bin/                 WebHarness operator, lifecycle, extension, and Terminal entrypoints
 lib/bridge/          lifecycle/process supervision internals
-providers/pi-dev/    Dev read/edit/write/file_ops/Bash/wait provider
+providers/pi-dev/    Dev read/edit/write/file_ops/exec/Bash/wait provider
 providers/code-router/ Code facade + rooted CodeDB router
 providers/terminal/  Terminal MCP, broker, tmux/transcript logic
 providers/browser/   Chrome DevTools facade + resource-local child routing
@@ -74,7 +74,7 @@ Then complete the harmless Dev/Code/Terminal/Local, Terminal-restart-survival, L
 - Do not expose the raw CodeDB tool catalog.
 - Do not make tmux lifetime depend on the broker or 1MCP.
 - Keep `wait` durable and separate from the normal Terminal model-read cursor.
-- Keep native Bash as the authoritative execution path.
+- Keep shell-free `exec(argv[])` as the ordinary bounded execution path; use native Bash when shell semantics are materially required.
 - Preserve provider-internal same-canonical-path mutation serialization.
 
 ## Documentation

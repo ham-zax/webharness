@@ -4,12 +4,12 @@ WebHarness is organized around capability boundaries, not one tool per package.
 
 ## Dev — `providers/pi-dev/`
 
-Files, native Bash, regular-file topology operations, durable local waits, and personal Windows-host sleep.
+Files, shell-free structured argv execution, native Bash, regular-file topology operations, durable local waits, and personal Windows-host sleep.
 
 Personal Workstation surface:
 
 ```text
-read edit write file_ops wait bash pc_sleep
+read edit write file_ops wait exec bash pc_sleep
 ```
 
 `restricted` and `trusted-dev` expose smaller subsets according to their trust policy.
@@ -39,10 +39,10 @@ The MCP provider talks to a local broker over a Unix socket. tmux owns PTY/proce
 Stable downstream tool-broker surface:
 
 ```text
-tool_list tool_schema tool_call
+tool_list tool_schema tool_call tool_batch
 ```
 
-The Local provider connects over stdio to one inner 1MCP in direct mode. It exposes logical `{server, tool}` identities, bounded live discovery, exact schema lookup, and raw downstream `CallToolResult` forwarding. V1 has no catalog/schema cache. The Personal Workstation inner composition contains `browser-devtools` plus the compact `browser-fast` interaction surface; the outer Local provider remains tagged only `local`.
+The Local provider connects over stdio to one inner 1MCP in direct mode. It exposes logical `{server, tool}` identities, bounded live discovery, exact schema lookup, raw single-call `CallToolResult` forwarding, and bounded same-tool batch dispatch over structured arguments. V1 has no catalog/schema cache. The Personal Workstation inner composition contains `browser-devtools` plus the compact `browser-fast` interaction surface; the outer Local provider remains tagged only `local`.
 
 ## Browser — `providers/browser/`
 

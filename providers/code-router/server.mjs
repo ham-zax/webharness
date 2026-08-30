@@ -69,7 +69,7 @@ export function createCodeFacadeServer({ router, defaultCwd = process.env.HOME |
   });
 
   server.registerTool('code_search', {
-    description: 'Ranked repository-rooted search for exploratory text when the exact symbol is unknown; prefer code_symbol when a symbol or definition name is known or guessable. First use may start a persistent rooted CodeDB child and create or update substantial on-disk index state, consuming significant disk and RAM. For a large or unfamiliar repository with unknown CodeDB state, prefer Dev bash with rg plus focused read before invoking Code automatically.',
+    description: 'Search repository text/code when the exact symbol is unknown; prefer code_symbol when a definition name is known or guessable. First use may start a persistent rooted CodeDB child and consume substantial disk and RAM for index state. For a large or unfamiliar repository with unknown CodeDB state, prefer Dev exec with rg plus focused read before invoking Code automatically.',
     inputSchema: {
       query: z.string().min(1),
       cwd: cwd.optional(),
@@ -87,7 +87,7 @@ export function createCodeFacadeServer({ router, defaultCwd = process.env.HOME |
   });
 
   server.registerTool('code_context', {
-    description: 'Compact repository-rooted first-touch task orientation with definitions, focused bodies, graph neighbors, ranked files, and snippets; first-touch does not mean always call this first. It uses the same persistent CodeDB child/index lifecycle and can consume significant disk and RAM. For a large or unfamiliar repository with unknown CodeDB state, prefer Dev bash with rg plus focused read unless CodeDB-backed repository intelligence is specifically needed.',
+    description: 'Get compact repository-rooted first-touch task context: definitions, focused bodies, graph neighbors, ranked files, and snippets. First-touch does not mean always call this first. This uses the persistent CodeDB child/index lifecycle and may consume substantial disk and RAM. For a large or unfamiliar repository with unknown CodeDB state, prefer Dev exec with rg plus focused read unless CodeDB-backed intelligence is specifically needed.',
     inputSchema: {
       task: z.string().min(3),
       cwd: cwd.optional(),
@@ -105,7 +105,7 @@ export function createCodeFacadeServer({ router, defaultCwd = process.env.HOME |
   });
 
   server.registerTool('code_symbol', {
-    description: 'Locate a known or guessed symbol definition in the Git repository containing cwd; prefer this over code_search when the symbol name is known. It shares the same persistent CodeDB child/index lifecycle, so first use can consume significant disk and RAM. For a large or unfamiliar repository with unknown CodeDB state, prefer Dev bash with rg plus focused read before invoking Code automatically.',
+    description: 'Locate a known or guessed symbol definition in the Git repository containing cwd; prefer this over code_search when the symbol name is known. This uses the persistent CodeDB child/index lifecycle and may consume substantial disk and RAM. For a large or unfamiliar repository with unknown CodeDB state, prefer Dev exec with rg plus focused read before invoking Code automatically.',
     inputSchema: {
       name: z.string().min(1),
       cwd: cwd.optional()

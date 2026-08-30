@@ -5,20 +5,20 @@ The `personal` profile is the full WebHarness reference deployment. It runs with
 ## Mental model
 
 ```text
-Dev       read edit write file_ops wait bash pc_sleep
+Dev       read edit write file_ops wait exec bash pc_sleep
 Code      code_search code_context code_symbol
 Terminal  terminal_open terminal_read terminal_send terminal_resize terminal_list terminal_yield terminal_close
-Local     tool_list tool_schema tool_call
+Local     tool_list tool_schema tool_call tool_batch
             |-- browser-fast      observe/execute interaction; Windows default, WSLg on request
             `-- browser-devtools  full Chrome DevTools diagnostics; Windows default, WSLg on request
 ```
 
 Think in four model-facing domains:
 
-- **Dev** handles focused text/file work, bounded execution, durable waits, and explicit Windows-host sleep.
+- **Dev** handles focused text/file work, bounded execution, durable waits, and explicit Windows-host sleep. Prefer `exec` with structured `argv[]` for ordinary executable invocation; use `bash` only when shell syntax is actually required.
 - **Code** provides rooted indexed repository intelligence without exposing raw CodeDB mechanics; first use may create or update heavyweight persistent index state.
 - **Terminal** owns durable PTY/process lifetime and human/model terminal ownership.
-- **Local/Browser** exposes only three stable broker tools. Use logical `server="browser-fast"` for routine interaction: `observe` once, consume any returned `memory` that applies to the current host, then pass the returned `active_tab` to `execute` with the mechanical sequence. Policy memory is local operator policy; exact-site memory is more specific than reusable platform memory; live browser state wins when strategy memory is stale. Unknown/custom sites need no predefined ATS entry and continue through the generic observe/execute flow. `execute.tab` is required and stale/unavailable tab context fails before action dispatch. A click follows exactly one newly opened target before later actions; multiple new targets stop the sequence without guessing and require another observation. Upload uses an observed file-input ref plus a logical artifact key from `~/.config/mcp-dev-bridge/browser-artifacts.json`; never substitute an arbitrary filesystem path. Use logical `server="browser-devtools"` for DevTools diagnostics and load only the specific DevTools schema needed. Omit `arguments.browser_target` for the dedicated persistent Windows MCP Chrome profile; use `arguments.browser_target="linux"` for WSLg. The Windows MCP profile is separate from everyday Chrome and keeps its own persistent sign-ins; Windows MCP and Linux browser state remain separate.
+- **Local/Browser** exposes only four stable broker tools. Use `tool_call` for one downstream invocation and `tool_batch` when the same logical `{server, tool}` should receive several independent structured argument objects; do not rebuild that batching in Bash. Use logical `server="browser-fast"` for routine interaction: `observe` once, consume any returned `memory` that applies to the current host, then pass the returned `active_tab` to `execute` with the mechanical sequence. Policy memory is local operator policy; exact-site memory is more specific than reusable platform memory; live browser state wins when strategy memory is stale. Unknown/custom sites need no predefined ATS entry and continue through the generic observe/execute flow. `execute.tab` is required and stale/unavailable tab context fails before action dispatch. A click follows exactly one newly opened target before later actions; multiple new targets stop the sequence without guessing and require another observation. Upload uses an observed file-input ref plus a logical artifact key from `~/.config/mcp-dev-bridge/browser-artifacts.json`; never substitute an arbitrary filesystem path. Use logical `server="browser-devtools"` for DevTools diagnostics and load only the specific DevTools schema needed. Omit `arguments.browser_target` for the dedicated persistent Windows MCP Chrome profile; use `arguments.browser_target="linux"` for WSLg. The Windows MCP profile is separate from everyday Chrome and keeps its own persistent sign-ins; Windows MCP and Linux browser state remain separate.
 
 ## Learning exact-site browser memory
 
@@ -107,7 +107,7 @@ The direct renderer, toolbox setup, unit installers, and `bin/start`/`bin/stop` 
 The WSL side is persistent after the explicit startup install, but a new ChatGPT environment still owns two client-side pieces that the repository cannot silently mutate:
 
 1. connect ChatGPT to the configured public MCP endpoint and complete OAuth;
-2. install any desired client-side Skills separately, then refresh/reopen the MCP connection when the outer model-facing schema changes. Ordinary Local downstream tool additions/removals are discovered through Local and do not by themselves change the outer three-tool broker schema.
+2. install any desired client-side Skills separately, then refresh/reopen the MCP connection when the outer model-facing schema changes. Ordinary Local downstream tool additions/removals are discovered through Local and do not by themselves change the outer four-tool broker schema.
 
 These are client-side actions, not recurring WSL service-start commands.
 
@@ -145,11 +145,15 @@ Use only for new text-file creation. It refuses to overwrite an existing path.
 
 Use only to move or delete existing regular files. Final-component symlinks are rejected. A move stays on one filesystem, creates a no-overwrite hard link to the same inode, then removes the source name under stale-state guards; there is no copy fallback. See [Security](../security.md) for the cooperative serialization and final-path race boundary.
 
+### `exec`
+
+Runs one bounded executable directly from a structured `argv[]` with no shell parser. Use it for ordinary Git, builds, tests, `rg`, repository inspection, and other commands that do not require pipes, redirects, substitutions, shell variables, loops, or compound shell syntax. `argv[0]` is the executable and later elements are passed literally. Use Terminal when work must persist or needs a PTY/interactive workflow. There is no hidden mutable global cwd; use `cwd` explicitly when needed.
+
 ### `bash`
 
-Runs one bounded, noninteractive native Bash command string. Use it for Git, builds, tests, `rg`, repository inspection, and ordinary short execution; use Terminal when work must persist or needs a PTY/interactive workflow. For a large or unfamiliar repository with unknown CodeDB state, Bash/`rg` plus focused `read` is the lower-cost discovery path before invoking Code. There is no hidden mutable global cwd; use `cwd` explicitly when needed.
+Runs one bounded, noninteractive native Bash program. Use it only when shell semantics such as pipes, redirects, substitutions, variables, loops, or compound commands are materially required. Do not use Bash to orchestrate repeated MCP calls when Local `tool_batch` is available. For a large or unfamiliar repository with unknown CodeDB state, `exec` + `rg` plus focused `read` is the lower-cost discovery path before invoking Code.
 
-For syntax-shaped discovery or codemods, use ast-grep through Bash. Inspect bounded matches and normally perform the final mutation through guarded `edit`; use ast-grep bulk rewrite only when the transformation is deterministic and every bounded match is intentionally changed.
+For syntax-shaped discovery or codemods, use ast-grep through `exec` when no shell composition is needed. Inspect bounded matches and normally perform the final mutation through guarded `edit`; use ast-grep bulk rewrite only when the transformation is deterministic and every bounded match is intentionally changed.
 
 For an existing authoritative `.patch`/`.diff` artifact, use native Git:
 
@@ -159,7 +163,7 @@ git apply --check -- "$patch" && git apply -- "$patch"
 
 Use `--3way` only when the user explicitly requests merge-style recovery. Do not automatically add fuzzy patch recovery.
 
-Native Bash/output remains the source of truth.
+Native Dev execution output remains the source of truth; prefer `exec` unless the command genuinely requires Bash semantics.
 
 ### `wait`
 
@@ -218,7 +222,7 @@ Use when you know or can guess a definition name.
 
 Compact first-touch context for a task: definitions, focused bodies, graph neighbors, files, and snippets. First-touch does not mean always call it first on an unknown large repository.
 
-All three Code tools share the same rooted CodeDB child/index lifecycle. First use for a repository may start a persistent child and create or update substantial on-disk index state, which can consume significant disk and RAM. There is no hard repository-size preflight or threshold. For a large or unfamiliar repository with unknown CodeDB state, prefer Dev Bash/`rg` plus focused `read` for initial discovery unless CodeDB-backed repository intelligence is specifically desired.
+All three Code tools share the same rooted CodeDB child/index lifecycle. First use for a repository may start a persistent child and create or update substantial on-disk index state, which can consume significant disk and RAM. There is no hard repository-size preflight or threshold. For a large or unfamiliar repository with unknown CodeDB state, prefer Dev `exec` + `rg` plus focused `read` for initial discovery unless CodeDB-backed repository intelligence is specifically desired; use Bash only when the discovery command itself needs shell composition.
 
 The Code router resolves the nearest canonical Git root from `cwd`. Nested repositories win over outer repositories. Do not pass project-switching state; the rooted child owns repository identity.
 
@@ -303,9 +307,9 @@ Manual `wsl-term new`, `watch`, `present`, and writable `attach` require an inte
 ```text
 Code      locate a symbol or implementation
 Dev       read focused source
-Dev       bash/ast-grep for syntax-shaped discovery when needed
+Dev       exec/ast-grep for syntax-shaped discovery; Bash only for shell composition
 Dev       edit existing text; write new text; file_ops regular-file move/delete
-Dev       bash focused tests + git diff
+Dev       exec focused tests + git diff
 Terminal  start a watch/dev server if work must persist
 Dev wait  wait for readiness/output/exit without polling the full transcript
 Terminal  inspect/interact incrementally

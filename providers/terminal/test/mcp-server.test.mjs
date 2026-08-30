@@ -95,7 +95,8 @@ test('Terminal MCP exposes exactly seven public tools with the frozen schemas', 
     assert.deepEqual(open.inputSchema.required, ['name']);
     assert.match(open.description, /durable.*PTY|PTY.*durable/i);
     assert.match(open.description, /survive.*MCP.*broker|MCP.*broker.*restart/i);
-    assert.match(open.description, /Bash.*bounded|bounded.*Bash/i);
+    assert.match(open.description, /exec.*bounded|bounded.*exec/i);
+    assert.match(open.description, /bash.*shell syntax|shell syntax.*bash/i);
     assert.match(open.description, /omit.*command.*shell|command.*omit.*shell/i);
     assert.match(open.description, /present.*human|human.*present|visible.*frontend/i);
     assert.match(open.description, /headless.*default|default.*headless/i);
