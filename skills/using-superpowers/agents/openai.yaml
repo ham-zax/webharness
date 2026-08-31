@@ -1,0 +1,10 @@
+interface:
+  display_name: "Using Superpowers"
+  short_description: "Route ambiguous engineering tasks to the right Superpowers workflow."
+policy:
+  products:
+  - chatgpt
+  - codex
+  - api
+  - atlas
+  allow_implicit_invocation: true

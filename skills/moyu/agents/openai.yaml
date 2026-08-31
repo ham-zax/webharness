@@ -1,0 +1,12 @@
+interface:
+  display_name: Moyu
+  short_description: Keep agents autonomous, simple, and inside the mission boundary.
+  icon_small: assets/icon.svg
+  icon_large: assets/icon.svg
+policy:
+  products:
+  - chatgpt
+  - codex
+  - api
+  - atlas
+  allow_implicit_invocation: true

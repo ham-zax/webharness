@@ -1,0 +1,10 @@
+interface:
+  display_name: "Subagent Driven Development"
+  short_description: "Explicit high-process plan execution with dedicated implementer and reviewer agents."
+policy:
+  products:
+  - chatgpt
+  - codex
+  - api
+  - atlas
+  allow_implicit_invocation: true

@@ -1,0 +1,10 @@
+interface:
+  display_name: "Using Git Worktrees"
+  short_description: "Create isolated Git workspaces when feature work needs separation."
+policy:
+  products:
+  - chatgpt
+  - codex
+  - api
+  - atlas
+  allow_implicit_invocation: true

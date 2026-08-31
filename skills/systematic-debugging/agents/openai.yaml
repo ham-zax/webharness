@@ -1,0 +1,10 @@
+interface:
+  display_name: "Systematic Debugging"
+  short_description: "Investigate bugs and unexpected behavior before proposing fixes."
+policy:
+  products:
+  - chatgpt
+  - codex
+  - api
+  - atlas
+  allow_implicit_invocation: true

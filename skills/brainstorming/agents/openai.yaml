@@ -1,0 +1,10 @@
+interface:
+  display_name: "Brainstorming"
+  short_description: "Resolve material design ambiguity and choose the simplest coherent approach."
+policy:
+  products:
+  - chatgpt
+  - codex
+  - api
+  - atlas
+  allow_implicit_invocation: true

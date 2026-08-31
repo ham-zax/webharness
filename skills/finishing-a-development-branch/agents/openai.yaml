@@ -1,0 +1,10 @@
+interface:
+  display_name: "Finishing a Development Branch"
+  short_description: "Choose and execute the safe integration path for completed work."
+policy:
+  products:
+  - chatgpt
+  - codex
+  - api
+  - atlas
+  allow_implicit_invocation: true

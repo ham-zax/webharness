@@ -1,0 +1,10 @@
+interface:
+  display_name: "Dispatching Parallel Agents"
+  short_description: "Coordinate independent workstreams that can run without shared state."
+policy:
+  products:
+  - chatgpt
+  - codex
+  - api
+  - atlas
+  allow_implicit_invocation: true

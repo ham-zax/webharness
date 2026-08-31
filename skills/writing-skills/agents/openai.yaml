@@ -1,0 +1,10 @@
+interface:
+  display_name: "Skill Pressure Testing"
+  short_description: "Pressure-test Skills with explicit TDD scenarios."
+policy:
+  products:
+  - chatgpt
+  - codex
+  - api
+  - atlas
+  allow_implicit_invocation: false

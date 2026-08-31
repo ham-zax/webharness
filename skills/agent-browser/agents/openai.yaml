@@ -1,0 +1,10 @@
+interface:
+  display_name: Agent Browser
+  short_description: Route local browser work through Local, including managed Clearcote, or the isolated CLI.
+policy:
+  products:
+  - chatgpt
+  - codex
+  - api
+  - atlas
+  allow_implicit_invocation: true

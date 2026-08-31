@@ -1,0 +1,10 @@
+interface:
+  display_name: "Requesting Code Review"
+  short_description: "Request a bounded independent review only when review is actually required."
+policy:
+  products:
+  - chatgpt
+  - codex
+  - api
+  - atlas
+  allow_implicit_invocation: true

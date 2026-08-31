@@ -1,0 +1,10 @@
+interface:
+  display_name: "Test Driven Development"
+  short_description: "Use strict RED-GREEN-REFACTOR only when TDD/test-first is explicitly required."
+policy:
+  products:
+  - chatgpt
+  - codex
+  - api
+  - atlas
+  allow_implicit_invocation: true

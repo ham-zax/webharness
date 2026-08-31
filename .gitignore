@@ -9,3 +9,9 @@ __pycache__/
 
 .worktrees/
 node_modules/
+
+# Private ChatGPT-side workflow bundles kept local only.
+skills/job-application/
+skills/x-content/
+skills/job-application/SKILL.md
+skills/job-application/agents/openai.yaml

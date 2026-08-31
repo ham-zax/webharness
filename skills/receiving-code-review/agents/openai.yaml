@@ -1,0 +1,10 @@
+interface:
+  display_name: "Receiving Code Review"
+  short_description: "Evaluate review feedback rigorously before implementing it."
+policy:
+  products:
+  - chatgpt
+  - codex
+  - api
+  - atlas
+  allow_implicit_invocation: true
