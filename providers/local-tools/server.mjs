@@ -424,7 +424,7 @@ export function createLocalBrokerServer({ broker } = {}) {
       inputSchema: {
         type: 'object',
         properties: {
-          server: { type: 'string', minLength: 1, description: 'Logical downstream server name, such as browser. Omit to search all servers in this broker security domain.' },
+          server: { type: 'string', minLength: 1, description: 'Logical downstream server name, such as browser-fast or browser-devtools. Omit to search all servers in this broker security domain.' },
           query: { type: 'string', minLength: 1, description: 'Case-insensitive filter over server, tool name, title, and description.' },
           limit: { type: 'integer', minimum: 1, maximum: MAX_LIST_LIMIT, default: DEFAULT_LIST_LIMIT },
           cursor: { type: 'string', minLength: 1, description: 'Opaque continuation cursor returned by a prior tool_list call with the same server/query filters.' }
