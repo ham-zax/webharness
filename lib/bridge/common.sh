@@ -60,6 +60,7 @@ BRIDGE_ENABLED_FILE="$BRIDGE_RUN_DIR/cloudflare-oauth.enabled"
 BRIDGE_LOCK_FILE="$BRIDGE_RUN_DIR/lifecycle.lock"
 BRIDGE_ONE_MCP_PID_FILE="$BRIDGE_RUN_DIR/one-mcp.pid"
 BRIDGE_ONE_MCP_LOG_FILE="${BRIDGE_ONE_MCP_LOG_FILE:-$BRIDGE_STATE_DIR/logs/one-mcp.log}"
+BRIDGE_ONE_MCP_STDERR_FILE="${BRIDGE_ONE_MCP_STDERR_FILE:-$BRIDGE_RUN_DIR/one-mcp.stderr}"
 BRIDGE_CLOUDFLARED_PID_FILE="$BRIDGE_RUN_DIR/cloudflared.pid"
 BRIDGE_WATCHDOG_PID_FILE="$BRIDGE_RUN_DIR/watchdog.pid"
 BRIDGE_TUNNEL_URL_FILE="$BRIDGE_RUN_DIR/tunnel.url"
@@ -281,15 +282,21 @@ bridge_prune_stale_1mcp_logs() {
 }
 
 bridge_start_1mcp() {
-  local external="$1" entry
+  local external="$1" entry log_inode_before="" log_size_before=0
   [ -n "$external" ] || { echo "external URL is required" >&2; return 2; }
   entry="$(bridge_one_mcp_entry)"
   [ -f "$entry" ] || { echo "1MCP entry not found: $entry" >&2; return 1; }
 
   rm -f "$BRIDGE_ONE_MCP_PID_FILE"
+  : > "$BRIDGE_ONE_MCP_STDERR_FILE"
   # Remove the legacy unbounded console capture and stale pre-tailable rotations before launch.
   rm -f "$BRIDGE_RUN_DIR/one-mcp.log"
   bridge_prune_stale_1mcp_logs
+  "${BRIDGE_NODE_BIN:-node}" "$BRIDGE_ROOT/lib/one-mcp-runtime-ownership.mjs" "$BRIDGE_CONFIG_DIR"
+  if [ -r "$BRIDGE_ONE_MCP_LOG_FILE" ]; then
+    log_inode_before="$(stat -c %i "$BRIDGE_ONE_MCP_LOG_FILE" 2>/dev/null || true)"
+    log_size_before="$(stat -c %s "$BRIDGE_ONE_MCP_LOG_FILE" 2>/dev/null || printf '0')"
+  fi
   (
     cd "${BRIDGE_WORKSPACE_ROOT:-$BRIDGE_ROOT}"
     umask 077
@@ -297,20 +304,36 @@ bridge_start_1mcp() {
       --config-dir "$BRIDGE_CONFIG_DIR" \
       --enable-auth \
       --external-url "$external" \
-      9>&- >/dev/null 2>&1 </dev/null &
+      9>&- >/dev/null 2>"$BRIDGE_ONE_MCP_STDERR_FILE" </dev/null &
     printf '%s\n' "$!" > "$BRIDGE_ONE_MCP_PID_FILE"
   )
 
   if ! bridge_wait_url http://127.0.0.1:3050/health/ready \
     "${BRIDGE_LOCAL_HEALTH_ATTEMPTS:-15}" "${BRIDGE_LOCAL_HEALTH_INTERVAL:-1}" 3; then
     echo "1MCP did not become healthy" >&2
+    if [ -s "$BRIDGE_ONE_MCP_STDERR_FILE" ]; then
+      echo "1MCP stderr from this launch:" >&2
+      tail -n 40 "$BRIDGE_ONE_MCP_STDERR_FILE" >&2 || true
+    fi
     if [ -r "$BRIDGE_ONE_MCP_LOG_FILE" ]; then
-      echo "recent 1MCP log output:" >&2
-      tail -n 40 "$BRIDGE_ONE_MCP_LOG_FILE" >&2 || true
+      local log_inode_after log_size_after
+      log_inode_after="$(stat -c %i "$BRIDGE_ONE_MCP_LOG_FILE" 2>/dev/null || true)"
+      log_size_after="$(stat -c %s "$BRIDGE_ONE_MCP_LOG_FILE" 2>/dev/null || printf '0')"
+      if [ -z "$log_inode_before" ] || [ "$log_inode_after" != "$log_inode_before" ]; then
+        echo "1MCP log output from this launch:" >&2
+        tail -n 40 "$BRIDGE_ONE_MCP_LOG_FILE" >&2 || true
+      elif [ "$log_size_after" -gt "$log_size_before" ]; then
+        echo "1MCP log output from this launch:" >&2
+        tail -c "+$((log_size_before + 1))" "$BRIDGE_ONE_MCP_LOG_FILE" | tail -n 40 >&2 || true
+      else
+        echo "1MCP produced no native log output during this launch" >&2
+      fi
     fi
     bridge_stop_1mcp
     return 1
   fi
+
+  [ -s "$BRIDGE_ONE_MCP_STDERR_FILE" ] || rm -f "$BRIDGE_ONE_MCP_STDERR_FILE"
 
   local count pid
   count="$(bridge_1mcp_count)"

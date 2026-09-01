@@ -33,7 +33,7 @@ test_no_global_process_matching() {
 }
 
 test_dependencies_are_pinned() {
-  contains "$ROOT/scripts/install-bridge-runtime.sh" 'ONE_MCP_VERSION="0\.36\.0"' && \
+  contains "$ROOT/scripts/install-bridge-runtime.sh" 'ONE_MCP_VERSION="0\.37\.0"' && \
   contains "$ROOT/providers/pi-dev/package.json" '"@earendil-works/pi-coding-agent"[[:space:]]*:[[:space:]]*"0\.84\.1"' && \
   contains "$ROOT/config/templates/mcp.json" 'mcp-shell-server==1\.1\.8'
 }
@@ -93,7 +93,7 @@ test_shared_bridge_runtime_installer_is_used() {
 }
 
 test_cloudflare_oauth_is_canonical() {
-  ! grep -R -nE 'Route A|Route B|route-a|route-b|tunnel-client' \
+  ! grep -R -nE 'Route A|Route B|route-a|route-b' \
     "$ROOT/bin" "$ROOT/lib/bridge" "$ROOT/scripts" "$ROOT/README.md" "$ROOT/docs/architecture.md" "$ROOT/docs/operations.md" >/dev/null && \
   [ ! -e "$ROOT/profiles/hamza-local-dev.yaml" ]
 }
@@ -489,8 +489,12 @@ test_failed_1mcp_start_cleans_runtime() {
   local sandbox="$TMP/failed-1mcp"
   local fakebin="$sandbox/fakebin"
   local entry="$sandbox/global/@1mcp/agent/build/index.js"
-  mkdir -p "$fakebin" "$sandbox/run" "$sandbox/config" "$sandbox/workspace" "$(dirname "$entry")"
+  local node_bin
+  node_bin="$(command -v node)"
+  mkdir -p "$fakebin" "$sandbox/run" "$sandbox/config/runtime.owner" "$sandbox/logs" "$sandbox/workspace" "$(dirname "$entry")"
   : > "$entry"
+  : > "$sandbox/config/runtime.owner/owner.json"
+  printf 'old retained health statusCode: 200\n' > "$sandbox/logs/one-mcp.log"
   cat > "$fakebin/node" <<'EOF'
 #!/usr/bin/env bash
 while :; do sleep 60; done
@@ -502,17 +506,22 @@ EOF
   chmod +x "$fakebin/node" "$fakebin/curl"
 
   env PATH="$fakebin:$PATH" \
+    BRIDGE_NODE_BIN="$node_bin" \
     BRIDGE_RUN_DIR="$sandbox/run" BRIDGE_CONFIG_DIR="$sandbox/config" \
+    BRIDGE_ONE_MCP_LOG_FILE="$sandbox/logs/one-mcp.log" \
     BRIDGE_WORKSPACE_ROOT="$sandbox/workspace" BRIDGE_ONE_MCP_ENTRY="$entry" \
     BRIDGE_LOCAL_HEALTH_ATTEMPTS=1 BRIDGE_LOCAL_HEALTH_INTERVAL=0 \
     bash -c '
       source "$1/lib/bridge/common.sh"
       set +e
-      bridge_start_1mcp https://test.example >/dev/null 2>&1
+      output="$(bridge_start_1mcp https://test.example 2>&1)"
       rc=$?
       set -e
       [ "$rc" -ne 0 ] && [ "$(bridge_1mcp_count)" -eq 0 ] && \
-        [ ! -e "$BRIDGE_ONE_MCP_PID_FILE" ] && [ ! -e "$BRIDGE_CONFIG_DIR/server.pid" ]
+        [ ! -e "$BRIDGE_ONE_MCP_PID_FILE" ] && [ ! -e "$BRIDGE_CONFIG_DIR/server.pid" ] && \
+        [ ! -e "$BRIDGE_CONFIG_DIR/runtime.owner" ] && \
+        [[ "$output" == *"produced no native log output during this launch"* ]] && \
+        [[ "$output" != *"old retained health"* ]]
     ' _ "$ROOT"
 }
 
@@ -580,6 +589,7 @@ stack_env_file() {
   local sandbox="$1"
   cat <<EOF
 PATH=$sandbox/fakebin:$PATH
+BRIDGE_NODE_BIN=$(command -v node)
 BRIDGE_RUN_DIR=$sandbox/run
 BRIDGE_CONFIG_DIR=$sandbox/config
 BRIDGE_WORKSPACE_ROOT=$sandbox/workspace

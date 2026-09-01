@@ -10,6 +10,7 @@ import {
   MAX_LIST_LIMIT,
   createLocalBrokerServer
 } from '../server.mjs';
+import { reclaimStaleRuntimeOwnership } from '../../../lib/one-mcp-runtime-ownership.mjs';
 
 async function configFile(t, servers = ['browser']) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'local-tools-test-'));
@@ -21,6 +22,34 @@ async function configFile(t, servers = ['browser']) {
   }));
   return file;
 }
+
+test('stale 1MCP ownership is reclaimed without disturbing a matching runtime', async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'one-mcp-owner-test-'));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const configDir = path.join(root, 'config');
+  const procRoot = path.join(root, 'proc');
+  const ownerDir = path.join(configDir, 'runtime.owner');
+  await fs.mkdir(path.join(procRoot, '101'), { recursive: true });
+  await fs.mkdir(ownerDir, { recursive: true });
+
+  await fs.writeFile(path.join(ownerDir, 'owner.json'), '');
+  assert.equal(await reclaimStaleRuntimeOwnership(configDir, { procRoot }), true);
+  await assert.rejects(fs.stat(ownerDir), { code: 'ENOENT' });
+
+  await fs.mkdir(ownerDir, { recursive: true });
+  await fs.writeFile(path.join(ownerDir, 'owner.json'), JSON.stringify({ pid: 101 }));
+  await fs.writeFile(path.join(procRoot, '101', 'cmdline'), Buffer.from('unrelated\0process\0'));
+  assert.equal(await reclaimStaleRuntimeOwnership(configDir, { procRoot }), true);
+
+  await fs.mkdir(ownerDir, { recursive: true });
+  await fs.writeFile(path.join(ownerDir, 'owner.json'), JSON.stringify({ pid: 101 }));
+  await fs.writeFile(
+    path.join(procRoot, '101', 'cmdline'),
+    Buffer.from(`node\0/x/@1mcp/agent/build/index.js\0serve\0--config-dir\0${configDir}\0`)
+  );
+  assert.equal(await reclaimStaleRuntimeOwnership(configDir, { procRoot }), false);
+  assert.equal((await fs.stat(ownerDir)).isDirectory(), true);
+});
 
 function fakeInner({ pages, callResult = { content: [{ type: 'text', text: 'ok' }] }, callHandler }) {
   const listCalls = [];

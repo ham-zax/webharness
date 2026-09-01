@@ -1,10 +1,12 @@
 import fs from 'node:fs/promises';
+import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import { reclaimStaleRuntimeOwnership } from '../../lib/one-mcp-runtime-ownership.mjs';
 
 export const INNER_TOOL_SEPARATOR = '_1mcp_';
 export const DEFAULT_LIST_LIMIT = 25;
@@ -182,6 +184,7 @@ export class InnerDirect1Mcp {
   static async start({ configPath, oneMcpEntry } = {}) {
     requiredString(configPath, 'configPath');
     requiredString(oneMcpEntry, 'oneMcpEntry');
+    reclaimStaleRuntimeOwnership(path.dirname(configPath));
     const transport = new StdioClientTransport({
       command: process.execPath,
       args: [
