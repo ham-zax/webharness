@@ -208,13 +208,13 @@ That separation is deliberate: Dev owns files/commands/readiness, Code owns sema
 
 ## Reference implementation and forking
 
-The full generic workstation source is public, but the maintained qualification is intentionally narrow. The reference currently assumes a pinned globally installed 1MCP 0.36.0 runtime with qualified compatibility patches, a Personal Workstation toolbox, WSL user-systemd, and the documented browser ownership model. Those are reproducibility constraints, not claims that every Linux/macOS/Windows environment is supported.
+The full generic workstation source is public, but the maintained qualification is intentionally narrow. The reference currently assumes a pinned globally installed 1MCP 0.37.0 runtime with qualified compatibility patches, a Personal Workstation toolbox, WSL user-systemd, and the documented browser ownership model. Those are reproducibility constraints, not claims that every Linux/macOS/Windows environment is supported.
 
 Forks should preserve the model-facing contracts they rely on, then deliberately replace transport, package ownership, browser lifecycle, or host integration as needed. See [MCP Compatibility](docs/compatibility.md) and [Reference Environment](docs/reference-environment.md).
 
 ## Compatibility and security notes
 
-- The project currently pins 1MCP 0.36.0 after qualification of the current provider composition, direct-mode rich Browser results, config reload, and OAuth behavior. Upgrade it deliberately rather than treating it as an unqualified interchangeable dependency.
+- The project currently pins 1MCP 0.37.0 after qualification of the current provider composition, direct-mode rich Browser results, config reload, OAuth behavior, and the supervised-stdio compatibility patches described in the operations guide. Upgrade it deliberately rather than treating it as an unqualified interchangeable dependency.
 - 1MCP listens on loopback; Cloudflare supplies the public HTTPS route. OAuth remains required for the public MCP origin.
 - The Local broker is one authorization domain. Every downstream MCP admitted behind the same `tag:local` grant must legitimately share that authority.
 - Browser debugging endpoints are local implementation details and are not intentionally published beyond loopback.

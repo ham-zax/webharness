@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ONE_MCP_VERSION="0.36.0"
+ONE_MCP_VERSION="0.37.0"
 SHELL_MCP_VERSION="1.1.8"
 
 echo "== installing pinned 1MCP aggregator =="
@@ -48,6 +48,36 @@ if (source.includes(upstream)) {
 }
 NODE
 echo "  patched restart-stable tailable rotation"
+
+echo "== applying pinned 1MCP supervised-restart capability preservation =="
+SUPERVISOR_IMPL="$(npm root -g)/@1mcp/agent/build/core/server/backendStdioSupervisor.js"
+node --input-type=module - "$SUPERVISOR_IMPL" <<'NODE'
+import fs from 'node:fs';
+const [supervisorPath] = process.argv.slice(2);
+const upstream = `            result.activate?.();
+            if (this.isRecoveryStale(generation, controller)) {
+                await result.dispose?.();
+                return;
+            }
+            this.recoveryController = null;
+            this.state = 'connected';`;
+const patched = `            this.state = 'connected';
+            result.activate?.();
+            if (this.isRecoveryStale(generation, controller)) {
+                await result.dispose?.();
+                return;
+            }
+            this.recoveryController = null;`;
+
+let source = fs.readFileSync(supervisorPath, 'utf8');
+if (source.includes(upstream)) {
+  source = source.replace(upstream, patched);
+  fs.writeFileSync(supervisorPath, source);
+} else if (!source.includes(patched)) {
+  throw new Error('pinned 1MCP stdio supervisor source shape changed; refusing an unsafe recovery patch');
+}
+NODE
+echo "  patched supervised restart capability preservation"
 
 echo "== verifying pinned 1MCP native log rotation =="
 LOGGING_CONFIG="$(npm root -g)/@1mcp/agent/build/logger/loggingConfig.js"

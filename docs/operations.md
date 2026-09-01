@@ -158,13 +158,14 @@ A tmux-owned Terminal shell is suitable as an external control process because t
 
 1MCP's `--config-dir` is also its writable OAuth/session home. When changing the state root, preserve inbound OAuth continuity with `scripts/migrate-legacy-oauth-state.sh` before replacing the live service. Do not treat Streamable HTTP transport sessions as credential state.
 
-## 1MCP 0.36.0 compatibility
+## 1MCP 0.37.0 compatibility
 
 This project intentionally:
 
 - supervises the real 1MCP Node entrypoint instead of relying on `serve --background`;
 - verifies that the pinned runtime supports structured native `logging.maxSize` / `logging.maxFiles` rotation before relying on it;
-- patches 1MCP's consent-page CSP to permit an exact registered HTTPS callback origin; upstream 0.36.0 permits only registered loopback callbacks, which blocks ChatGPT's HTTPS callback after consent;
+- patches 1MCP's consent-page CSP to permit an exact registered HTTPS callback origin; upstream 0.37.0 still permits only registered loopback callbacks, which blocks ChatGPT's HTTPS callback after consent;
+- patches 1MCP's stdio supervisor so a recovered client is activated only after the supervisor state has become `connected`; upstream 0.37.0 activates the fresh client while still marked `restarting`, causing `ClientManager` to erase its freshly negotiated capabilities and making the recovered server disappear from `tools/list`;
 - uses built-in `mcp.json` hot reload for provider-only changes, including atomic renderer replacements; restart the bridge only when the 1MCP executable itself changes or when observed reload failure requires it.
 
 These are pinned-version compatibility behaviors. Requalify them when upgrading 1MCP.

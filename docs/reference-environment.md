@@ -7,7 +7,7 @@ WebHarness is published as a reproducible reference implementation, not as a pro
 - a systemd user manager inside WSL;
 - WSLg for headed Linux browser capability;
 - tmux for durable Terminal PTYs;
-- Cloudflare Tunnel plus 1MCP 0.36.0 for the demonstrated public MCP transport.
+- Cloudflare Tunnel plus patched 1MCP 0.37.0 for the demonstrated public MCP transport.
 
 Run `webharness doctor --profile personal` before setup. Doctor validates the deployment templates without writing generated state and reports which reference assumptions already hold.
 
