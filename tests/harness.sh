@@ -126,6 +126,43 @@ NODE2
   return "$rc"
 }
 
+test_owner_local_stdio_supervision_defaults() {
+  local tmp
+  tmp="$(mktemp -d)" || return 1
+  mkdir -p "$tmp/workspace" "$tmp/runtime" "$tmp/home" || { rm -rf "$tmp"; return 1; }
+  cat > "$tmp/server" <<'SH'
+#!/bin/sh
+exit 0
+SH
+  chmod +x "$tmp/server" || { rm -rf "$tmp"; return 1; }
+  printf '{"version":"1.0.0","mcpServers":{"supervised":{"command":"%s"},"unsupervised":{"command":"%s","restartOnExit":false}}}\n' \
+    "$tmp/server" "$tmp/server" > "$tmp/local.json"
+  cat > "$tmp/deployment.env" <<EOF
+MCP_WORKSPACE_ROOT=$tmp/workspace
+MCP_PUBLIC_URL=https://mcp.example.test
+MCP_TUNNEL_NAME=
+MCP_LOCAL_SERVERS_FILE=$tmp/local.json
+EOF
+  HOME="$tmp/home" XDG_RUNTIME_DIR="$tmp/runtime" node "$ROOT/scripts/render-config.mjs" \
+    --profile personal \
+    --env-file "$tmp/deployment.env" \
+    --state-dir "$tmp/state" \
+    --repo-root "$ROOT" >/dev/null || { rm -rf "$tmp"; return 1; }
+  node - "$tmp/state/local-1mcp/mcp.json" <<'NODE'
+const fs = require('fs');
+const cfg = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+const supervised = cfg.mcpServers?.supervised;
+const unsupervised = cfg.mcpServers?.unsupervised;
+if (supervised?.type !== 'stdio') process.exit(1);
+if (supervised?.restartOnExit !== true) process.exit(1);
+if (unsupervised?.type !== 'stdio') process.exit(1);
+if (unsupervised?.restartOnExit !== false) process.exit(1);
+NODE
+  local rc=$?
+  rm -rf "$tmp"
+  return "$rc"
+}
+
 test_dev_spool_limit_validation() {
   local tmp value output rc
   tmp="$(mktemp -d)" || return 1
@@ -612,6 +649,7 @@ test_extension_install_preflights_required_config() {
 
 run_test 'raw CodeDB catalog stays behind the Code facade' test_raw_codedb_surface_removed
 run_test 'final rendered composition places Browser behind Local only in personal mode' test_final_rendered_composition
+run_test 'owner Local stdio servers are supervised by default with an explicit opt-out' test_owner_local_stdio_supervision_defaults
 run_test 'Dev spool deployment override rejects invalid values' test_dev_spool_limit_validation
 run_test '1MCP rotating log deployment policy rejects invalid values' test_one_mcp_log_policy_validation
 run_test 'personal Terminal frontend selector defaults, overrides, and validates in profile scope' test_terminal_frontend_selector

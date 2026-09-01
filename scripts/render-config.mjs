@@ -128,7 +128,7 @@ async function parseLocalServersConfig(text) {
     if (!server || typeof server !== 'object' || Array.isArray(server)) {
       throw new Error(`Local downstream server ${name} must be an object`);
     }
-    const allowed = new Set(['type', 'command', 'args', 'cwd', 'env']);
+    const allowed = new Set(['type', 'command', 'args', 'cwd', 'env', 'restartOnExit']);
     for (const key of Object.keys(server)) {
       if (!allowed.has(key)) throw new Error(`Local downstream server ${name} has unsupported field: ${key}`);
     }
@@ -163,7 +163,14 @@ async function parseLocalServersConfig(text) {
         if (typeof envValue !== 'string') throw new Error(`Local downstream server ${name} env.${key} must be a string`);
       }
     }
-    normalized[name] = server;
+    if (server.restartOnExit !== undefined && typeof server.restartOnExit !== 'boolean') {
+      throw new Error(`Local downstream server ${name} restartOnExit must be a boolean`);
+    }
+    normalized[name] = {
+      ...server,
+      type: server.type ?? 'stdio',
+      restartOnExit: server.restartOnExit ?? true
+    };
   }
   return normalized;
 }

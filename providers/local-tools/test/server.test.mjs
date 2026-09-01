@@ -77,6 +77,93 @@ test('model-facing broker exposes list, schema, call, and batch', async t => {
   assert.deepEqual(result.content, image.content);
 });
 
+test('tool_list without server discovers logical servers and filters only server names', async t => {
+  const configPath = await configFile(t, ['browser-devtools', 'satori', 'codebase-memory-mcp']);
+  const inner = fakeInner({ pages: {
+    FIRST: {
+      tools: [
+        { name: '1mcp_1mcp_mcp_reload', description: 'private recovery tool' },
+        { name: 'browser-devtools_1mcp_take_heapsnapshot', description: 'analyze browser memory distribution' },
+        { name: 'satori_1mcp_search_codebase', description: 'semantic repository search' }
+      ]
+    }
+  } });
+  const broker = new LocalToolBroker({ inner, configPath });
+
+  const all = await broker.list();
+  assert.deepEqual(all, {
+    servers: [
+      { server: 'browser-devtools', available: true, toolCount: 1 },
+      { server: 'satori', available: true, toolCount: 1 },
+      { server: 'codebase-memory-mcp', available: false, toolCount: 0 }
+    ],
+    hasMore: false
+  });
+
+  const memory = await broker.list({ query: 'memory' });
+  assert.deepEqual(memory, {
+    servers: [{ server: 'codebase-memory-mcp', available: false, toolCount: 0 }],
+    hasMore: false
+  });
+});
+
+test('scoped discovery coalesces targeted recovery for a configured missing server', async t => {
+  const configPath = await configFile(t, ['codebase-memory-mcp']);
+  let recovered = false;
+  let reloads = 0;
+  const inner = fakeInner({
+    pages: () => ({
+      tools: recovered ? [{ name: 'codebase-memory-mcp_1mcp_list_projects', description: 'list indexed projects' }] : []
+    }),
+    callHandler: async (name) => {
+      assert.equal(name, '1mcp_1mcp_mcp_reload');
+      reloads += 1;
+      await new Promise(resolve => setTimeout(resolve, 10));
+      recovered = true;
+      return { structuredContent: { status: 'success' }, content: [{ type: 'text', text: 'reloaded' }] };
+    }
+  });
+  const broker = new LocalToolBroker({ inner, configPath });
+
+  const [first, second] = await Promise.all([
+    broker.list({ server: 'codebase-memory-mcp' }),
+    broker.list({ server: 'codebase-memory-mcp' })
+  ]);
+  assert.equal(reloads, 1);
+  assert.deepEqual(first.tools.map(tool => tool.tool), ['list_projects']);
+  assert.deepEqual(second.tools.map(tool => tool.tool), ['list_projects']);
+});
+
+test('failed direct call may recover an absent server but never auto-replays the original action', async t => {
+  const configPath = await configFile(t, ['codebase-memory-mcp']);
+  let recovered = false;
+  let targetCalls = 0;
+  const inner = fakeInner({
+    pages: () => ({
+      tools: recovered ? [{ name: 'codebase-memory-mcp_1mcp_list_projects', description: 'list indexed projects' }] : []
+    }),
+    callHandler: async (name) => {
+      if (name === '1mcp_1mcp_mcp_reload') {
+        recovered = true;
+        return { structuredContent: { status: 'success' }, content: [{ type: 'text', text: 'reloaded' }] };
+      }
+      targetCalls += 1;
+      if (!recovered) throw new Error('Error calling tool');
+      return { content: [{ type: 'text', text: 'ok' }] };
+    }
+  });
+  const broker = new LocalToolBroker({ inner, configPath });
+
+  await assert.rejects(
+    () => broker.call({ server: 'codebase-memory-mcp', tool: 'list_projects' }),
+    /DOWNSTREAM_RECOVERED_RETRY_REQUIRED/
+  );
+  assert.equal(targetCalls, 1);
+  const retry = await broker.call({ server: 'codebase-memory-mcp', tool: 'list_projects' });
+  assert.equal(targetCalls, 2);
+  assert.equal(retry.content[0].text, 'ok');
+});
+
 test('tool_list is bounded, lightweight, resumable without a page cache, and filter-bound', async t => {
   const configPath = await configFile(t, ['browser', 'future']);
   const inner = fakeInner({ pages: {
@@ -140,7 +227,7 @@ test('tool_schema reads current inner catalog state and preserves a separator in
   const second = await broker.schema({ server: 'browser', tool: 'tool_1mcp_suffix' });
   assert.equal(second.definition.description, 'second');
   await assert.rejects(() => broker.schema({ server: 'browser', tool: 'missing' }), /UNKNOWN_TOOL/);
-  assert.equal(inner.listCalls.length, 3);
+  assert.equal(inner.listCalls.length, 6);
 });
 
 test('reserved and ambiguous server namespaces are rejected at the broker boundary', async t => {
@@ -192,7 +279,7 @@ test('tool_batch preflights all entries, bounds concurrency, preserves order, an
   let active = 0;
   let maxActive = 0;
   const inner = fakeInner({
-    pages: { FIRST: { tools: [] } },
+    pages: { FIRST: { tools: [{ name: 'browser_1mcp_observe', description: 'fixture' }] } },
     callHandler: async (_name, args) => {
       active += 1;
       maxActive = Math.max(maxActive, active);
@@ -241,7 +328,7 @@ test('tool_batch cancellation stops queued dispatches', async t => {
   let dispatches = 0;
   let completed = 0;
   const inner = fakeInner({
-    pages: { FIRST: { tools: [] } },
+    pages: { FIRST: { tools: [{ name: 'browser_1mcp_observe', description: 'fixture' }] } },
     callHandler: async (_name, _args, signal) => {
       dispatches += 1;
       return new Promise((resolve, reject) => {

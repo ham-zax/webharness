@@ -16,6 +16,8 @@ export const MAX_BATCH_CALLS = 32;
 const CURSOR_VERSION = 1;
 const MAX_CURSOR_LENGTH = 4096;
 const MAX_BATCH_ID_LENGTH = 128;
+const INNER_RELOAD_TOOL = `1mcp${INNER_TOOL_SEPARATOR}mcp_reload`;
+const DOWNSTREAM_RELOAD_TIMEOUT_MS = 10_000;
 
 function brokerError(code, message, cause) {
   const error = new Error(`${code}: ${message}`, cause ? { cause } : undefined);
@@ -112,6 +114,15 @@ function matchesQuery(item, query) {
     .some(value => value.toLowerCase().includes(needle));
 }
 
+function conciseServer(server, toolCount) {
+  return { server, available: toolCount > 0, toolCount };
+}
+
+function matchesServerQuery(item, query) {
+  if (query === undefined) return true;
+  return item.server.toLowerCase().includes(query.toLowerCase());
+}
+
 function jsonResult(value) {
   return {
     content: [{ type: 'text', text: JSON.stringify(value) }],
@@ -173,7 +184,16 @@ export class InnerDirect1Mcp {
     requiredString(oneMcpEntry, 'oneMcpEntry');
     const transport = new StdioClientTransport({
       command: process.execPath,
-      args: [oneMcpEntry, 'serve', '--transport=stdio', '--pagination', '--config', configPath],
+      args: [
+        oneMcpEntry,
+        'serve',
+        '--transport=stdio',
+        '--pagination',
+        '--enable-internal-tools',
+        '--internal-tools=reload',
+        '--config',
+        configPath
+      ],
       stderr: 'inherit'
     });
     const client = new Client({ name: 'mcp-dev-bridge-local-inner', version: '0.1.0' });
@@ -227,6 +247,7 @@ export class LocalToolBroker {
     this.inner = inner;
     this.configPath = configPath;
     this.closed = false;
+    this.recoveryPromises = new Map();
   }
 
   async configuredServers() {
@@ -251,6 +272,78 @@ export class LocalToolBroker {
     }
   }
 
+  async serverToolCounts(allowedServers) {
+    const counts = new Map(Array.from(allowedServers, server => [server, 0]));
+    let cursor;
+    const seenCursors = new Set();
+    while (true) {
+      const cursorKey = cursor ?? '';
+      if (seenCursors.has(cursorKey)) throw brokerError('INNER_LIST_FAILED', 'inner tools/list cursor repeated');
+      seenCursors.add(cursorKey);
+      const page = await this.page(cursor);
+      for (const innerTool of page.tools ?? []) {
+        const parsed = parseQualifiedName(innerTool?.name);
+        if (!parsed || parsed.server === '1mcp' || !allowedServers.has(parsed.server)) continue;
+        counts.set(parsed.server, counts.get(parsed.server) + 1);
+      }
+      if (page.nextCursor === undefined) return counts;
+      cursor = page.nextCursor;
+    }
+  }
+
+  async hasServerTools(server) {
+    let cursor;
+    const seenCursors = new Set();
+    while (true) {
+      const cursorKey = cursor ?? '';
+      if (seenCursors.has(cursorKey)) throw brokerError('INNER_LIST_FAILED', 'inner tools/list cursor repeated');
+      seenCursors.add(cursorKey);
+      const page = await this.page(cursor);
+      for (const innerTool of page.tools ?? []) {
+        const parsed = parseQualifiedName(innerTool?.name);
+        if (parsed?.server === server) return true;
+      }
+      if (page.nextCursor === undefined) return false;
+      cursor = page.nextCursor;
+    }
+  }
+
+  async recoverServer(server) {
+    const active = this.recoveryPromises.get(server);
+    if (active) return active;
+    const recovery = (async () => {
+      let result;
+      try {
+        result = await this.inner.callTool(INNER_RELOAD_TOOL, {
+          server,
+          configOnly: false,
+          force: true,
+          timeout: DOWNSTREAM_RELOAD_TIMEOUT_MS
+        });
+      } catch (error) {
+        if (error?.code === 'INNER_UNAVAILABLE') throw error;
+        throw brokerError('DOWNSTREAM_RECOVERY_FAILED', `failed to reload local server: ${server}`, error);
+      }
+      if (result?.isError === true || result?.structuredContent?.status === 'failed') {
+        throw brokerError('DOWNSTREAM_RECOVERY_FAILED', `1MCP could not reload local server: ${server}`);
+      }
+      if (!await this.hasServerTools(server)) {
+        throw brokerError('DOWNSTREAM_UNAVAILABLE', `local server is configured but unavailable: ${server}`);
+      }
+    })();
+    this.recoveryPromises.set(server, recovery);
+    try {
+      return await recovery;
+    } finally {
+      if (this.recoveryPromises.get(server) === recovery) this.recoveryPromises.delete(server);
+    }
+  }
+
+  async ensureServerAvailable(server) {
+    if (await this.hasServerTools(server)) return;
+    await this.recoverServer(server);
+  }
+
   async list({ server, query, limit, cursor } = {}) {
     const selectedServer = optionalString(server, 'server');
     const selectedQuery = optionalString(query, 'query');
@@ -272,6 +365,23 @@ export class LocalToolBroker {
       offset = decoded.offset;
     }
 
+    if (selectedServer === undefined) {
+      if (pageCursor !== undefined) throw brokerError('INVALID_CURSOR', 'unscoped server discovery cursor is invalid');
+      const counts = await this.serverToolCounts(allowedServers);
+      const matching = Array.from(allowedServers)
+        .map(name => conciseServer(name, counts.get(name) ?? 0))
+        .filter(item => matchesServerQuery(item, selectedQuery));
+      const servers = matching.slice(offset, offset + selectedLimit);
+      const nextOffset = offset + servers.length;
+      const hasMore = nextOffset < matching.length;
+      return {
+        servers,
+        hasMore,
+        ...(hasMore ? { nextCursor: encodeCursor({ offset: nextOffset, query: selectedQuery }) } : {})
+      };
+    }
+
+    await this.ensureServerAvailable(selectedServer);
     const tools = [];
     const seenCursors = new Set();
     while (true) {
@@ -310,6 +420,7 @@ export class LocalToolBroker {
     const selectedTool = requiredString(tool, 'tool');
     const allowedServers = await this.configuredServers();
     if (!allowedServers.has(selectedServer)) throw brokerError('UNKNOWN_SERVER', `unknown local server: ${selectedServer}`);
+    await this.ensureServerAvailable(selectedServer);
 
     const target = qualifiedName(selectedServer, selectedTool);
     let cursor;
@@ -353,7 +464,17 @@ export class LocalToolBroker {
     if (this.closed) throw brokerError('LOCAL_BROKER_CLOSED', 'local tool broker is shut down');
     const allowedServers = await this.configuredServers();
     const route = this.prepareRoute({ server, tool }, allowedServers);
-    return this.dispatch(route, this.prepareArguments(args), signal);
+    try {
+      return await this.dispatch(route, this.prepareArguments(args), signal);
+    } catch (error) {
+      if (error?.code !== 'INNER_CALL_FAILED' || await this.hasServerTools(route.server)) throw error;
+      await this.recoverServer(route.server);
+      throw brokerError(
+        'DOWNSTREAM_RECOVERED_RETRY_REQUIRED',
+        `local server ${route.server} was unavailable and has been recovered; the original call outcome is unknown, so inspect state before retrying consequential work`,
+        error
+      );
+    }
   }
 
   async batch({ server, tool, calls, concurrency } = {}, signal) {
@@ -363,6 +484,7 @@ export class LocalToolBroker {
     }
     const allowedServers = await this.configuredServers();
     const route = this.prepareRoute({ server, tool }, allowedServers);
+    await this.ensureServerAvailable(route.server);
     const prepared = calls.map((call, index) => {
       if (call === null || typeof call !== 'object' || Array.isArray(call)) {
         throw brokerError('INVALID_ARGUMENT', `calls[${index}] must be an object`);
@@ -419,13 +541,13 @@ export function createLocalBrokerServer({ broker } = {}) {
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: [
     {
       name: 'tool_list',
-      description: 'Discover a bounded page of local downstream tools without loading their full schemas. Use a narrow server/query when possible.',
+      description: 'Discover Local capabilities without loading full schemas. Omit server to list configured logical servers and availability; provide server to list that server\'s tools. Use query only within the selected discovery scope.',
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       inputSchema: {
         type: 'object',
         properties: {
-          server: { type: 'string', minLength: 1, description: 'Logical downstream server name, such as browser-fast or browser-devtools. Omit to search all servers in this broker security domain.' },
-          query: { type: 'string', minLength: 1, description: 'Case-insensitive filter over server, tool name, title, and description.' },
+          server: { type: 'string', minLength: 1, description: 'Logical downstream server name, such as browser-fast, browser-devtools, satori, or codebase-memory-mcp. Omit to discover logical servers rather than individual tools.' },
+          query: { type: 'string', minLength: 1, description: 'Case-insensitive filter. Without server it matches logical server names only; with server it matches that server\'s tool name, title, and description.' },
           limit: { type: 'integer', minimum: 1, maximum: MAX_LIST_LIMIT, default: DEFAULT_LIST_LIMIT },
           cursor: { type: 'string', minLength: 1, description: 'Opaque continuation cursor returned by a prior tool_list call with the same server/query filters.' }
         },
