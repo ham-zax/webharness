@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
+import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -7,6 +8,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { resolveBrowserMemory } from '../browser-memory.mjs';
 import { resolveLinuxBrowserBackend } from '../browser-backend-config.mjs';
+import { ManagedClearcoteRuntime } from '../clearcote-runtime.mjs';
 import {
   AgentBrowserRunner,
   FastBrowser,
@@ -182,7 +184,13 @@ test('failed tab-context validation is always fail-closed before action dispatch
   assert.deepEqual(calls[0], {
     target: 'linux',
     commands: [['tab', 'list']],
-    options: { bail: true, tab: 'STALE-TARGET' }
+    options: {
+      bail: true,
+      tab: 'STALE-TARGET',
+      browserBackend: undefined,
+      browserProfile: undefined,
+      sessionTab: 'STALE-TARGET'
+    }
   });
 });
 
@@ -304,6 +312,126 @@ test('Linux runner hot-switches from managed Chrome to a Clearcote CDP session',
   assert.equal(calls[1].options.env.AGENT_BROWSER_PROFILE, undefined);
 });
 
+test('managed Clearcote allocates a fresh tab for a second independent agent', async () => {
+  const targets = [{ targetId: 'TARGET-A' }];
+  let created = 0;
+  const runner = new AgentBrowserRunner({
+    linuxBackendResolve: async () => ({
+      browser: 'clearcote',
+      managed: true,
+      profileName: 'x-main',
+      profile: { humanize: true },
+      session: 'mcp-browser-fast-linux-clearcote-x-main'
+    }),
+    clearcoteRuntime: {
+      async ensure() { return { cdp: '43111' }; },
+      async listTargets() { return [...targets]; },
+      async newTarget() {
+        created += 1;
+        const target = { targetId: `TARGET-NEW-${created}` };
+        targets.push(target);
+        return target;
+      },
+      async close() {}
+    }
+  });
+
+  const [first, second] = await Promise.all([
+    runner.prepareObservation('linux'),
+    runner.prepareObservation('linux')
+  ]);
+
+  assert.equal(first.tab, 'TARGET-A');
+  assert.equal(second.tab, 'TARGET-NEW-1');
+  assert.equal(created, 1);
+});
+
+test('managed Clearcote coalesces concurrent startup of the same profile without a filesystem lock', async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'browser-fast-clearcote-start-'));
+  let port;
+  const server = http.createServer((request, response) => {
+    if (request.url !== '/json/version') {
+      response.writeHead(404).end();
+      return;
+    }
+    response.setHeader('content-type', 'application/json');
+    response.end(JSON.stringify({ webSocketDebuggerUrl: `ws://127.0.0.1:${port}/devtools/browser/test` }));
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  port = server.address().port;
+  t.after(async () => {
+    await new Promise(resolve => server.close(resolve));
+    await fs.rm(root, { recursive: true, force: true });
+  });
+
+  let launches = 0;
+  let releaseLaunch;
+  let markLaunchStarted;
+  const launchStarted = new Promise(resolve => { markLaunchStarted = resolve; });
+  const launchGate = new Promise(resolve => { releaseLaunch = resolve; });
+  const closeListeners = [];
+  const context = {
+    browser() { return { isConnected: () => true }; },
+    on(event, listener) { if (event === 'close') closeListeners.push(listener); },
+    pages() { return []; },
+    async close() { for (const listener of closeListeners) listener(); }
+  };
+  const runtime = new ManagedClearcoteRuntime({
+    stateRoot: root,
+    launch: async userDataDir => {
+      launches += 1;
+      markLaunchStarted();
+      await launchGate;
+      await fs.writeFile(path.join(userDataDir, 'DevToolsActivePort'), `${port}\n/devtools/browser/test\n`);
+      return context;
+    }
+  });
+  t.after(async () => { await runtime.close(); });
+  const backend = {
+    browser: 'clearcote',
+    managed: true,
+    profileName: 'x-main',
+    profile: { humanize: true }
+  };
+
+  const first = runtime.ensure(backend);
+  await launchStarted;
+  const second = runtime.ensure(backend);
+  releaseLaunch();
+  const [firstRuntime, secondRuntime] = await Promise.all([first, second]);
+
+  assert.equal(launches, 1);
+  assert.equal(firstRuntime, secondRuntime);
+});
+
+test('Agent Browser structured batch failures stay structured instead of becoming invalid output', async () => {
+  const runner = new AgentBrowserRunner({
+    processRunner: async () => ({
+      code: 1,
+      stdout: JSON.stringify({
+        success: false,
+        code: 'tab_gone',
+        error: 'Pinned tab was closed',
+        data: { targetId: 'TARGET-OLD', lastUrl: 'https://example.test/' }
+      }),
+      stderr: ''
+    })
+  });
+
+  const result = await runner.linuxAgentBatch(
+    { browser: 'chrome', session: 'mcp-browser-fast-linux-test' },
+    [['tab', 'list']]
+  );
+
+  assert.equal(result.exitCode, 1);
+  assert.deepEqual(result.items, [{
+    success: false,
+    error: 'Pinned tab was closed',
+    code: 'tab_gone',
+    result: { targetId: 'TARGET-OLD', lastUrl: 'https://example.test/' }
+  }]);
+});
+
 test('Windows Agent Browser runner provisions native runtime and validates tab context before non-bailing actions', async t => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'browser-fast-windows-test-'));
   t.after(async () => { await fs.rm(root, { recursive: true, force: true }); });
@@ -380,7 +508,7 @@ test('Windows Agent Browser runner provisions native runtime and validates tab c
   assert.equal(await fs.readFile(path.join(runtimeDir, 'windows-runner.cjs'), 'utf8'), 'helper-source');
 });
 
-test('browser-fast serializes complete operations per target and carries explicit tab context', async () => {
+test('browser-fast lets different Linux tabs run concurrently with isolated session context', async () => {
   const calls = [];
   let releaseFirst;
   let markFirstStarted;
@@ -413,17 +541,63 @@ test('browser-fast serializes complete operations per target and carries explici
     actions: [{ op: 'wait', milliseconds: 1 }]
   });
   await firstStarted;
-  const second = browser.execute({
+  const secondResult = await browser.execute({
     browser_target: 'linux',
     tab: 't2',
     final_state: 'none',
     actions: [{ op: 'wait', milliseconds: 1 }]
   });
-  await new Promise(resolve => setImmediate(resolve));
-  assert.equal(calls.length, 1);
+  assert.equal(secondResult.outcome, 'completed');
+  assert.ok(calls.some(call => call.options.tab === 't2'));
+  assert.ok(calls.some(call => call.options.sessionTab === 't2'));
   releaseFirst();
-  await Promise.all([first, second]);
-  assert.deepEqual(calls.map(call => call.options.tab).filter(Boolean), ['t1', 't2']);
+  await first;
+});
+
+test('browser-fast serializes the same Linux tab and releases its queue after failure', async () => {
+  let releaseFirst;
+  let markFirstStarted;
+  let initialLists = 0;
+  const firstStarted = new Promise(resolve => { markFirstStarted = resolve; });
+  const firstGate = new Promise(resolve => { releaseFirst = resolve; });
+  const runner = {
+    async batch(target, commands, options) {
+      if (commands.length === 1 && commands[0][0] === 'tab' && commands[0][1] === 'list' && options.tab === 't1') {
+        initialLists += 1;
+        if (initialLists === 1) {
+          markFirstStarted();
+          await firstGate;
+          throw new Error('first agent failed');
+        }
+        return {
+          exitCode: 0,
+          items: [{ success: true, result: { tabs: [{ active: true, tabId: 't1', targetId: 't1' }] } }]
+        };
+      }
+      return { exitCode: 0, items: commands.map(command => ({ success: true, result: { command } })) };
+    }
+  };
+  const browser = new FastBrowser({ runner });
+  const first = browser.execute({
+    browser_target: 'linux',
+    tab: 't1',
+    final_state: 'none',
+    actions: [{ op: 'wait', milliseconds: 1 }]
+  });
+  await firstStarted;
+  const second = browser.execute({
+    browser_target: 'linux',
+    tab: 't1',
+    final_state: 'none',
+    actions: [{ op: 'wait', milliseconds: 1 }]
+  });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(initialLists, 1);
+  releaseFirst();
+  await assert.rejects(first, /first agent failed/);
+  const secondResult = await second;
+  assert.equal(secondResult.outcome, 'completed');
+  assert.equal(initialLists, 2);
 });
 
 test('observe explicitly rebinds the current target and attaches bounded site memory', async t => {

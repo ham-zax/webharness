@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
@@ -184,13 +185,35 @@ async function runProcess(command, args, { cwd, env, input, acceptNonZero = fals
 }
 
 function parseAgentBrowserBatch(result) {
-  let items;
+  let parsed;
   try {
-    items = JSON.parse(result.stdout || '[]');
+    parsed = JSON.parse(result.stdout || '[]');
   } catch (error) {
     throw fastError('BROWSER_FAST_INVALID_OUTPUT', result.stderr || 'agent-browser batch returned invalid JSON', error);
   }
-  if (!Array.isArray(items)) throw fastError('BROWSER_FAST_INVALID_OUTPUT', 'agent-browser batch did not return an array');
+
+  let items;
+  if (Array.isArray(parsed)) {
+    items = parsed;
+  } else if (parsed && typeof parsed === 'object' && parsed.success === false) {
+    const upstreamError = parsed.error;
+    const message = typeof upstreamError === 'string' && upstreamError.length > 0
+      ? upstreamError
+      : upstreamError && typeof upstreamError === 'object' && typeof upstreamError.message === 'string'
+        ? upstreamError.message
+        : typeof parsed.message === 'string' && parsed.message.length > 0
+          ? parsed.message
+          : result.stderr || 'agent-browser batch failed before producing a step result';
+    items = [{
+      success: false,
+      error: message,
+      ...(typeof parsed.code === 'string' && parsed.code.length > 0 ? { code: parsed.code } : {}),
+      ...(parsed.data === undefined ? {} : { result: parsed.data })
+    }];
+  } else {
+    throw fastError('BROWSER_FAST_INVALID_OUTPUT', 'agent-browser batch did not return an array or structured failure');
+  }
+
   if (result.code !== 0 && items.length === 0) {
     throw fastError('BROWSER_FAST_COMMAND_FAILED', result.stderr || 'agent-browser batch failed before producing a step result');
   }
@@ -216,6 +239,8 @@ export class AgentBrowserRunner {
     this.clearcoteRuntime = clearcoteRuntime;
     this.windowsAgentRuntimePromise = null;
     this.linuxSessions = new Map();
+    this.clearcoteClaims = new Map();
+    this.clearcoteAllocationTails = new Map();
   }
 
   async windowsAgentRuntime(chrome) {
@@ -306,6 +331,15 @@ export class AgentBrowserRunner {
     return parseAgentBrowserBatch(result);
   }
 
+  linuxSession(backend, sessionTab) {
+    if (sessionTab === undefined) return backend.session;
+    const token = createHash('sha256')
+      .update(`${backend.session}\0${String(sessionTab)}`)
+      .digest('hex')
+      .slice(0, 16);
+    return `${DEFAULT_SESSION_PREFIX}-linux-tab-${token}`;
+  }
+
   async linuxAgentBatch(backend, commands, { bail = true } = {}) {
     const session = backend.session;
     const env = { ...this.env, AGENT_BROWSER_NO_XVFB: '1' };
@@ -350,7 +384,7 @@ export class AgentBrowserRunner {
     const active = tabs.find(tab => tab.active === true) ?? tabs[0];
     const targetId = active?.targetId ?? active?.tabId;
     if (!targetId) throw fastError('BROWSER_FAST_COMMAND_FAILED', 'browser has no active tab');
-    return this.clearcoteRuntime.pageForTarget(targetId);
+    return this.clearcoteRuntime.pageForTarget(backend.profileName, targetId);
   }
 
   async managedRefBox(backend, ref) {
@@ -487,16 +521,72 @@ export class AgentBrowserRunner {
     return { items, stderr: stderr.join('\n'), exitCode };
   }
 
-  async linuxBatch(commands, { bail = true, browserBackend, browserProfile } = {}) {
+  async linuxBatch(commands, { bail = true, browserBackend, browserProfile, sessionTab } = {}) {
     const selected = await this.linuxBackendResolve({ browser: browserBackend, profile: browserProfile });
+    const session = this.linuxSession(selected, sessionTab);
     if (selected.managed === true) {
       const runtime = await this.clearcoteRuntime.ensure(selected);
-      const backend = { ...selected, cdp: runtime.cdp };
+      const backend = { ...selected, session, cdp: runtime.cdp };
       const result = await this.managedLinuxBatch(backend, commands, { bail });
       return { ...result, browserBackend: selected.browser, browserProfile: selected.profileName };
     }
-    const result = await this.linuxAgentBatch(selected, commands, { bail });
+    const result = await this.linuxAgentBatch({ ...selected, session }, commands, { bail });
     return { ...result, browserBackend: selected.browser, browserProfile: null };
+  }
+
+  async withClearcoteAllocation(profileName, operation) {
+    const previous = this.clearcoteAllocationTails.get(profileName) ?? Promise.resolve();
+    let release;
+    const gate = new Promise(resolve => { release = resolve; });
+    const tail = previous.catch(() => {}).then(() => gate);
+    this.clearcoteAllocationTails.set(profileName, tail);
+    await previous.catch(() => {});
+    try {
+      return await operation();
+    } finally {
+      release();
+      if (this.clearcoteAllocationTails.get(profileName) === tail) this.clearcoteAllocationTails.delete(profileName);
+    }
+  }
+
+  async resolveSelection(target, { browserBackend, browserProfile } = {}) {
+    if (target !== 'linux') return { browserBackend: null, browserProfile: null };
+    const selected = await this.linuxBackendResolve({ browser: browserBackend, profile: browserProfile });
+    return {
+      browserBackend: selected.browser,
+      browserProfile: selected.managed === true ? selected.profileName : null
+    };
+  }
+
+  async prepareObservation(target, { browserBackend, browserProfile, tab } = {}) {
+    if (target !== 'linux') return { tab, browserBackend, browserProfile };
+    const selected = await this.linuxBackendResolve({ browser: browserBackend, profile: browserProfile });
+    if (selected.managed !== true) {
+      return { tab, browserBackend: selected.browser, browserProfile: null };
+    }
+
+    await this.clearcoteRuntime.ensure(selected);
+    return await this.withClearcoteAllocation(selected.profileName, async () => {
+      const liveTargets = await this.clearcoteRuntime.listTargets(selected.profileName);
+      const liveIds = new Set(liveTargets.map(item => item.targetId));
+      const claims = this.clearcoteClaims.get(selected.profileName) ?? new Set();
+      for (const claimed of [...claims]) {
+        if (!liveIds.has(claimed)) claims.delete(claimed);
+      }
+
+      let targetId = tab;
+      if (targetId === undefined) {
+        targetId = claims.size === 0 ? liveTargets[0]?.targetId : undefined;
+        if (targetId === undefined) targetId = (await this.clearcoteRuntime.newTarget(selected.profileName)).targetId;
+      }
+      claims.add(targetId);
+      this.clearcoteClaims.set(selected.profileName, claims);
+      return {
+        tab: targetId,
+        browserBackend: selected.browser,
+        browserProfile: selected.profileName
+      };
+    });
   }
 
   async targetBatch(target, commands, options) {
@@ -512,14 +602,15 @@ export class AgentBrowserRunner {
     return translated.stdout;
   }
 
-  async batch(target, commands, { bail = true, tab, browserBackend, browserProfile } = {}) {
+  async batch(target, commands, { bail = true, tab, browserBackend, browserProfile, sessionTab } = {}) {
     if (tab !== undefined) {
       try {
         const requestedTab = requiredString(tab, 'tab');
         const listing = await this.targetBatch(target, [['tab', 'list']], {
           bail: true,
           browserBackend,
-          browserProfile
+          browserProfile,
+          sessionTab: sessionTab ?? requestedTab
         });
         const listed = listing.items[0];
         if (listed?.success !== true) {
@@ -541,7 +632,7 @@ export class AgentBrowserRunner {
       }
     }
     try {
-      return await this.targetBatch(target, commands, { bail, browserBackend, browserProfile });
+      return await this.targetBatch(target, commands, { bail, browserBackend, browserProfile, sessionTab });
     } catch (error) {
       if (target !== 'windows') throw error;
       const message = error instanceof Error ? error.message : String(error);
@@ -669,9 +760,9 @@ export class FastBrowser {
     };
   }
 
-  async observeUnlocked(target, { scope = 'interactive', include_urls = true, tab, browserBackend, browserProfile } = {}) {
+  async observeUnlocked(target, { scope = 'interactive', include_urls = true, tab, browserBackend, browserProfile, sessionTab } = {}) {
     let selectedTab = tab === undefined ? undefined : requiredString(tab, 'tab');
-    const runnerOptions = { browserBackend, browserProfile };
+    const runnerOptions = { browserBackend, browserProfile, sessionTab: sessionTab ?? selectedTab };
     if (selectedTab === undefined) {
       const listed = await this.listTabsUnlocked(target, runnerOptions);
       if (listed.error) throw fastError('BROWSER_FAST_OBSERVE_FAILED', listed.error);
@@ -679,6 +770,7 @@ export class FastBrowser {
       const current = tabs.find(item => item.active === true) ?? tabs[0];
       selectedTab = current?.targetId ?? current?.tabId;
       if (!selectedTab) throw fastError('BROWSER_FAST_OBSERVE_FAILED', 'browser has no tab available');
+      runnerOptions.sessionTab ??= selectedTab;
     }
     const selected = await this.runner.batch(target, [['tab', selectedTab]], { bail: true, ...runnerOptions });
     if (selected.contextError) throw fastError('BROWSER_FAST_OBSERVE_FAILED', selected.contextError);
@@ -719,16 +811,41 @@ export class FastBrowser {
     };
   }
 
+  operationKey(target, { browserBackend, browserProfile, tab } = {}) {
+    if (target !== 'linux') return target;
+    return `${target}:${browserBackend ?? 'default'}:${browserProfile ?? '-'}:${tab ?? 'browser'}`;
+  }
+
+  async resolvedSelection(target, selection) {
+    if (typeof this.runner.resolveSelection !== 'function') return selection;
+    return await this.runner.resolveSelection(target, selection);
+  }
+
   async observe({ browser_target, browser_backend, browser_profile, scope = 'interactive', include_urls = true, tab } = {}) {
     const target = targetName(browser_target);
-    const selection = browserSelection(target, browser_backend, browser_profile);
-    return this.withTargetLock(target, () => this.observeUnlocked(target, { scope, include_urls, tab, ...selection }));
+    const requested = browserSelection(target, browser_backend, browser_profile);
+    const selection = await this.resolvedSelection(target, requested);
+    const prepared = typeof this.runner.prepareObservation === 'function'
+      ? await this.runner.prepareObservation(target, { ...selection, tab })
+      : { ...selection, tab };
+    const selectedTab = prepared.tab === undefined ? undefined : requiredString(prepared.tab, 'tab');
+    const key = this.operationKey(target, { ...prepared, tab: selectedTab });
+    return this.withTargetLock(key, () => this.observeUnlocked(target, {
+      scope,
+      include_urls,
+      tab: selectedTab,
+      browserBackend: prepared.browserBackend,
+      browserProfile: prepared.browserProfile,
+      sessionTab: selectedTab
+    }));
   }
 
   async execute({ browser_target, browser_backend, browser_profile, actions, stop_on_error = true, final_state = 'interactive', tab } = {}) {
     const target = targetName(browser_target);
-    const selection = browserSelection(target, browser_backend, browser_profile);
+    const requested = browserSelection(target, browser_backend, browser_profile);
+    const selection = await this.resolvedSelection(target, requested);
     const requestedTab = requiredString(tab, 'tab');
+    const sessionSelection = { ...selection, sessionTab: requestedTab };
     if (!Array.isArray(actions) || actions.length === 0) throw fastError('INVALID_ARGUMENT', 'actions must be a non-empty array');
     const preparedActions = [];
     for (const action of actions) {
@@ -745,8 +862,8 @@ export class FastBrowser {
     }
     const actionCommands = preparedActions.map(actionCommand);
 
-    return this.withTargetLock(target, async () => {
-      const initial = await this.listTabsUnlocked(target, { tab: requestedTab, ...selection });
+    return this.withTargetLock(this.operationKey(target, { ...selection, tab: requestedTab }), async () => {
+      const initial = await this.listTabsUnlocked(target, { tab: requestedTab, ...sessionSelection });
       if (initial.error) {
         return {
           browser_target: target,
@@ -767,7 +884,7 @@ export class FastBrowser {
         if (clickIndex > index) {
           const batch = await this.runner.batch(target, actionCommands.slice(index, clickIndex), {
             bail: stop_on_error !== false,
-            ...selection
+            ...sessionSelection
           });
           if (batch.contextError) {
             transitionError = batch.contextError;
@@ -782,13 +899,13 @@ export class FastBrowser {
 
         if (index >= actionCommands.length) break;
 
-        const before = index === 0 ? initial : await this.listTabsUnlocked(target, selection);
+        const before = index === 0 ? initial : await this.listTabsUnlocked(target, sessionSelection);
         if (before.error) {
           transitionError = `failed to inspect tabs before click: ${before.error}`;
           break;
         }
         const beforeIds = new Set(before.tabs.map(item => item.targetId ?? item.tabId).filter(Boolean));
-        const click = await this.runner.batch(target, [actionCommands[index]], { bail: true, ...selection });
+        const click = await this.runner.batch(target, [actionCommands[index]], { bail: true, ...sessionSelection });
         if (click.contextError) {
           transitionError = click.contextError;
           break;
@@ -798,7 +915,7 @@ export class FastBrowser {
         index += 1;
 
         if (clickItem?.success === true || clickItem?.uncertain === true) {
-          const after = await this.listTabsUnlocked(target, selection);
+          const after = await this.listTabsUnlocked(target, sessionSelection);
           if (after.error) {
             transitionError = `click completed but new-tab detection failed: ${after.error}`;
             break;
@@ -813,7 +930,7 @@ export class FastBrowser {
           }
           if (newTabs.length === 1) {
             const newTab = newTabs[0].targetId ?? newTabs[0].tabId;
-            const selected = await this.runner.batch(target, [['tab', newTab]], { bail: true, ...selection });
+            const selected = await this.runner.batch(target, [['tab', newTab]], { bail: true, ...sessionSelection });
             const selectedItem = selected.items[0];
             if (selected.contextError || selectedItem?.success !== true) {
               transitionError = `click opened tab ${newTab}, but binding it failed: ${selected.contextError || selectedItem?.error || 'tab selection failed'}`;
@@ -851,7 +968,7 @@ export class FastBrowser {
           finalState = await this.observeUnlocked(target, {
             scope: final_state,
             include_urls: true,
-            ...selection
+            ...sessionSelection
           });
         } catch (error) {
           finalStateError = error instanceof Error ? error.message : String(error);
@@ -861,8 +978,8 @@ export class FastBrowser {
       return {
         browser_target: target,
         ...(target === 'linux' ? {
-          browser_backend: initial.browserBackend ?? browser_backend ?? null,
-          browser_profile: initial.browserProfile ?? browser_profile ?? null
+          browser_backend: initial.browserBackend ?? selection.browserBackend ?? null,
+          browser_profile: initial.browserProfile ?? selection.browserProfile ?? null
         } : {}),
         outcome,
         failed_at: failedAt,
@@ -907,13 +1024,13 @@ export function createBrowserFastServer({ browser } = {}) {
     { name: 'browser-fast', version: '0.1.0' },
     {
       capabilities: { tools: {} },
-      instructions: 'Fast resource-local browser interaction. Observe once for stable refs/tabs plus bounded local site memory, execute mechanical sequences locally, and never assume failed or partial batches are safe to replay.'
+      instructions: 'Fast resource-local browser interaction. On managed Linux Clearcote, an observe without tab allocates an independent tab workspace; reuse the returned active_tab for that task. Observe for stable refs/tabs plus bounded local site memory, execute mechanical sequences locally, and never assume failed or partial batches are safe to replay.'
     }
   );
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: [
     {
       name: 'observe',
-      description: 'Return compact interactive browser state with stable tab IDs, element refs, and bounded read-only local policy/site/platform memory for the current URL when available. Unknown sites remain valid with empty memory.',
+      description: 'Return compact interactive browser state with stable tab IDs, element refs, and bounded read-only local policy/site/platform memory for the current URL when available. On managed Linux Clearcote, omitting tab allocates an independent tab workspace; pass a prior active_tab to continue that workspace. Unknown sites remain valid with empty memory.',
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
       inputSchema: {
         type: 'object',
@@ -923,7 +1040,7 @@ export function createBrowserFastServer({ browser } = {}) {
           browser_profile: { type: 'string', minLength: 1, maxLength: 64, pattern: '^[A-Za-z0-9._-]+$', description: 'Linux Clearcote only. Select a named managed Clearcote profile; normally omit to use the configured profile or the only configured Clearcote profile.' },
           scope: { type: 'string', enum: ['interactive', 'compact', 'full'], default: 'interactive' },
           include_urls: { type: 'boolean', default: true },
-          tab: { type: 'string', minLength: 1, description: 'Optional stable tab ID or CDP target ID to select before observing.' }
+          tab: { type: 'string', minLength: 1, description: 'Optional stable tab ID or CDP target ID to continue/select before observing. For managed Linux Clearcote, omit it to allocate an independent workspace; reuse the returned active_tab on later observations for the same task.' }
         },
         additionalProperties: false
       }

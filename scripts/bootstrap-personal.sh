@@ -85,6 +85,9 @@ else
   echo "== skipping toolbox/provider installation by PERSONAL_BOOTSTRAP_SKIP_INSTALL =="
 fi
 
+echo "== converging Personal Workstation browser-fast policy =="
+HOME="$USER_HOME" node "$ROOT/scripts/setup-browser-fast-config.mjs"
+
 RENDER_ARGS=(--profile personal --env-file "$ENV_FILE" --state-dir "$STATE_DIR" --repo-root "$ROOT")
 echo "== rendering Personal Workstation MCP composition =="
 HOME="$USER_HOME" XDG_RUNTIME_DIR="$RUNTIME_DIR" node "$ROOT/scripts/render-config.mjs" "${RENDER_ARGS[@]}"
