@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { constants as fsConstants } from 'node:fs';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -58,6 +59,8 @@ const OWNER_BROWSER_ENV_KEYS = new Set(['GALLIUM_DRIVER']);
 const OWNER_BROWSER_FAST_ENV_KEYS = new Set(['GALLIUM_DRIVER', 'AGENT_BROWSER_PROFILE', 'AGENT_BROWSER_EXECUTABLE_PATH']);
 const OWNER_ENV_KEYS = new Set([...OWNER_RUNTIME_ENV_KEYS, ...OWNER_BROWSER_FAST_ENV_KEYS]);
 const OWNER_ENV_MAX_BYTES = 64 * 1024;
+const LOCAL_SERVERS_MAX_BYTES = 128 * 1024;
+const LOCAL_SERVER_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 
 async function readOwnedRegularTextFile(file, label, maxBytes) {
   if (!path.isAbsolute(file)) throw new Error(`${label} must be an absolute path when set`);
@@ -98,6 +101,71 @@ function renderOwnerRuntimeEnv(values) {
     .filter((key) => values[key] !== undefined)
     .map((key) => `${key}=${values[key]}\n`)
     .join('');
+}
+
+async function parseLocalServersConfig(text) {
+  let value;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    throw new Error('MCP_LOCAL_SERVERS_FILE must contain valid JSON');
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('MCP_LOCAL_SERVERS_FILE must contain a JSON object');
+  }
+  if (value.version !== undefined && value.version !== '1.0.0') {
+    throw new Error('MCP_LOCAL_SERVERS_FILE version must be 1.0.0 when set');
+  }
+  const servers = value.mcpServers;
+  if (!servers || typeof servers !== 'object' || Array.isArray(servers)) {
+    throw new Error('MCP_LOCAL_SERVERS_FILE must contain an mcpServers object');
+  }
+  const normalized = {};
+  for (const [name, server] of Object.entries(servers)) {
+    if (!LOCAL_SERVER_NAME_RE.test(name)) {
+      throw new Error(`invalid Local downstream server name: ${name}`);
+    }
+    if (!server || typeof server !== 'object' || Array.isArray(server)) {
+      throw new Error(`Local downstream server ${name} must be an object`);
+    }
+    const allowed = new Set(['type', 'command', 'args', 'cwd', 'env']);
+    for (const key of Object.keys(server)) {
+      if (!allowed.has(key)) throw new Error(`Local downstream server ${name} has unsupported field: ${key}`);
+    }
+    if (server.type !== undefined && server.type !== 'stdio') {
+      throw new Error(`Local downstream server ${name} type must be stdio when set`);
+    }
+    if (typeof server.command !== 'string' || !path.isAbsolute(server.command)) {
+      throw new Error(`Local downstream server ${name} command must be an absolute path`);
+    }
+    const stat = await fs.stat(server.command).catch(() => null);
+    if (!stat?.isFile()) throw new Error(`Local downstream server ${name} command must reference an existing regular file`);
+    try {
+      await fs.access(server.command, fsConstants.X_OK);
+    } catch {
+      throw new Error(`Local downstream server ${name} command must be executable`);
+    }
+    if (server.args !== undefined && (!Array.isArray(server.args) || server.args.some((arg) => typeof arg !== 'string'))) {
+      throw new Error(`Local downstream server ${name} args must be an array of strings`);
+    }
+    if (server.cwd !== undefined) {
+      if (typeof server.cwd !== 'string' || !path.isAbsolute(server.cwd)) {
+        throw new Error(`Local downstream server ${name} cwd must be an absolute path`);
+      }
+      const cwdStat = await fs.stat(server.cwd).catch(() => null);
+      if (!cwdStat?.isDirectory()) throw new Error(`Local downstream server ${name} cwd must reference an existing directory`);
+    }
+    if (server.env !== undefined) {
+      if (!server.env || typeof server.env !== 'object' || Array.isArray(server.env)) {
+        throw new Error(`Local downstream server ${name} env must be an object of string values`);
+      }
+      for (const [key, envValue] of Object.entries(server.env)) {
+        if (typeof envValue !== 'string') throw new Error(`Local downstream server ${name} env.${key} must be a string`);
+      }
+    }
+    normalized[name] = server;
+  }
+  return normalized;
 }
 
 function replaceStrings(value, replacements) {
@@ -156,7 +224,7 @@ export async function renderConfig(options) {
   const deployment = {
     ...(await readEnvFile(envFile, { optional: true })),
     ...Object.fromEntries(
-      ['MCP_WORKSPACE_ROOT', 'MCP_PUBLIC_URL', 'MCP_TUNNEL_NAME', 'MCP_DEV_MAX_OUTPUT_BYTES', 'MCP_DEV_IMPORT_MAX_BYTES', 'MCP_DEV_MAX_SPOOL_BYTES', 'MCP_DEV_SPOOL_TTL_SECONDS', 'MCP_DEV_SPOOL_MAX_TOTAL_BYTES', 'MCP_ONE_MCP_LOG_MAX_SIZE_BYTES', 'MCP_ONE_MCP_LOG_MAX_FILES', 'MCP_PERSONAL_DEFAULT_CWD', 'MCP_TERMINAL_FRONTEND', 'MCP_OWNER_CONTEXT_FILE', 'MCP_OWNER_ENV_FILE', 'BRIDGE_ONE_MCP_ENTRY'].filter((key) => process.env[key] !== undefined).map((key) => [key, process.env[key]]),
+      ['MCP_WORKSPACE_ROOT', 'MCP_PUBLIC_URL', 'MCP_TUNNEL_NAME', 'MCP_DEV_MAX_OUTPUT_BYTES', 'MCP_DEV_IMPORT_MAX_BYTES', 'MCP_DEV_MAX_SPOOL_BYTES', 'MCP_DEV_SPOOL_TTL_SECONDS', 'MCP_DEV_SPOOL_MAX_TOTAL_BYTES', 'MCP_ONE_MCP_LOG_MAX_SIZE_BYTES', 'MCP_ONE_MCP_LOG_MAX_FILES', 'MCP_PERSONAL_DEFAULT_CWD', 'MCP_TERMINAL_FRONTEND', 'MCP_OWNER_CONTEXT_FILE', 'MCP_OWNER_ENV_FILE', 'MCP_LOCAL_SERVERS_FILE', 'BRIDGE_ONE_MCP_ENTRY'].filter((key) => process.env[key] !== undefined).map((key) => [key, process.env[key]]),
     ),
   };
   const profileValues = await readEnvFile(path.join(repoRoot, 'config', 'profiles', `${profile}.env`));
@@ -171,6 +239,7 @@ export async function renderConfig(options) {
   let terminalFrontend = 'kitty';
   let ownerContextFile = null;
   let ownerEnv = {};
+  let localOwnerServers = {};
   if (isPersonal) {
     if (!runtimeDir || !path.isAbsolute(runtimeDir)) {
       throw new Error('personal profile requires an absolute XDG_RUNTIME_DIR or a user runtime directory');
@@ -207,6 +276,12 @@ export async function renderConfig(options) {
           throw new Error('AGENT_BROWSER_EXECUTABLE_PATH in MCP_OWNER_ENV_FILE must be executable');
         }
       }
+    }
+    const localServersFile = String(deployment.MCP_LOCAL_SERVERS_FILE ?? '').trim() || null;
+    if (localServersFile) {
+      localOwnerServers = await parseLocalServersConfig(
+        await readOwnedRegularTextFile(localServersFile, 'MCP_LOCAL_SERVERS_FILE', LOCAL_SERVERS_MAX_BYTES),
+      );
     }
   }
 
@@ -311,6 +386,15 @@ export async function renderConfig(options) {
       if (ownerEnv[key] === undefined) continue;
       localRendered.mcpServers['browser-fast'].env[key] = ownerEnv[key];
     }
+    for (const [name, server] of Object.entries(localOwnerServers)) {
+      if (Object.hasOwn(localRendered.mcpServers, name)) {
+        throw new Error(`MCP_LOCAL_SERVERS_FILE cannot replace built-in Local server: ${name}`);
+      }
+      localRendered.mcpServers[name] = server;
+    }
+    rendered.mcpServers.local.env.MCP_LOCAL_INNER_CONFIG_REVISION = createHash('sha256')
+      .update(JSON.stringify(localRendered))
+      .digest('hex');
   } else {
     rendered.mcpServers.dev.env.MCP_DEV_PATH_MODE = 'workspace';
     if (profile === 'trusted-dev') delete rendered.mcpServers.shell;

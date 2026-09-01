@@ -42,7 +42,9 @@ if (local) {
 
   const inner = JSON.parse(fs.readFileSync(env.MCP_LOCAL_INNER_CONFIG, 'utf8'));
   const innerNames = Object.keys(inner.mcpServers ?? {}).sort();
-  if (JSON.stringify(innerNames) !== JSON.stringify(['browser-devtools', 'browser-fast'])) throw new Error(`unexpected Local inner provider set: ${innerNames.join(',')}`);
+  for (const required of ['browser-devtools', 'browser-fast']) {
+    if (!innerNames.includes(required)) throw new Error(`Local inner provider set is missing required server: ${required}`);
+  }
   const browser = inner.mcpServers['browser-devtools'];
   if (browser.command !== 'node') throw new Error('inner Browser facade must run with node');
   const expectedBrowserServer = path.join(repoRoot, 'providers', 'browser', 'server.mjs');

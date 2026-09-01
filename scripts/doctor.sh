@@ -160,7 +160,8 @@ const expectedOuter = profile === 'restricted' ? ['dev', 'shell'] : profile === 
 if (JSON.stringify(keys(outer)) !== JSON.stringify(expectedOuter)) process.exit(1);
 if (profile === 'personal') {
   const inner = JSON.parse(fs.readFileSync(innerFile, 'utf8'));
-  if (JSON.stringify(keys(inner)) !== JSON.stringify(['browser-devtools', 'browser-fast'])) process.exit(1);
+  const innerKeys = keys(inner);
+  if (!innerKeys.includes('browser-devtools') || !innerKeys.includes('browser-fast')) process.exit(1);
 }
 NODE
   then
