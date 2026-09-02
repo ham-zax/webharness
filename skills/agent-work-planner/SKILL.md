@@ -1,356 +1,412 @@
 ---
 name: agent-work-planner
-description: Use when splitting engineering work across multiple human-launched AI sessions, deciding agent count or parallelism, preparing mission briefs/prompts, materializing coordination artifacts, or replanning later waves from returned agent work.
+description: Plan engineering work across human-launched AI coding sessions and follow-up missions. Use when splitting work into agents/sessions, deciding whether the planner should act directly, continue an existing session as A2/B2, open a fresh implementation session, or create an independent Agent R review lane; tracking review gates, blockers, waves, relative effort, progress, integration readiness, workspace topology, prompts, and replanning after reports, integrations, commits, or other frontier-changing events.
 ---
 
 # Agent Work Planner
 
-Plan multi-session engineering work and produce durable mission briefs plus copy/paste prompts for fresh AI coding sessions.
+Plan multi-session engineering work as a stateful human-operated orchestration system.
 
-Treat this Skill as a **human-launched coordination layer**, not an execution engine. Never spawn agents or claim agents are running. The user launches the sessions manually.
+## Identity model
 
-## Core principles
+Treat an **Agent** as one human-launched AI coding chat/session. Treat a **Mission** as one bounded assignment inside that session.
 
-- **Declarative over procedural.** Give each agent an objective, ownership boundary, interfaces, constraints, and definition of success. Let the receiving agent explore and decide implementation details.
-- **Vertical slices over arbitrary task counts.** Prefer coherent, independently verifiable missions rather than equal-sized chunks or layer chores.
-- **Dependencies are first-class.** State what can start now, what is blocked, and what artifact, contract, or commit unblocks it.
-- **Durable context over prompt bloat.** Put substantial coordination context in repository artifacts and make launcher prompts point to them.
-- **Parallelize only real independence.** Do not manufacture N concurrent missions merely because N agents were requested.
-- **Separate before serializing shared state.** Before adding locks, sequencing, or a shared writable coordination object, ask whether missions can own separate files, branches, keys, state directories, or other write targets. Eliminate unnecessary shared mutation first; serialize only when one shared writer is a real invariant.
-- **Preserve agent autonomy.** Avoid line-by-line recipes, exact line numbers, or brittle implementation-path instructions unless they are contractual.
-- **Materialize the frontier, not the fog.** Understand the larger DAG, but create detailed mission briefs only for work ready or intentionally queued for the current wave.
-- **Replan from evidence.** Returned agent reports, commits, changed interfaces, and integration results outrank the original decomposition.
-- **Testing is opt-in.** Do not put test creation, test modification, test execution, TDD, regression-test work, or coverage work into missions unless the user, authoritative source plan/specification, or mandatory repository policy explicitly requires it.
-- **Isolation must earn its cost.** Worktrees are for genuine concurrent-write isolation or material safety, not a default ceremony for every mission.
-- **Separate plan quality from execution lifetime.** When a mission is long-lived, wait-heavy, steerable, or process-persistent, let `persistent-agent-loop` own continuity rather than duplicating its wait/checkpoint protocol here.
+Use mission identifiers to preserve continuity:
 
-## Default test policy
+- `A1` = Agent A's first mission.
+- `A2` = a follow-up mission pasted into the **same Agent A chat**.
+- `B1` = another human-launched chat/session.
+- `B2` = a follow-up mission in that same Agent B chat.
+- `R1` = the first independent review mission in the reserved **Agent R** reviewer chat.
+- `R2` = a re-review pasted into the **same Agent R chat** after the implementer addresses R1 findings.
 
-Testing is opt-in. Do not instruct delegated agents to create, modify, or run tests unless the user, authoritative source plan/specification, or mandatory repository policy explicitly requires testing. If tests could be useful but are not required, leave them out of the mission and launcher prompt. Mention them only as an optional follow-up when materially important.
+Do not call `A2`, `B2`, or `R2` a new agent. Open a fresh Agent C/D/etc. only when a new implementation/diagnostic session is justified. Reserve Agent R for independent review work rather than implementation.
+
+Never claim an agent/session is launched, active, or running unless the user or available tooling establishes that state.
+
+## Core invariants
+
+- **Coordination must earn its overhead.** Use the cheapest correct execution owner.
+- **Blockers do not disappear implicitly.** A blocker is discharged only by evidence satisfying its recorded discharge condition.
+- **READY implies action.** When work becomes READY, either execute planner-owned work, issue a same-session continuation prompt, issue a fresh-session prompt, or explicitly defer it with a reason.
+- **Active sessions never disappear silently.** Reconcile every known active or unresolved session before advancing the frontier.
+- **Progress is automatic.** During an ongoing plan, every orchestration response after a frontier-affecting event ends with a compact Progress Snapshot unless the user explicitly asks to suppress it.
+- **Forecast the DAG; materialize the frontier.** Keep future waves visible at low resolution without freezing details that depend on current work.
+- **Reuse context aggressively, preserve independence more strongly.** Prefer A2/B2 when existing context helps, except when a fresh independent perspective is required.
+- **Review must earn its overhead, then block integration when required.** Substantial or integration-sensitive changes must pass an explicit Review Gate; when independent review is warranted, create Agent R and keep integration blocked until the review discharge condition is satisfied.
+- **Reviewer and implementer stay separate.** Agent R identifies findings; the original implementer normally repairs them via A2/B2; Agent R re-reviews via R2.
+- **Isolation must earn its cost.** Current checkout is the default; branches/worktrees require a concrete need.
+- **Planning does not broaden implementation authority.** Preserve Causal Coding authority for implementation mutation, testing, verification, continuation, and stopping.
+- **Separate planning from execution lifetime.** Use `persistent-agent-loop` for long-lived continuity, not for decomposition or next-wave planning.
+
+## Environment composition
+
+When operating in ChatGPT Web against a connected WSL/Linux repository, route repository work through `mcp-harness-router` to `wsl-web-harness` and treat that WSL target as authoritative. Use Causal Coding before implementation-affecting mutation.
+
+Agent Work Planner owns:
+
+- session/mission topology;
+- execution-owner selection;
+- dependencies and blockers;
+- waves and readiness;
+- prompts and handoffs;
+- workspace assignment;
+- review-gate and integration ordering;
+- progress state;
+- replanning.
 
 ## Operating modes
 
-Infer the mode from the user's wording. If unclear and repository mutation would be consequential, stay in plan-only mode until the user asks to materialize.
+Use the lightest mode that satisfies the mission.
 
 ### Plan-only
 
-Use when the user asks how work should be split, how many agents to use, whether work can run in parallel, or requests prompts without asking for repository setup.
+Inspect and recommend only. Do not mutate repository state merely to answer an advisory question.
 
-- Inspect the repository and source artifacts.
-- Recommend execution shape, dependency map, missions, and prompts.
-- Do not create branches, worktrees, commits, or coordination files merely to answer an advisory question.
+### Lightweight orchestration
 
-### Materialize
+Use for small/medium efforts where prompts plus an in-chat state board are sufficient. Do not create durable planning files merely because several missions exist.
 
-Use when the user says things like "set this up", "prepare the agents", "create the mission files", "make the worktrees", or otherwise clearly asks for a runnable coordination package.
+### Durable orchestration
 
-- Inspect Git/worktree/staging state first.
-- Create durable coordination artifacts for the current wave.
-- Create branches/worktrees only when requested or when concurrent writable missions genuinely require isolation.
-- Make real repository changes only after the user's request clearly authorizes that setup.
-- Never discard or overwrite unrelated uncommitted work.
+Use when several waves, concurrent writers, important shared contracts, long-lived sessions, significant integration, or later recovery justify repository-resident coordination state. See `references/coordination-package-template.md`.
 
-### Replan / next wave
+### Replan
 
-Use when the user brings back agent reports, branches, commits, blockers, integration results, or asks what should run next.
-
-- Compare reality with the current coordination map.
-- Update readiness and dependencies.
-- Integrate or verify prerequisites when appropriate.
-- Materialize only the newly ready frontier.
-- Rewrite existing mission briefs only when their contract materially changed.
+Use after any frontier-invalidating event, not only returned agent reports.
 
 ## Workflow
 
-### 1. Orient to the work
+### 1. Orient to authoritative state
 
-Establish the source of truth before decomposing:
+Establish:
 
-- the user's goal, constraints, and requested or target agent count;
-- repository root and current branch/worktree/staging state when available;
-- relevant `AGENTS.md`, `CLAUDE.md`, README, specs, plans, ADRs, issue/ticket text, and recent changes;
-- public or cross-task interfaces that multiple missions will share;
-- existing implementation that changes the decomposition;
-- existing agent-plan folders or prior wave reports for this effort.
+- user objective and constraints;
+- repository/source-of-truth artifacts;
+- known agents and their current missions/status;
+- relevant Git/workspace state when available;
+- current waves and blockers;
+- returned reports or newly integrated artifacts;
+- public/shared contracts relevant to candidate missions.
 
-Use connected repository tools to inspect the real codebase. In ChatGPT Web, use the connected local repository tools for filesystem, Git, worktrees, and shell commands. Use test commands only when the mission explicitly authorizes testing. Use Codebase Memory when available and useful for structural queries, but do not make the workflow depend on unavailable graph tools.
+Verified repository state and current user direction outrank stale planning artifacts.
 
-If a Superpowers design/spec/implementation plan already exists, treat it as authoritative unless the user changes the requirements. If the work is materially ambiguous, finish the appropriate design/spec clarification before pretending it is ready to delegate.
+### 2. Reconcile known sessions
 
-### 2. Decide whether delegation helps
+Before creating or advancing work, account for every known unresolved session.
 
-Classify the work as one of these shapes:
+Assign one disposition:
 
-**Single session** — small or tightly coupled; coordination overhead would dominate.
+- `CONTINUE`
+- `HOLD`
+- `COMPLETE`
+- `NEEDS DECISION`
+- `SUPERSEDED`
+- `CANCELLED`
+- `REUSE AS <A2/B2/...>`
 
-**Sequential sessions** — later missions fundamentally depend on code, decisions, or interfaces produced by earlier missions.
+Do not silently omit an existing Agent B/C/E merely because another agent returned or a commit landed.
 
-**Parallel sessions** — missions have stable boundaries, minimal overlapping write ownership, and independently observable completion.
+For durable efforts, maintain the Session Ledger defined in `references/orchestration-state.md`.
 
-**Hybrid** — a foundation or contract lands first, several missions fan out, then integration or dependent waves follow.
+### 3. Update blocker state
 
-If the user specifies an agent count, treat it as a target. Use fewer concurrent agents when the dependency graph does not justify the requested count. If no count is given, recommend one and explain the limiting dependency or collision risk.
+For every blocked mission/wave, track:
 
-### 3. Classify mission artifact types
+- blocked item;
+- blocker;
+- owning mission/session;
+- exact discharge condition;
+- current status/evidence.
 
-Before assigning completion criteria or workspace topology, classify each mission by what it actually changes:
+A commit, integration, review, or report may discharge only blockers it actually satisfies.
 
-- **Executable behavior** — production/runtime code, APIs, persistence, build logic, or behavior that can regress.
-- **Documentation/content** — README files, guides, prose, examples, diagrams, comments, or documentation organization.
-- **Configuration/metadata** — manifests, CI/config files, schemas, packaging metadata, repository policy, or operational configuration.
-- **Mixed** — more than one category.
-- **Read-only** — research, review, analysis, or investigation without repository mutation.
+Never infer:
 
-This classification determines how to describe observable completion and whether isolation has value. It does not create a testing requirement.
+`unrelated mission completed -> blocked wave READY`
 
-Default to no test creation, test modification, test execution, TDD, regression-test work, or coverage work for every mission type. Testing enters a mission only when the user, authoritative source plan/specification, or mandatory repository policy explicitly requires it. Do not infer testing from executable behavior, bug fixes, refactors, APIs, risk, or nearby tests.
+See `references/orchestration-state.md` for the Blocker Ledger.
 
-For documentation/content missions, do not create or run tests. Use documentation builds, renders, link/reference checks, stale-path searches, formatting checks, or publication/export-policy checks only when directly relevant to the requested outcome or explicitly required. Ordinary content edits can be completed by inspecting the artifact and diff.
+### 4. Build or update the dependency DAG
 
-For configuration/metadata missions, use parser/schema/build/smoke validation only when the changed contract actually needs it or explicit instructions require it.
+For each mission identify:
 
-For executable behavior, define observable success from the requested behavior. Do not add tests merely to increase confidence. If a test is explicitly required, keep it as narrow as the requirement permits.
-
-For mixed missions, apply the same default independently to each artifact: no testing unless explicitly required, and no validation spillover between artifact types.
-
-### 4. Build the dependency DAG
-
-Map the actual work before assigning agents. For each candidate mission, identify:
-
-- blockers and prerequisites;
+- prerequisites;
 - shared interfaces/contracts;
-- likely write ownership and collision areas;
-- artifact type and observable completion boundary;
-- downstream missions it unlocks;
-- whether a small planner-owned preparatory change would create a cleaner seam.
+- mutable ownership/collision surfaces;
+- role and artifact type;
+- observable completion boundary;
+- downstream missions unlocked;
+- committed vs conditional status.
 
-Prefer the **current frontier**: missions whose blockers are already satisfied. Do not force a blocked task into Wave 1 just to fill an agent slot. If a later task is independent while an earlier-numbered task is blocked, assign the independent task first.
+Group work into **waves**. A wave is a readiness frontier: missions that may start from the same prerequisite state.
 
-When a wide mechanical refactor cannot stay green as vertical slices, use **expand → migrate → contract** and treat the migration batches as the parallelizable middle when safe.
+Use optional **phases** only when several waves benefit from a higher-level grouping.
 
-### 5. Choose branch and worktree topology
+### 5. Choose the execution owner
 
-Pick the simplest safe topology. **Current checkout is the default** unless isolation has a concrete purpose.
+For each newly READY action, decide in this order:
 
-- **Current checkout / sequential sessions:** default for one writer at a time, including small coherent code changes, documentation, configuration, and mixed work when the existing tree is safe.
-- **Same branch / same worktree, sequential sessions:** tightly coupled work where only one agent edits at a time.
-- **Separate branches / separate worktrees:** use for genuinely concurrent writable missions or when unrelated/conflicting local changes create a real isolation need.
-- **Shared integration branch:** use only when independently developed branches must combine before downstream work can begin or the feature can be verified.
-- **No branch/worktree:** read-only research, planning, or review.
+#### A. Planner-owned
 
-Do not create a worktree merely because a plan exists, because a mission was delegated, or because a generic engineering workflow recommends isolation. Do not create one worktree per plan task by default. Prefer **one workspace per coherent effort**, adding separate worktrees only for independent concurrent writers.
+Execute directly when the action is bounded coordination/setup/integration or a small determined change and delegation would cost more than it helps.
 
-Never place concurrently editing agents in the same worktree. Avoid overlapping file ownership and unstable shared interfaces. Before choosing serialization or a shared mutable coordination file, try to give each concurrent writer a distinct owned target and merge only at an explicit integration boundary. If one canonical write target is genuinely required, use structural serialization such as a single owner or sequential phase rather than relying on agents to 'take turns' by instruction. If overlap is unavoidable, sequence the work or land the contract/foundation first.
+Typical examples:
 
-When materializing parallel worktrees, derive them from the same known coordination base commit unless there is a deliberate reason not to. Record that base in the coordination README.
+- clean cherry-pick/integration;
+- bounded coordination-file update;
+- small deterministic metadata alignment;
+- branch/worktree/status inspection;
+- preparing prompts/handoffs.
 
-### 6. Decompose into missions
+Do not merely tell the user planner-owned work is ready when the current mission authorizes doing it.
 
-For each mission, define:
+#### B. Same-session continuation: A2/B2
 
-- **Mission:** the behavior or outcome this session owns.
-- **Can start:** immediately, after a named dependency, or after a contract/commit exists.
-- **Artifact type:** executable / docs / config / mixed / read-only.
-- **Ownership:** subsystem, behavior, interface, or artifact the agent may change.
-- **Coordination boundary:** what neighboring missions depend on and what must remain stable.
-- **Acceptance:** observable conditions proving the mission is complete.
-- **Required validation:** only a command or check explicitly required by the user, source plan/specification, repository policy, or integration contract; otherwise none.
-- **Out of scope:** adjacent work that belongs elsewhere.
-- **Execution lifetime:** ordinary one-turn execution, or `persistent-agent-loop` when the mission may span extended waits, repeated steering, persistent processes, scheduled wakeups, or multiple wait leases.
-- **Wake strategy when blocking:** native timer when time itself is the condition; event wait when external state is the condition; Terminal + event wait when a persistent process owns the work.
+Prefer a continuation mission in an existing chat when materially relevant conditions hold:
 
-Size each mission so a fresh capable coding agent can reasonably finish it within one context window. Prefer a long, coherent goal with clear boundaries over a hand-held list of tiny implementation steps.
+- the follow-up is small to medium;
+- it is in the same or strongly adjacent ownership area;
+- prior session context materially reduces rediscovery;
+- no independent perspective is required;
+- workspace ownership remains safe;
+- previous mission state is not stale/superseded;
+- the follow-up does not cross an unresolved blocker;
+- it can be bounded as a distinct mission.
 
-### 7. Materialize the current wave
+Issue a continuation prompt and explicitly say:
 
-In materialize mode, create a durable coordination package. Default location when the repository already uses Superpowers planning conventions:
+`Paste this into the existing Agent A/B chat. Do not open a new session.`
 
-`docs/superpowers/agent-plans/YYYY-MM-DD-<effort>/`
+Do not number ordinary steering as A2/B2 while A1/B1 is still active. A continuation is a new bounded mission after the prior mission boundary; compatible in-mission steering remains part of the current mission.
 
-Otherwise follow the repository's established planning/documentation convention or choose a similarly obvious location.
+#### C. Fresh session
 
-Create:
+Open a new Agent C/D/etc. when separation materially helps, such as:
 
-```text
-<agent-plan-folder>/
-├── README.md
-├── agent-1-<mission>.md
-├── agent-2-<mission>.md
-└── ... current-wave missions only
-```
+- substantial implementation;
+- different subsystem/ownership boundary;
+- large diagnosis/investigation;
+- independent diagnosis;
+- independent review, which should normally use the reserved Agent R lane;
+- concurrent writable work needing isolated ownership;
+- fresh context materially improves reliability;
+- existing session reuse would violate independence.
 
-Read `references/coordination-package-template.md` for the README and mission-file contracts.
+Explicitly say:
 
-The README is the durable low-resolution coordination map. Record:
+`Open a NEW chat for Agent C.`
 
-- source spec/plan and repository root;
-- coordination/base commit when relevant;
-- current wave and execution shape;
-- dependency DAG / readiness table;
-- branch/worktree allocation **and the reason isolation exists when it does**;
-- shared contracts and integration policy;
-- current mission status;
-- blocked or future work at low resolution;
-- who integrates and what explicitly required validation remains, if any.
+### 6. Preserve independence
 
-Each mission file is the authoritative brief for one fresh agent. It should be declarative, self-contained, and durable. Use `references/agent-prompt-template.md` as the content model.
+Self-review is not independent review.
 
-Do **not** pre-write detailed briefs for every future wave when their context depends on current-wave results. Keep blocked future work summarized in the README and materialize it when it reaches the frontier.
+Do not reuse an implementation session for an independent review merely because it is convenient.
 
-### 8. Prepare repository topology when justified
+Reserve **Agent R** as the normal independent-review lane. Keep R read-only by default and do not let R repair the production changes it is reviewing.
 
-If the user asked for worktrees, or the current wave has genuinely concurrent writable missions requiring isolation:
+If R1 finds blocking defects, route the repair back to the original implementer as A2/B2/etc. when same-session reuse remains the cheapest correct owner. Then issue R2 into the existing Agent R chat for re-review.
 
-1. Inspect current branch, HEAD, status, existing worktrees, and uncommitted changes.
-2. Determine whether the current checkout is already sufficient. Do not create isolation if it adds no material value.
-3. Determine the coordination base. Do not silently commit unrelated work.
-4. If coordination artifacts themselves need a shared base commit, create that commit only when the user's setup request authorizes repository changes and the commit contains only the intended coordination changes.
-5. Create named branches/worktrees only for missions that actually need isolated writable workspaces.
-6. Verify each created worktree points at the intended commit and is clean before reporting it ready.
+Do not reuse R for implementation when doing so would destroy the independence required for the resulting repair.
 
-Do not perform worktree-specific dependency installation or baseline testing for missions that are not using a new worktree. More generally, do not run tests unless testing is explicitly authorized for the mission. If repository state makes safe setup ambiguous, report the conflict rather than improvising destructive Git operations.
+### 7. Apply the Review Gate before integration
 
-### 9. Generate copy/paste launcher prompts
+Before integrating a completed implementation mission, decide whether independent review materially reduces integration risk. Review must earn its overhead; do not create Agent R for every tiny change.
 
-When a durable mission file exists, keep the launcher prompt short. It should identify:
+Default toward an Agent R review when one or more materially apply:
 
-- agent/mission name;
-- repository and working arrangement;
-- authoritative mission file;
-- source plan/spec when useful;
-- instruction to inspect current code and own the mission through the stated observable success conditions, without adding tests unless explicitly authorized;
-- required finish report.
+- substantial implementation or large refactor/migration;
+- cross-subsystem or shared-contract changes;
+- public API/schema/persistence/data-shape changes;
+- concurrency, process-lifetime, native/GPU/FFI, auth/security, or other difficult-to-observe behavior;
+- broad/mechanical changes where attribution is harder;
+- implementer-reported uncertainty, deviations, or unresolved risk;
+- explicit user/spec/repository requirement for independent review.
 
-Do not duplicate the entire mission file into the launcher prompt unless the receiving environment cannot access the repository artifact.
+Usually skip Agent R for clean cherry-picks, small deterministic integrations, tiny localized changes, or docs/metadata where independent review cost clearly exceeds plausible integration risk.
 
-When no durable file exists, generate a full standalone prompt using `references/agent-prompt-template.md`.
+When review is required:
 
-### 9a. Compose long-lived execution with `persistent-agent-loop`
+1. create `R1` as a **NEW SESSION** if no suitable independent Agent R session exists;
+2. record `Integration of <mission>` as BLOCKED by R1 in the Blocker Ledger;
+3. define the discharge condition as `R1 reports no blocking findings`;
+4. if R1 finds blockers, mark the implementer repair mission A2/B2/etc. READY and keep integration blocked;
+5. after repair, issue `R2` into the **same Agent R chat** unless independence/context has materially broken;
+6. discharge the review blocker only when the required review/re-review passes;
+7. then let the planner perform bounded integration when authorized.
 
-Keep this Skill responsible for **planning and coordination**. When a launcher prompt or mission is expected to involve extended waiting, repeated user steering, persistent processes, scheduled wakeups, multi-hour execution, or recovery across wait leases, explicitly tell the receiving session to use `persistent-agent-loop` for execution lifetime.
+Do not let `implementation complete` silently mean `integration ready` when the Review Gate requires independent review.
 
-Use this handoff boundary:
+### 8. Choose workspace topology
 
-- `agent-work-planner` owns decomposition, dependencies, workspaces, mission boundaries, acceptance criteria, explicitly required validation, launcher prompts, integration order, and replanning.
-- `persistent-agent-loop` owns durable named waits, native timers, event-driven wakeups, steering while work continues, checkpoints, persistent-process observation, <=24-hour wait-lease renewal, hard-cutoff recovery, and the final completion gate.
+Use the simplest safe topology:
 
-Do not duplicate the full persistent-loop protocol in mission briefs. Include only the execution-lifetime facts the receiving session needs.
+- current checkout for one writer at a time;
+- same checkout/branch for sequential sessions when safe;
+- separate branches/worktrees only for genuine concurrent writers, conflicting local state, explicit isolation needs, or another concrete safety requirement;
+- no writable workspace for read-only missions.
 
-#### Plan wakeups from semantics
+Never create one worktree per agent by default. Never put concurrent writers in one worktree.
 
-When time itself is the reason to wake, use the native Dev timer condition rather than Bash `sleep` or fake conditions:
+### 9. Define the mission contract
 
-```text
-{kind:"timer", after_seconds:N}
-{kind:"timer", at:"<timezone-qualified timestamp>"}
-```
+For each mission record when relevant:
 
-`after_seconds` is 1..86399. Absolute `at` values must include `Z` or a numeric timezone offset. `timeout_seconds` is the durable safety deadline, not the timer, and must be strictly later than the timer target; it is capped at 86400 seconds. `hold_seconds` bounds only one MCP invocation and remains <=15 seconds.
+- mission ID (`A1`, `A2`, `B1`, ...);
+- agent/session;
+- fresh vs same-session continuation;
+- role;
+- review independence;
+- wave/phase;
+- start condition;
+- dependencies/blockers;
+- approximate effort share;
+- artifact type;
+- ownership/coordination boundary;
+- observable success;
+- testing/validation authority;
+- workspace;
+- execution lifetime;
+- out of scope.
 
-When external state is the reason to wake, prefer the matching event wait (`terminal_output`, `terminal_exit`, `process_exit`, `tcp_listen`, `file_exists`, `file_changed`, `http_ready`, or `systemd_user`) so work can resume as soon as reality changes. For a persistent/interactive command, plan Terminal/tmux as process lifetime authority and let `wait` observe readiness/output/exit.
+Size missions for coherent ownership, not arbitrary task counts.
 
-For missions longer than one wait safety deadline, plan meaningful checkpoints plus renewable <=24-hour wait leases. Never promise that one ChatGPT turn is guaranteed to remain active for days.
+### 10. Preserve testing and mutation authority
 
-#### Preserve steering without accidental termination
+Planning must not grant authority the user or governing engineering workflow did not grant.
 
-For long-lived launcher prompts, state that status/progress questions, compatible side tasks, requests for live visibility, and reprioritization are **in-mission steering events**, not implicit stop commands. The receiving session should handle the steering, update/checkpoint material state when useful, preserve still-valid named waits, and continue the mission. Cancel/re-arm a wait only when its semantic target changed or became obsolete.
+Use a field such as:
 
-Stop only after verified completion, explicit stop/replacement, or impossible/unsafe continuation after checkpointing recoverable state. If major steering invalidates the plan, `persistent-agent-loop` may checkpoint the changed constraints and return to `agent-work-planner` for substantial replanning.
+`Testing/validation authority: none | specified existing command(s) may run | test changes authorized | authoritative repository workflow`
 
-#### Optional live developer visibility
+When Causal Coding applies, preserve its distinctions among workflow execution, production mutation, test execution, test creation/modification, verification, continuation, and stopping.
 
-Headless Terminal execution is the default. When a developer wants to watch a persistent PTY, the launcher may request `terminal_open(..., present:true)` so Kitty presents the exact private tmux PTY while tmux/broker remain the lifetime and ownership authority. For an already-running headless session, passive viewing may use the human-side `wsl-term present <session>`. Use `terminal_yield` only when human input/control is actually useful. Do not restart or duplicate a process merely to make it visible.
+### 11. Generate the correct prompt type
 
-### 10. Plan integration and reporting
+Use `references/agent-prompt-template.md`.
 
-Every agent should return:
+For a **fresh session**, provide the full launcher prompt and say to open a new chat.
 
-- status: complete / blocked / needs decision;
-- working arrangement and relevant commits when any;
-- concise behavior/interface/artifact summary;
-- explicitly required validation actually run, if any; otherwise state none;
-- deviations from the mission;
-- coordination notes for dependent sessions;
-- unresolved risks or blockers.
+For an **A2/B2 continuation**, provide a shorter delta prompt and say to paste it into the existing agent chat.
 
-Identify who integrates: the planner/user, a dedicated integration session, or a downstream mission. Treat integration as real work when merges can expose cross-mission incompatibilities.
+For **R1**, provide the dedicated independent-review launcher and explicitly say to open a NEW Agent R chat. For **R2**, provide the re-review delta and explicitly say to paste it into the existing Agent R chat.
 
-Do not invent an integration/branch-finishing phase for read-only work or a simple in-place docs/config change that has no separate branch to integrate.
+When durable mission files exist, point to them instead of duplicating full context.
 
-### 11. Replan from reports
+### 12. Handle long-lived missions
 
-When reports or completed branches return:
+Mark long-lived/wait-heavy missions:
 
-1. verify the reported branch/commit state as needed;
-2. compare results with the coordination README and DAG;
-3. update contracts, blockers, and status;
-4. decide whether integration is required before unlocking dependents;
-5. determine the new frontier;
-6. materialize only the newly ready mission files/worktrees/prompts;
-7. update the README so another session can recover the orchestration state.
+`Execution lifetime: persistent-agent-loop`
 
-Do not force the original decomposition after reality changes. A changed interface, unexpected shared file, failed integration, or newly discovered dependency is a reason to reshape later waves.
+Tell that session to load `persistent-agent-loop`. Do not duplicate its timer/wait/checkpoint mechanics here.
 
-## Planner-owned work
+### 13. Apply the Frontier Transition Gate
 
-The planner may perform small changes itself when that reduces coordination cost or unlocks clean parallelism, for example:
+Run this gate after every frontier-invalidating event, including:
 
-- clarifying or creating a source spec/plan;
-- establishing a tiny stable interface/seam;
-- checking or repairing baseline setup when it is relevant to executable work;
-- preparing the coordination package;
-- creating worktrees when justified;
-- integrating completed branches;
-- running only final validation explicitly required by the source plan, user, repository policy, or integration contract.
+- returned mission report;
+- cherry-pick/merge/integration;
+- planner-owned repository change that affects readiness;
+- blocker confirmation/refutation;
+- review result or re-review result;
+- new dependency/blocker;
+- mission cancellation/supersession;
+- material contract change;
+- workspace ownership change;
+- user decision that changes readiness.
 
-Do not absorb a full agent mission merely because local tools are available. If the planner becomes the primary implementer, switch to the appropriate implementation workflow rather than disguising it as orchestration.
+Before declaring any mission or wave READY:
+
+1. reconcile all known unresolved sessions;
+2. update blocker states;
+3. list every blocker on the candidate mission/wave;
+4. require concrete evidence that every required blocker is discharged;
+5. preserve unrelated blockers;
+6. recompute the readiness frontier;
+7. apply the Review Gate to completed implementation that is approaching integration;
+8. choose planner-owned vs A2/B2 vs R1/R2 vs fresh-session ownership for newly READY work;
+9. execute planner-owned work or emit the required prompt immediately;
+10. update progress state.
+
+Never end a frontier transition with only `Wave X can start`.
+
+### 14. Require finish reports
+
+Every delegated mission returns:
+
+1. `status: complete | blocked | needs decision`;
+2. agent/session and mission ID;
+3. role;
+4. workspace/branch and relevant commits when any;
+5. concise behavior/interface/artifact result;
+6. testing/validation actually performed, if authorized;
+7. deviations from mission;
+8. information dependent missions need;
+9. unresolved blockers/decisions.
+
+### 15. Report progress automatically
+
+When an orchestration plan is active, append a **Progress Snapshot** after every response that performs or processes an orchestration action, including status-only updates when the planner has enough state to report meaningfully.
+
+Do not wait for the user to ask for progress.
+
+Use the **tree-style Current frontier snapshot** in `references/orchestration-state.md` as the default UX. Reserve the larger Execution Board for initial planning, major replans, or materially changed DAGs.
+
+The automatic snapshot must include, compactly:
+
+- `Current frontier`;
+- one tree node for every known active/unresolved agent/mission that matters now;
+- status/ownership such as `CONTINUE`, `READY — SAME SESSION`, `READY — NEW SESSION`, `READY — REVIEW`, `BLOCKED`, or `COMPLETE + INTEGRATED`;
+- one-line authoritative evidence/state where useful;
+- explicit blockers, including review blockers;
+- near-future PLANNED/CONDITIONAL work when it affects decisions;
+- a compact planned-effort summary when effort weights exist;
+- exact `Next human action`, including `paste H2 into existing Agent H`, `open Agent R with R1`, `continue Agent G`, or `nothing new`.
+
+Do not permanently carry irrelevant historical completions. Collapse them to a short integrated-base fact once they no longer affect the frontier.
+
+Use only known evidence. If state is unknown, label it `UNKNOWN`; do not fabricate ACTIVE/COMPLETE states.
+
+Effort percentages are relative engineering-work estimates, not elapsed time or measured percent-complete. Rebaseline only when the plan materially changes.
+
+See `references/orchestration-state.md` for the canonical tree format, Review Gate examples, and the larger-board escalation rule.
 
 ## Default output
 
-For plan-only mode, use:
+Use the lightest useful structure, but during an ongoing plan the Progress Snapshot is mandatory unless explicitly suppressed.
 
-### Execution recommendation
-- Recommended agent/session count
-- Single / sequential / parallel / hybrid
-- Branch/worktree strategy and, when isolation is proposed, the concrete reason
-- Short rationale
+Typical order:
 
-### Dependency map
-A compact DAG or readiness table.
+1. Frontier transition / decision
+2. Missions or integration action
+3. Copy/paste prompt(s), when newly actionable
+4. Review/integration note, including Agent R state when relevant
+5. **Progress Snapshot — Current frontier tree**
 
-### Missions
-For each mission: name, start condition, artifact type, ownership, dependencies, success conditions, and explicitly required validation if any.
+For a newly READY mission:
 
-### Copy/paste prompts
-One clearly delimited prompt per session.
-
-### Integration order
-How outputs come back together and what explicitly required integration validation remains, if any.
-
-For materialize mode, additionally report:
-
-- coordination folder path;
-- coordination/base commit if created or used;
-- branches/worktrees created and the reason each was necessary;
-- current-wave mission files;
-- concise launcher prompts pointing at those files;
-- blocked future work that remains intentionally unmaterialized.
-
-If multiple sessions do not help, say so and recommend one session instead of manufacturing agent prompts.
+- planner-owned -> perform it when authorized;
+- same-session -> emit A2/B2 prompt in the same response;
+- review -> emit R1/R2 prompt in the same response and keep integration blocked until review passes;
+- fresh session -> emit new-agent prompt in the same response;
+- deferred -> state the explicit reason.
 
 ## Guardrails
 
-- Never claim to have dispatched, launched, or messaged an agent unless the current environment actually provides and uses such a tool.
-- Never assume two agents can safely edit one worktree concurrently.
-- Never hide a dependency merely to make the plan look parallel.
-- Never create a Git commit, branch, worktree, or repository file in plan-only mode.
-- Never create a worktree solely because a task was delegated or a plan exists.
-- Never add, modify, or run tests unless the user, authoritative source plan/specification, or mandatory repository policy explicitly requires testing.
-- Never infer testing from executable code, bug fixes, refactors, public APIs, risk, or nearby tests.
-- Never require TDD or content-assertion tests for documentation-only missions.
-- Never require a full application suite unless that exact requirement is explicitly present in the mission/source plan or mandatory repository policy.
-- Never overwrite or fold unrelated uncommitted user work into a coordination commit.
-- Never copy secrets, tokens, credentials, or sensitive values into agent prompts or mission files; point to the approved secret-management mechanism instead.
-- Never use a stale plan as higher authority than the user's current instruction or verified repository state.
-- Prefer concrete acceptance criteria over implementation instructions.
-- Prefer repository evidence over assumptions about architecture.
+- Never let an unrelated completion discharge another mission's blocker.
+- Never declare READY before the Frontier Transition Gate passes.
+- Never let an active/unresolved agent disappear from the plan without a disposition.
+- Never end with only `Wave X can start` when action can be assigned now.
+- Never open a fresh session when an A2/B2 continuation is the cheaper correct owner.
+- Never use A2/B2 when required independence would be compromised.
+- Never equate self-review with independent review.
+- Never let Agent R implement the production repair it is independently reviewing.
+- Never integrate work while a required R1/R2 review blocker remains unresolved.
+- Never manufacture agents, waves, worktrees, review phases, or coordination artifacts merely because a generic workflow often has them.
+- Never place concurrent writers in one worktree.
+- Never hide a dependency to make the plan look parallel.
+- Never let planning broaden testing or mutation authority.
+- Never present relative effort as elapsed-time progress.
+- Never copy secrets/credentials into prompts or coordination files.
+- Never let stale planning state outrank current user direction or verified repository evidence.

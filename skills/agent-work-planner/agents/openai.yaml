@@ -1,6 +1,6 @@
 interface:
   display_name: Agent Work Planner
-  short_description: Split engineering work into bounded missions with clear dependencies
+  short_description: Plan sessions, continuations, reviews, waves, and progress
   icon_small: assets/icon.svg
   icon_large: assets/icon.svg
 policy:

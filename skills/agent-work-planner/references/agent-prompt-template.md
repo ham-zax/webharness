@@ -1,120 +1,261 @@
-# Agent Prompt Template
+# Agent Prompt Templates
 
-Use this template as a flexible default. Omit sections that add no value and expand sections where coordination risk is high.
+## Contents
+
+- Fresh-session launcher
+- Same-session continuation launcher
+- Agent R independent-review launcher
+- Agent R re-review launcher
+- Steering vs continuation
+- Prompt-local operator note
+
+Use the template matching the execution owner selected by Agent Work Planner.
+
+## Fresh-session launcher
+
+Always precede this prompt with:
+
+> **Open a NEW chat for Agent <X>.**
 
 ```markdown
-You own **<mission name>** for <feature / objective>.
+You are Agent <X>, Mission <X1>, owning **<mission name>** for <effort/objective>.
+
+## Role
+Role: <implement | investigate | integrate | coordinate | compatible combination>
+Review independence: <none | self-review sufficient | independent review required>
+
+This is a fresh human-launched coding session. Own only this mission through its observable success conditions.
 
 ## Repository
-<absolute repository path>
-
-Working arrangement:
-- Workspace: <current checkout | assigned branch/worktree | read-only>
-- Isolation reason: <none | explicit reason>
-- Can start: <immediately | after dependency/commit/contract>
-- Depends on: <mission names or none>
+Repository: <absolute repository path>
+Workspace: <current checkout | branch/worktree path | read-only>
+Can start: <now | after dependency>
+Depends on: <mission/blocker/contract/none>
 
 ## Read first
-- `<durable artifact path>` — <why it matters>
-- `<spec/plan/ADR/AGENTS.md>` — <why it matters>
+- <source plan/spec>
+- <repository instructions>
+- <coordination artifact when applicable>
 
-Read the repository itself for implementation details; the artifacts above are requirements/context anchors, not a substitute for inspecting current code.
+Inspect current repository state before choosing implementation details.
 
 ## Objective
-<Describe the end state or behavior this agent owns. Use outcome language rather than implementation steps.>
+<Outcome this mission owns.>
 
 ## Current state
-<What is true now that materially affects this mission.>
+<Only facts that materially affect this mission.>
 
 ## Ownership
 You own:
-- <behavior/subsystem/interface/artifact>
-- <completion responsibility for that ownership>
+- <owned behavior/subsystem/artifact>
 
-Neighboring work owns:
-- <area another mission owns>
-
-Keep changes focused on this mission unless a nearby change is necessary to preserve correctness.
-
-## Artifact type
-<executable behavior | documentation/content | configuration/metadata | mixed | read-only>
-
-## Coordination contract
-<Describe interfaces or facts another mission depends on. State what should remain stable and how to report unavoidable changes.>
+Neighboring missions own:
+- <neighboring work or none>
 
 ## Success conditions
 - <observable criterion>
 - <observable criterion>
-- <relevant compatibility/content expectation>
 
-## Out of scope
-- <adjacent work this session should not absorb>
-- <optional future improvement>
+## Testing / validation authority
+<none | specified existing command(s) may run | test changes authorized | authoritative repository workflow>
+
+When Causal Coding applies, follow it for implementation scope, testing authorization, verification, continuation, and stopping.
 
 ## Execution lifetime
-<ordinary | persistent-agent-loop required | persistent-agent-loop optional>
+<ordinary | persistent-agent-loop>
 
-When `persistent-agent-loop` is required, state only the mission-specific lifetime contract:
-- wake strategy: native timer / event wait / Terminal + event wait;
-- named wait or persistent Terminal identity when already known;
-- checkpoint boundary when meaningful;
-- developer visibility: headless by default, optional Kitty presentation, or human handoff if needed;
-- steering rule: status/progress/compatible side work does not terminate an incomplete mission; preserve still-valid waits and continue unless explicitly stopped/replaced or completion is verified.
+If `persistent-agent-loop` is specified, load it for execution continuity. Do not infer additional planning scope.
 
-Do not restate the entire persistent-loop protocol; the receiving session should load that Skill.
-
-## Working style
-Explore the current codebase before deciding implementation details. Follow repository conventions and existing agent instructions. Prefer coherent, maintainable changes over literal adherence to any implementation assumption in this prompt when the repository proves that assumption stale.
-
-Testing is opt-in. Do not create, modify, or run tests unless the user, authoritative mission/specification, or mandatory repository policy explicitly requires testing. Do not infer testing from executable behavior, a bug fix, refactor, public API, risk, or nearby tests. If testing is not explicitly authorized, leave it out.
-
-Use non-test validation only when the mission explicitly requires it or when it is necessary to observe the requested artifact directly. Documentation/content should not receive automated tests; configuration/metadata should not receive parser/schema/build/smoke work unless the changed contract or explicit instructions require it. Do not run a broad/full application suite unless that exact requirement is part of the mission or mandatory repository policy.
-
-Do not create a new worktree merely because this is an agent mission. Use the assigned/current workspace. Keep writes inside the mission's owned targets. If another concurrent mission needs the same mutable target, prefer separating ownership; if one shared writer is genuinely required, report the coordination boundary instead of relying on informal turn-taking. If the real repository state makes the workspace unsafe, report the isolation need instead of silently creating new topology.
+## Out of scope
+- <adjacent work>
 
 ## Finish report
-When finished, return:
+Return:
 1. status: complete / blocked / needs decision;
-2. workspace/branch and commits created, if any;
-3. concise summary of resulting behavior, artifact, and any public/interface changes;
-4. explicitly required validation actually run, if any; otherwise state none;
-5. anything dependent sessions need to know;
-6. unresolved risks, deviations, or decisions needed.
+2. Agent <X>, Mission <X1>;
+3. role;
+4. workspace/branch and relevant commits, if any;
+5. resulting behavior/artifact/interface summary;
+6. testing/validation actually performed, if authorized;
+7. deviations from mission;
+8. information dependent missions need;
+9. unresolved blockers/decisions.
 ```
 
-## Prompt-writing guidance
+## Same-session continuation launcher
 
-### Prefer declarative statements
+Always precede this prompt with:
 
-Good:
+> **Paste this into the existing Agent <X> chat. Do not open a new session.**
 
-> The importer should reject malformed rows without discarding valid rows from the same batch. Own this behavior and keep the change inside the importer mission.
+Use a short delta prompt rather than restating the whole previous mission.
 
-Avoid:
+```markdown
+Agent <X> — Mission <X2>
 
-> Open `importer.ts`, add a try/catch around line 84, then follow a prescribed sequence of incidental edits and commands.
+This is a new bounded continuation mission in your existing Agent <X> session.
+Mission <X1> is <complete / otherwise resolved>. Do not reopen or expand it unless this mission explicitly requires a boundary fact from it.
 
-### Use file paths for durable anchors, not guessed implementation
+## New mission
+<Outcome this continuation owns.>
 
-Good paths:
-- repository root;
-- `AGENTS.md` / `CLAUDE.md`;
-- accepted specs and plans;
-- ADRs;
-- a stable schema or public contract file when known.
+## Why this stays in the same session
+<Relevant context/ownership continuity.>
 
-Avoid enumerating implementation files solely because they happen to contain the code today. A capable fresh agent should rediscover the current implementation.
+## Current authoritative state
+Repository: <path>
+Workspace: <same assigned workspace or updated assignment>
+Current HEAD/artifact: <when relevant>
+Depends on: <none / discharged blocker evidence>
 
-### Give exact values when they are contractual
+## What changed since <X1>
+- <new evidence/integration/decision>
 
-Declarative does not mean vague. Preserve exact API names, version floors, compatibility guarantees, data shapes, error semantics, naming rules, and user-visible behavior when those are requirements.
+## Ownership and boundaries
+You own:
+- <bounded follow-up>
 
-### Coordination note for parallel branches
+Still out of scope:
+- <adjacent work>
 
-When another session is working concurrently, include one explicit boundary:
+Review independence: <none | self-review sufficient | independent review required>
 
-> Another session owns <neighboring mission>. Do not absorb that work. Coordinate through <stable interface/artifact>. If you discover the boundary is invalid, stop expanding scope and report the conflict so the plan can be revised.
+## Success conditions
+- <observable criterion>
 
-## Durable mission-file mode
+## Testing / validation authority
+<authority>
 
-When the planner has materialized an `agent-plans/` coordination package, the mission file is the authoritative prompt. Do not repeat this full template in chat. Use the short launcher-prompt pattern from `coordination-package-template.md` and keep substantial context in the mission file and coordination README.
+When Causal Coding applies, preserve its mutation/testing/verification authority.
+
+## Finish report
+Return:
+1. status: complete / blocked / needs decision;
+2. Agent <X>, Mission <X2>;
+3. concise result;
+4. workspace/commit state when relevant;
+5. authorized validation actually performed;
+6. new blockers or information needed by the planner.
+```
+
+## Agent R independent-review launcher
+
+Use when the Review Gate requires independent review. Always precede this prompt with:
+
+> **Open a NEW chat for Agent R. Do not use the implementation agent for this review.**
+
+```markdown
+You are Agent R, Mission R1, the independent reviewer for **<implementation mission>**.
+
+## Role
+Role: independent review
+Review independence: required
+Mutation authority: read-only unless the user separately authorizes a different mission
+
+Do not repair production code in this mission. Your job is to determine whether the implementation is safe to integrate and to identify concrete blocking findings when it is not.
+
+## Repository
+Repository: <absolute repository path>
+Review target: <branch/commit/range/worktree>
+Authoritative base: <base commit/branch>
+Workspace: read-only review of the assigned target
+
+## Read first
+- <source plan/spec/mission>
+- <implementer finish report>
+- <repository instructions>
+
+Inspect the actual implementation and surrounding contracts. Do not rely only on the implementer's summary.
+
+## Review objective
+Determine whether <implementation mission> satisfies its mission and integration contract without merge-blocking defects.
+
+Focus on:
+- mission correctness and affected contracts;
+- regressions or missing transitive changes caused by this implementation;
+- integration hazards and ownership violations;
+- explicit user/spec/repository requirements;
+- authorized verification evidence relevant to the review.
+
+Do not manufacture findings merely because the change is large.
+
+## Independence boundary
+- Do not implement fixes.
+- Do not broaden into unrelated repository cleanup.
+- Separate merge-blocking findings from non-blocking notes/questions.
+- If a finding depends on unavailable evidence, state that uncertainty rather than guessing.
+
+## Finish report
+Return:
+1. status: pass / blocking findings / blocked;
+2. Agent R, Mission R1;
+3. exact target reviewed;
+4. blocking findings, each with concrete evidence and affected boundary;
+5. non-blocking findings/questions, if useful;
+6. review/verification evidence actually used;
+7. exact repair obligations for the implementer, if blocking;
+8. whether integration may proceed now;
+9. if repair is required, the narrow re-review scope for R2.
+```
+
+## Agent R re-review launcher
+
+Use after the original implementer repairs R1 findings. Always precede this prompt with:
+
+> **Paste this into the existing Agent R chat. Do not open a new reviewer session.**
+
+```markdown
+Agent R — Mission R2
+
+Re-review the repair for your R1 blocking findings. Maintain the same independent-review role; do not implement fixes.
+
+## Current authoritative state
+Repository: <path>
+Original reviewed target: <R1 target>
+Repair target: <new commit/range/worktree>
+Implementer repair mission: <A2/B2/G2/...>
+
+## What changed since R1
+- <implementer-reported repairs>
+- <new commit/range>
+
+## Re-review scope
+Verify that:
+- each R1 blocking finding is actually resolved;
+- the repair did not introduce a directly related new blocking defect;
+- the relevant integration contract now holds.
+
+Do not restart a full repository review unless the repair materially widened the changed surface or evidence requires it.
+
+## Finish report
+Return:
+1. status: pass / blocking findings / blocked;
+2. Agent R, Mission R2;
+3. R1 findings resolved/unresolved;
+4. any new directly related blocking finding;
+5. evidence used;
+6. whether the review blocker can be discharged and integration may proceed.
+```
+
+## Steering vs continuation
+
+Do not create `A2/B2` for ordinary steering while `A1/B1` remains active. Status questions, compatible clarification, and reprioritization inside the current mission remain part of that mission.
+
+Use `A2/B2` after a mission boundary when a new bounded follow-up should reuse the same session.
+
+For review, use `R2` only after R1 has completed and an implementer repair has created a new reviewable target. Ordinary clarification during R1 remains part of R1.
+
+## Prompt-local operator note
+
+After any prompt, show:
+
+```text
+Plan position
+Mission: <A1/A2/R1/R2/...>
+Session: <new | same Agent A/B/R chat>
+Wave/track: <N/review>
+Role: <role>
+Effort: ~<relative share>%
+Can act: <now | after blocker>
+Blocks/Unlocks: <integration/wave/mission or none>
+```

@@ -1,148 +1,140 @@
 # Coordination Package Template
 
-Use these templates when materializing a multi-session wave. Adapt headings when the repository already has a stronger convention.
+## Contents
+
+- README.md
+- Mission files
+- Launcher prompts
+
+Use durable coordination only when repository-resident orchestration state materially helps.
 
 ## README.md
 
 ```markdown
-# <Effort> — Agent Coordination
+# <Effort> - Session Coordination
 
-**Repository:** `<absolute path>`
-**Source of truth:** `<spec/plan path>`
-**Coordination base:** `<commit or "not applicable">`
-**Execution shape:** `<single | sequential | parallel | hybrid>`
-**Current wave:** `<N>`
+**Repository:** <absolute path>
+**Source of truth:** <spec/plan>
+**Current wave:** <N>
+**Coordination mode:** durable
 
-## Current frontier
+## Progress Snapshot
 
-| Mission | Type | Status | Can start | Workspace | Isolation reason | Blocked by |
-|---|---|---|---|---|---|---|
-| Agent 1 — <name> | executable/docs/config/mixed/read-only | ready | now | `<current checkout or worktree>` | `<none or reason>` | none |
+<Use the canonical Current frontier tree from orchestration-state.md>
+
+## Session Ledger
+
+| Agent | Mission | Status | Role | Workspace | Disposition | Reusable |
+| --- | --- | --- | --- | --- | --- | --- |
+
+## Blocker Ledger
+
+| Blocked item | Blocker | Owner | Discharge condition | Status/evidence |
+| --- | --- | --- | --- | --- |
+
+## Review Gate
+
+<Record which completed implementation missions require independent review before integration, the R1/R2 mission, and the exact review-blocker discharge condition. State `not required` when review does not earn its overhead.>
 
 ## Dependency map
 
-```text
-<compact DAG showing current wave, integration, and later blockers>
-```
+<compact DAG>
 
 ## Shared contracts
 
-- <cross-mission interface or artifact that must remain stable>
+- <cross-mission contract>
 
 ## Workspace policy
 
-<Default current checkout or justified worktree topology. Record why each isolated workspace exists. Prefer distinct write ownership over shared mutable coordination state. If one shared writer is unavoidable, name the owner/serialization boundary. Do not create worktrees solely because missions exist.>
+<Current checkout or justified isolation topology. Do not create worktrees merely because agents exist.>
 
-## Integration policy
+## Review / integration policy
 
-<Who integrates isolated branches, onto what base/branch, and what must be verified before downstream work starts. Say "not applicable" when no branch integration exists.>
+<Identify Agent R review requirements, implementer repair ownership, re-review requirements, and who performs bounded integration after review passes.>
 
-## Execution lifetime policy
+## Testing / validation authority
 
-<Which current-wave missions are ordinary one-turn work versus `persistent-agent-loop` missions. For long-lived missions, record timer/event/Terminal wake strategy, meaningful checkpoint boundary, steering expectations, and whether optional Kitty visibility is useful. Do not duplicate the persistent-loop protocol.>
+<Record inherited authority only. Planning does not expand it.>
 
-## Validation policy
+## Execution lifetime
 
-<Default: no test creation, test modification, or test execution. Record only validation explicitly required by the user, source plan/specification, repository policy, or integration contract.>
+<List missions requiring persistent-agent-loop without duplicating its mechanics.>
 
 ## Future / blocked work
 
-Keep this deliberately low-resolution. Record enough to know what is waiting and why, but do not write detailed mission briefs until the work reaches the frontier.
+- Wave <N> - <purpose> - blocked by <condition> - ~<effort>% - <PLANNED | CONDITIONAL>
 
-- <future mission> — blocked by <condition>
+## Transition log
 
-## Status log
-
-- `<date/time or commit>` — coordination package created for Wave <N>.
+- <event> -> <blocker/session/review/frontier state change>
 ```
 
-Update this README whenever returned agent work materially changes readiness, contracts, branch topology, validation requirements, or integration state.
+Update the README after frontier-invalidating events. Do not rewrite it for trivial elapsed time.
 
-## Mission file
+## Mission files
 
-Use one file per current-wave agent: `agent-N-<slug>.md`.
+Use one file per materialized mission, not necessarily one per agent:
 
-```markdown
-# Agent N — <Mission name>
+- `A1-<slug>.md`
+- `A2-<slug>.md`
+- `B1-<slug>.md`
+- `R1-review-<slug>.md`
+- `R2-rereview-<slug>.md`
 
-**Repository:** `<absolute repository path>`
-**Artifact type:** `<executable | docs | config | mixed | read-only>`
-**Workspace:** `<current checkout | branch/worktree path | read-only>`
-**Isolation reason:** `<none | concrete reason>`
-**Can start:** `<immediately | after dependency>`
-**Depends on:** `<mission/commit/contract or none>`
-**Execution lifetime:** `<ordinary | persistent-agent-loop required | optional>`
-**Wake strategy:** `<none | native timer | event wait | Terminal + event wait>`
-**Developer visibility:** `<headless | Kitty from start | passive presentation on request | human handoff if needed>`
+Record:
 
-## Read first
+- Agent/session;
+- Mission ID;
+- fresh vs same-session continuation;
+- role/review independence;
+- wave/track and effort;
+- workspace;
+- dependencies/blockers;
+- objective/ownership;
+- success conditions;
+- testing/validation authority;
+- execution lifetime;
+- out of scope;
+- finish report.
 
-- `<source spec/plan>` — authoritative requirements
-- `<coordination README>` — dependency map and neighboring ownership
-- `<AGENTS.md / CLAUDE.md / ADR>` — repository conventions if relevant
+For A2/B2/R2 continuation files, include only the delta from the previous mission plus authoritative current state. Do not restate the entire prior mission unless necessary.
 
-## Objective
+For R1/R2, keep mutation authority read-only by default. Record the integration blocker and review discharge condition explicitly.
 
-<Outcome this session owns. Describe desired behavior and scope, not an implementation recipe.>
+## Launcher prompts
 
-## Current state
-
-<Only facts that materially affect this mission.>
-
-## Ownership
-
-You own:
-- <behavior/subsystem/interface/artifact>
-- <completion responsibility for that ownership>
-
-Neighboring missions own:
-- <adjacent area>
-
-## Coordination contract
-
-<What other agents depend on. Identify stable public contracts or the protocol for proposing a change.>
-
-## Success conditions
-
-- <observable criterion>
-- <observable criterion>
-- <compatibility / documentation expectation>
-
-## Required validation
-
-<Default: none. State only commands or checks explicitly required by the user, source plan/specification, repository policy, or integration contract. Never add tests merely because the mission changes code.>
-
-## Out of scope
-
-- <adjacent work>
-
-## Working style
-
-Explore the repository before deciding implementation details. Follow repository conventions and current code rather than stale assumptions in this brief. Keep the mission coherent and focused. Do not create, modify, or run tests unless testing is explicitly authorized by the mission/source plan or mandatory repository policy. Keep any required non-test validation minimal. Do not create a worktree merely because this is a delegated mission; use the assigned workspace unless a real isolation problem is discovered.
-
-## Finish report
-
-Return:
-1. status: complete / blocked / needs decision;
-2. workspace/branch and commits created, if any;
-3. resulting behavior/artifact and public/interface changes;
-4. explicitly required validation actually run, if any; otherwise state none;
-5. anything dependent sessions need to know;
-6. unresolved risks, deviations, or decisions needed.
-```
-
-## Short launcher prompt
-
-When the receiving agent can access the repository, prefer a pointer instead of repeating the mission:
+For fresh implementation/diagnostic missions:
 
 ```text
-You are <Agent N / mission name> for <effort>.
+Open a NEW chat for Agent <X>.
+Authoritative mission: <coordination-folder>/<X1-file>
+Coordination map: <coordination-folder>/README.md
+Read both first and own only Mission <X1>.
+```
 
-Repository: <repo path>
-Workspace: <current checkout or worktree path>
-Authoritative mission: <agent-plan-folder>/agent-N-<slug>.md
-Coordination map: <agent-plan-folder>/README.md
-Source plan/spec: <path>
+For same-session continuations:
 
-Read the mission and coordination map first, inspect the current repository, and own that mission through its observable success conditions. If the mission says `persistent-agent-loop` is required, use that Skill for execution lifetime: durable waits/timers, steering, checkpoints, and completion gating. Do not create extra worktrees. Do not create, modify, or run tests unless testing is explicitly authorized by the mission/source plan or mandatory repository policy. Do not absorb neighboring missions unless correctness requires a small boundary adjustment; report any larger conflict instead. Return the finish report requested in the mission file.
+```text
+Paste this into the existing Agent <X> chat. Do not open a new session.
+Authoritative continuation mission: <coordination-folder>/<X2-file>
+Coordination map: <coordination-folder>/README.md
+Read the continuation delta and own only Mission <X2>.
+```
+
+For independent review:
+
+```text
+Open a NEW chat for Agent R.
+Authoritative review mission: <coordination-folder>/<R1-file>
+Coordination map: <coordination-folder>/README.md
+Review independently and do not implement fixes.
+```
+
+For re-review:
+
+```text
+Paste this into the existing Agent R chat. Do not open a new reviewer session.
+Authoritative re-review mission: <coordination-folder>/<R2-file>
+Coordination map: <coordination-folder>/README.md
+Re-review the implementer's repair and report whether the integration blocker can be discharged.
 ```
