@@ -53,7 +53,7 @@ test('dedicated tmux backend covers create, send, resize, capture, list, dead st
   const exit7PaneId = tmuxValue(sandbox.socketPath, 'exit7:0.0', '#{pane_id}');
   await waitFor(async () => {
     const exited = await tmux.sessionInfo('exit7');
-    return exited.paneDead === true && !(await tmux.hasTranscriptPipe('exit7'));
+    return exited.paneDead === true && exited.paneDeadStatus === 7 && !(await tmux.hasTranscriptPipe('exit7'));
   }, { description: 'finalized dead pane' });
   const exited = await tmux.sessionInfo('exit7');
   assert.equal(exited.remainOnExit, true);
@@ -64,6 +64,10 @@ test('dedicated tmux backend covers create, send, resize, capture, list, dead st
   await waitFor(async () => (await readFile(path.join(exit7State.dataDir, 'transcript.bin'), 'utf8')).includes('exit7-final'), {
     description: 'finalized exit transcript',
   });
+  await waitFor(async () => {
+    const screen = await tmux.captureScreen('exit7');
+    return screen.includes('exit7-history-080') && screen.includes('exit7-final');
+  }, { description: 'finalized exit screen' });
   const exit7Screen = await tmux.captureScreen('exit7');
   assert.match(exit7Screen, /exit7-history-080/);
   assert.match(exit7Screen, /exit7-final/);
@@ -104,6 +108,9 @@ test('dedicated tmux backend covers create, send, resize, capture, list, dead st
   assert.equal(signaled.paneDeadStatus, null);
   assert.equal(signaled.panePid, signalOpened.panePid);
   assert.equal(tmuxValue(sandbox.socketPath, 'signal15:0.0', '#{pane_id}'), signalPaneId);
+  await waitFor(async () => tmuxValue(sandbox.socketPath, 'signal15:0.0', '#{pane_dead_signal}') === '15', {
+    description: 'signal15 dead signal',
+  });
   assert.equal(tmuxValue(sandbox.socketPath, 'signal15:0.0', '#{pane_dead_signal}'), '15');
   const signalState = await tmux.sessionState('signal15');
   await waitFor(async () => (await readFile(path.join(signalState.dataDir, 'transcript.bin'), 'utf8')).includes('signal-final'), {
@@ -161,6 +168,7 @@ test('session metadata carries a stable generation across reconciliation and a n
   const replacement = JSON.parse(await readFile(metadataFile, 'utf8'));
   assert.match(replacement.generation, /^[0-9a-f-]{36}$/i);
   assert.notEqual(replacement.generation, first.generation);
+  await tmux.closeSession('generation-meta');
 });
 
 test('session names are constrained to the frozen contract', async (t) => {

@@ -36,6 +36,14 @@ npm --prefix providers/local-tools ci --omit=dev
 
 ## Portable verification
 
+Run the complete portable gate via the test runner:
+
+```bash
+bash scripts/test-all.sh
+```
+
+Or execute the individual steps manually:
+
 ```bash
 bash tests/harness.sh
 bash tests/publication.sh

@@ -204,14 +204,17 @@ export class TmuxBackend {
     ] = stdout.trimEnd().split('|');
     const finalized = parseBoolean(transcriptFinalized);
     const preservedPid = Number(originalDeadPid);
+    const isDead = parseBoolean(paneDead);
     return {
       name: sessionName,
       serverPid: Number(serverPid),
       panePid: finalized && Number.isSafeInteger(preservedPid) && preservedPid > 0
         ? preservedPid
         : Number(panePid),
-      paneDead: finalized ? true : parseBoolean(paneDead),
-      paneDeadStatus: finalized ? parseStatus(originalDeadStatus) : parseStatus(paneDeadStatus),
+      paneDead: isDead,
+      paneDeadStatus: isDead
+        ? (finalized ? parseStatus(originalDeadStatus) : parseStatus(paneDeadStatus))
+        : null,
       cols: Number(width),
       rows: Number(height),
       attachedClients: Number(attachedClients),
@@ -535,7 +538,9 @@ export class TmuxBackend {
         createdAt: new Date().toISOString(),
       });
       await writeFile(gatePath, 'go\n', { mode: 0o600 });
-      await chmod(gatePath, 0o600);
+      await chmod(gatePath, 0o600).catch((error) => {
+        if (error?.code !== 'ENOENT') throw error;
+      });
       return await this.sessionInfo(name);
     } catch (error) {
       if (created) {

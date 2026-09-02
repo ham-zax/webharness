@@ -38,7 +38,7 @@ export async function makeSandbox(t, { budgetBytes = 1024 * 1024 } = {}) {
       spawnSync('tmux', ['-N', '-S', socketPath, 'kill-server']);
     } catch {}
     if (!tmux.killed) tmux.kill('SIGTERM');
-    await rm(dir, { recursive: true, force: true });
+    await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   };
   t.after(cleanup);
 
