@@ -1,0 +1,175 @@
+#!/usr/bin/env node
+import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+import { AdapterStore } from '../providers/websession-adapter/store.mjs';
+
+const ACCESS_TTL_SECONDS = 6 * 60 * 60;
+const POLL_MS = 250;
+const HTTP_TIMEOUT_MS = 30_000;
+
+function usage() {
+  throw new Error("usage: bin/websession-call <tool> '<arguments-json>'");
+}
+
+function adapterStateDir() {
+  const stateBase = process.env.XDG_STATE_HOME || join(homedir(), '.local', 'state');
+  return process.env.WEBSESSION_ADAPTER_STATE_DIR || join(stateBase, 'mcp-dev-bridge', 'websession-adapter');
+}
+
+function publicBase() {
+  const configured = process.env.WEBSESSION_ADAPTER_PUBLIC_URL || process.env.TUNNEL_URL;
+  if (configured) return configured.replace(/\/$/, '');
+  const runtimeBase = process.env.XDG_RUNTIME_DIR || `/run/user/${process.getuid()}`;
+  const value = readFileSync(join(runtimeBase, 'mcp-dev-bridge', 'tunnel.url'), 'utf8').trim();
+  if (!value) throw new Error('public WebSession URL is unavailable; start the bridge or set WEBSESSION_ADAPTER_PUBLIC_URL');
+  return value.replace(/\/$/, '');
+}
+
+function parseArguments(text) {
+  let value;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    throw new Error('arguments must be valid JSON');
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('arguments must be a JSON object');
+  }
+  return value;
+}
+
+function issueCapability(stateDir) {
+  const store = new AdapterStore(stateDir);
+  try {
+    return store.issueMainCapability(ACCESS_TTL_SECONDS);
+  } finally {
+    store.close();
+  }
+}
+
+function revokeCapability(stateDir, id) {
+  const store = new AdapterStore(stateDir);
+  try {
+    store.revokeCapability(id);
+  } finally {
+    store.close();
+  }
+}
+
+async function request(url, options = undefined) {
+  return fetch(url, {
+    ...options,
+    signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
+  });
+}
+
+async function readChunks(chunkBaseUrl, count) {
+  if (!chunkBaseUrl || !Number.isInteger(count) || count < 1) {
+    throw new Error('invalid WebSession chunk response');
+  }
+  let output = '';
+  for (let number = 1; number <= count; number += 1) {
+    const response = await request(`${chunkBaseUrl}${number}`);
+    if (!response.ok) throw new Error(`chunk ${number} failed with HTTP ${response.status}`);
+    const chunk = await response.json();
+    if (chunk?.state !== 'chunk' || chunk.chunk_number !== number || chunk.chunk_count !== count || typeof chunk.content !== 'string') {
+      throw new Error(`invalid WebSession chunk ${number}`);
+    }
+    output += chunk.content;
+  }
+  return output;
+}
+
+async function completedOutput(snapshot) {
+  if (snapshot.chunkCount > 1) return readChunks(snapshot.chunkBaseUrl, snapshot.chunkCount);
+  return snapshot.result || '';
+}
+
+async function waitForTerminal(statusUrl) {
+  if (!statusUrl) throw new Error('WebSession response omitted status_url');
+  while (true) {
+    await new Promise(resolve => setTimeout(resolve, POLL_MS));
+    const response = await request(statusUrl);
+    if (!response.ok) throw new Error(`status read failed with HTTP ${response.status}`);
+    const snapshot = await response.json();
+    if (snapshot.state === 'queued' || snapshot.state === 'running') continue;
+    return snapshot;
+  }
+}
+
+async function main() {
+  const [tool, argumentsText, ...extra] = process.argv.slice(2);
+  if (!tool || argumentsText === undefined || extra.length > 0) usage();
+
+  const argumentsValue = parseArguments(argumentsText);
+  const stateDir = adapterStateDir();
+  const base = publicBase();
+  const issued = issueCapability(stateDir);
+  const nonce = randomUUID();
+  const body = JSON.stringify({ version: 1, tool, arguments: argumentsValue });
+  let revokeOnExit = false;
+  let output;
+
+  try {
+    let response;
+    try {
+      response = await request(`${base}/v1/calls`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${issued.token}`,
+          'content-type': 'application/json',
+          'idempotency-key': nonce,
+        },
+        body,
+      });
+    } catch {
+      throw new Error('submission transport failed; outcome is unknown and the temporary capability will expire automatically');
+    }
+
+    const responseText = await response.text();
+    if (!response.ok) {
+      if (response.status < 500) revokeOnExit = true;
+      throw new Error(`submission failed with HTTP ${response.status}`);
+    }
+
+    let snapshot;
+    try {
+      snapshot = JSON.parse(responseText);
+    } catch {
+      throw new Error('invalid WebSession submission response');
+    }
+
+    if (snapshot.state === 'queued' || snapshot.state === 'running') {
+      try {
+        snapshot = await waitForTerminal(snapshot.status_url);
+      } catch (error) {
+        throw new Error(`${error.message}; operation outcome may be unresolved and the temporary capability will expire automatically`);
+      }
+    }
+
+    if (snapshot.state === 'completed') {
+      revokeOnExit = true;
+      output = await completedOutput({
+        chunkCount: Number(snapshot.chunk_count || 0),
+        chunkBaseUrl: snapshot.chunk_base_url,
+        result: snapshot.result,
+      });
+    } else if (['tool_failed', 'unknown_outcome', 'rejected', 'expired'].includes(snapshot.state)) {
+      revokeOnExit = true;
+      throw new Error(`${snapshot.state}: ${snapshot.error || snapshot.state}`);
+    } else {
+      throw new Error(`unexpected WebSession state: ${snapshot.state || 'unknown'}`);
+    }
+  } finally {
+    if (revokeOnExit) revokeCapability(stateDir, issued.id);
+  }
+
+  process.stdout.write(output);
+}
+
+main().catch(error => {
+  process.stderr.write(`websession-call: ${error.message}\n`);
+  process.exitCode = 1;
+});

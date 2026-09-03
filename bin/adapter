@@ -1,0 +1,230 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=../lib/bridge/common.sh
+source "$DIR/lib/bridge/common.sh"
+
+ACTION="${1:-status}"
+ADAPTER_HOST="${WEBSESSION_ADAPTER_HOST:-127.0.0.1}"
+ADAPTER_PORT="${WEBSESSION_ADAPTER_PORT:-3051}"
+ADAPTER_SERVER="$DIR/providers/websession-adapter/server.mjs"
+ADAPTER_AUTH="$DIR/providers/websession-adapter/auth.mjs"
+ADAPTER_OPERATOR="$DIR/providers/websession-adapter/operator.mjs"
+ADAPTER_STATE_DIR="${WEBSESSION_ADAPTER_STATE_DIR:-$BRIDGE_STATE_DIR/websession-adapter}"
+ADAPTER_PID_FILE="$BRIDGE_RUN_DIR/websession-adapter.pid"
+ADAPTER_LOCK_FILE="$BRIDGE_RUN_DIR/websession-adapter.lock"
+ADAPTER_LOG_FILE="${WEBSESSION_ADAPTER_LOG_FILE:-$BRIDGE_STATE_DIR/logs/websession-adapter.log}"
+ADAPTER_PUBLIC_URL="${WEBSESSION_ADAPTER_PUBLIC_URL:-}"
+ADAPTER_HEALTH_URL="http://$ADAPTER_HOST:$ADAPTER_PORT/health/ready"
+ADAPTER_OAUTH_CALLBACK_URL="${WEBSESSION_ADAPTER_OAUTH_CALLBACK_URL:-http://127.0.0.1:3052/callback}"
+
+adapter_mcp_url() {
+  local configured_mcp_url="${WEBSESSION_ADAPTER_MCP_URL:-}"
+  if [ -n "$configured_mcp_url" ]; then
+    printf '%s\n' "$configured_mcp_url"
+    return 0
+  fi
+  if [ -n "${TUNNEL_URL:-}" ]; then
+    printf '%s/mcp\n' "${TUNNEL_URL%/}"
+    return 0
+  fi
+  if [ -s "$BRIDGE_TUNNEL_URL_FILE" ]; then
+    local public_url
+    public_url="$(cat "$BRIDGE_TUNNEL_URL_FILE")"
+    if [ -n "$public_url" ]; then
+      printf '%s/mcp\n' "${public_url%/}"
+      return 0
+    fi
+  fi
+  printf 'http://127.0.0.1:3050/mcp\n'
+  return 0
+}
+
+adapter_alive() {
+  bridge_pidfile_alive "$ADAPTER_PID_FILE" "$ADAPTER_SERVER"
+}
+
+adapter_lock() {
+  command -v flock >/dev/null 2>&1 || {
+    echo "flock is required for adapter lifecycle serialization" >&2
+    exit 1
+  }
+  exec 8>"$ADAPTER_LOCK_FILE"
+  flock -w 10 8 || {
+    echo "another adapter lifecycle operation is already in progress" >&2
+    exit 1
+  }
+}
+
+adapter_start() {
+  for cmd in node curl setsid; do
+    command -v "$cmd" >/dev/null 2>&1 || {
+      echo "$cmd is required to start the WebSession adapter" >&2
+      exit 1
+    }
+  done
+  [ -f "$ADAPTER_SERVER" ] || {
+    echo "adapter server is missing: $ADAPTER_SERVER" >&2
+    exit 1
+  }
+  [ -d "$DIR/providers/websession-adapter/node_modules/@modelcontextprotocol/sdk" ] || {
+    echo "adapter dependencies are missing; run npm ci in providers/websession-adapter" >&2
+    exit 1
+  }
+
+  adapter_lock
+  if adapter_alive; then
+    echo "WebSession adapter already running on $ADAPTER_HEALTH_URL"
+    return 0
+  fi
+  rm -f "$ADAPTER_PID_FILE"
+  install -d -m 700 "$ADAPTER_STATE_DIR" "$(dirname "$ADAPTER_LOG_FILE")" "$BRIDGE_RUN_DIR"
+
+  if [ ! -s "$ADAPTER_STATE_DIR/oauth.json" ] || ! grep -q 'access_token' "$ADAPTER_STATE_DIR/oauth.json" 2>/dev/null; then
+    local session_file
+    session_file="$(ls -t "$BRIDGE_STATE_DIR"/1mcp/sessions/sessions/server/session_sess-*.json 2>/dev/null | head -n 1 || true)"
+    if [ -n "$session_file" ] && [ -r "$session_file" ]; then
+      local token_id
+      token_id="$(basename "$session_file" | sed -E 's/^session_sess-(.*)\.json$/\1/')"
+      if [ -n "$token_id" ]; then
+        cat <<EOF > "$ADAPTER_STATE_DIR/oauth.json"
+{
+  "version": 1,
+  "tokens": {
+    "access_token": "tk-$token_id",
+    "token_type": "Bearer"
+  }
+}
+EOF
+        chmod 600 "$ADAPTER_STATE_DIR/oauth.json"
+      fi
+    fi
+  fi
+
+  local mcp_url
+  mcp_url="$(adapter_mcp_url 2>/dev/null || true)"
+
+  (
+    umask 077
+    setsid env \
+      WEBSESSION_ADAPTER_HOST="$ADAPTER_HOST" \
+      WEBSESSION_ADAPTER_PORT="$ADAPTER_PORT" \
+      WEBSESSION_ADAPTER_STATE_DIR="$ADAPTER_STATE_DIR" \
+      WEBSESSION_ADAPTER_PUBLIC_URL="$ADAPTER_PUBLIC_URL" \
+      WEBSESSION_ADAPTER_MCP_URL="$mcp_url" \
+      WEBSESSION_ADAPTER_OAUTH_CALLBACK_URL="$ADAPTER_OAUTH_CALLBACK_URL" \
+      node "$ADAPTER_SERVER" 8>&- >>"$ADAPTER_LOG_FILE" 2>&1 </dev/null &
+    printf '%s\n' "$!" > "$ADAPTER_PID_FILE"
+  )
+
+  if ! bridge_wait_url "$ADAPTER_HEALTH_URL" 30 0.1 1 || ! adapter_alive; then
+    echo "WebSession adapter failed to become healthy; see $ADAPTER_LOG_FILE" >&2
+    bridge_stop_pidfile "$ADAPTER_PID_FILE" "$ADAPTER_SERVER"
+    exit 1
+  fi
+  echo "WebSession adapter started explicitly"
+  echo "  local:  $ADAPTER_HEALTH_URL"
+  echo "  status: bin/adapter status"
+  echo "  stop:   bin/adapter stop"
+}
+
+adapter_stop() {
+  adapter_lock
+  if adapter_alive; then
+    bridge_stop_pidfile "$ADAPTER_PID_FILE" "$ADAPTER_SERVER"
+    echo "WebSession adapter stopped"
+  else
+    rm -f "$ADAPTER_PID_FILE"
+    echo "WebSession adapter already stopped"
+  fi
+}
+
+adapter_status() {
+  if ! adapter_alive; then
+    echo "WebSession adapter: stopped"
+    return 1
+  fi
+  local pid
+  pid="$(cat "$ADAPTER_PID_FILE")"
+  if curl -sf -m 2 "$ADAPTER_HEALTH_URL" -o /dev/null; then
+    echo "WebSession adapter: running"
+    echo "pid: $pid"
+    echo "local health: $ADAPTER_HEALTH_URL"
+    echo "public ingress: not managed by this command"
+    return 0
+  fi
+  echo "WebSession adapter: process $pid is present but health is unavailable" >&2
+  return 2
+}
+
+adapter_auth_command() {
+  local mode="$1"
+  local mcp_url
+  mcp_url="$(adapter_mcp_url)"
+  [ -f "$ADAPTER_AUTH" ] || {
+    echo "adapter OAuth helper is missing: $ADAPTER_AUTH" >&2
+    exit 1
+  }
+  [ -d "$DIR/providers/websession-adapter/node_modules/@modelcontextprotocol/sdk" ] || {
+    echo "adapter dependencies are missing; run npm ci in providers/websession-adapter" >&2
+    exit 1
+  }
+  install -d -m 700 "$ADAPTER_STATE_DIR"
+  umask 077
+  WEBSESSION_ADAPTER_MCP_URL="$mcp_url" \
+    WEBSESSION_ADAPTER_STATE_DIR="$ADAPTER_STATE_DIR" \
+    WEBSESSION_ADAPTER_OAUTH_CALLBACK_URL="$ADAPTER_OAUTH_CALLBACK_URL" \
+    node "$ADAPTER_AUTH" "$mode"
+}
+
+adapter_issue_capability() {
+  local ttl="$1"
+  [ -f "$ADAPTER_OPERATOR" ] || {
+    echo "adapter operator helper is missing: $ADAPTER_OPERATOR" >&2
+    exit 1
+  }
+  install -d -m 700 "$ADAPTER_STATE_DIR"
+  umask 077
+  WEBSESSION_ADAPTER_STATE_DIR="$ADAPTER_STATE_DIR" node "$ADAPTER_OPERATOR" issue "$ttl"
+}
+
+adapter_set_master_bearer() {
+  [ -f "$ADAPTER_OPERATOR" ] || {
+    echo "adapter operator helper is missing: $ADAPTER_OPERATOR" >&2
+    exit 1
+  }
+  install -d -m 700 "$ADAPTER_STATE_DIR"
+  umask 077
+  if [ "$#" -gt 0 ]; then
+    WEBSESSION_ADAPTER_STATE_DIR="$ADAPTER_STATE_DIR" node "$ADAPTER_OPERATOR" set-master "$1"
+  else
+    WEBSESSION_ADAPTER_STATE_DIR="$ADAPTER_STATE_DIR" node "$ADAPTER_OPERATOR" set-master
+  fi
+}
+
+adapter_revoke_capability() {
+  local capability_id="${2:-}"
+  [ -n "$capability_id" ] || {
+    echo "usage: bin/adapter revoke-cap <capability-id>" >&2
+    exit 2
+  }
+  install -d -m 700 "$ADAPTER_STATE_DIR"
+  umask 077
+  WEBSESSION_ADAPTER_STATE_DIR="$ADAPTER_STATE_DIR" node "$ADAPTER_OPERATOR" revoke "$capability_id"
+}
+
+case "$ACTION" in
+  start) adapter_start ;;
+  stop) adapter_stop ;;
+  status) adapter_status ;;
+  auth) adapter_auth_command auth ;;
+  auth-status) adapter_auth_command status ;;
+  issue-cap) adapter_issue_capability "${2:-3600}" ;;
+  set-master-bearer) adapter_set_master_bearer "${@:2}" ;;
+  revoke-cap) adapter_revoke_capability "$@" ;;
+  *)
+    echo "usage: bin/adapter start|stop|status|auth|auth-status|issue-cap [ttl-seconds]|set-master-bearer [bearer]|revoke-cap <capability-id>" >&2
+    exit 2
+    ;;
+esac
