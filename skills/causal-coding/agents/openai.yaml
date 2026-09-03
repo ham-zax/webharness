@@ -1,6 +1,6 @@
 interface:
-  display_name: Persistent Agent Loop
-  short_description: Keep one mission alive across waits, steering, and recovery.
+  display_name: Causal Coding
+  short_description: Minimal diffs, mission-complete coding
   icon_small: assets/icon.svg
   icon_large: assets/icon.svg
 policy:

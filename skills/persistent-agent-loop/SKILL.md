@@ -1,92 +1,173 @@
 ---
 name: persistent-agent-loop
-description: Use when a task must remain active across extended waiting, repeated tool work, user steering, process observation, multi-hour mission execution, planner-generated workflows that may outlive one ordinary turn, or when ChatGPT must reason precisely about durable wait/timer semantics, `pending` results, model-turn continuity, and explicit resumption.
+description: Use when one already-defined mission must remain active across extended waiting, repeated tool work, user steering, persistent processes, resumable checkpoints, or recovery after a lost model turn. Preserve mission continuity without treating pending waits, timers, idle periods, or subtask completion as mission completion. Do not use for multi-session decomposition or next-wave planning; use agent-work-planner for that. When implementation-affecting work is involved, preserve Causal Coding authority over mutation, testing, verification, continuation, and stopping. On connected WSL/Linux targets, use mcp-harness-router to select concrete wsl-web-harness wait, Terminal, process, and repository primitives.
 ---
 
 # Persistent Agent Loop
 
+Keep one already-defined mission alive, steerable, and recoverable across waits, persistent processes, tool/RPC boundaries, and model-turn loss.
+
+## Mission boundary
+
+Treat this Skill as an **execution-continuity layer for one mission/session**, not a planner or autonomous worker manager.
+
+Do not expand the assigned mission merely because another task becomes ready.
+
+When a mission came from Agent Work Planner:
+
+- preserve that session's objective, ownership, dependencies, and success conditions;
+- stop when that session mission is complete;
+- return the required finish report;
+- do not absorb another session's work or enter the next wave;
+- let the human operator and Agent Work Planner decide what fresh session launches next.
+
+## Authority composition
+
+Keep responsibilities separate:
+
+- **Agent Work Planner** owns decomposition, session roles, waves, dependencies, workspace topology, integration ordering, and replanning.
+- **Causal Coding** owns implementation mutation scope, expansion, testing authorization, verification authority, continuation, and stopping for implementation-affecting work.
+- **MCP Harness Router** owns selection of concrete WSL/Linux wait, Terminal, process, repository, and human-handoff primitives.
+- **Persistent Agent Loop** owns continuity across waits, steering, persistent-process observation, meaningful checkpoints, interruption recovery, and protection against false completion.
+
+Persistence never broadens implementation, testing, verification, review, delegation, workspace, or mutation authority.
+
 ## Core invariant
 
-Keep the **mission** alive across short tool/RPC boundaries. A heartbeat, `pending` wait result, timer firing, subtask completion, or temporary lack of work is a scheduling event, not mission completion.
+Treat a heartbeat, `pending` wait result, timer condition, process-idle period, temporary lack of work, or completed subtask as a **scheduling event**, not mission completion.
 
-A durable wait preserves local condition state; it does not preserve or restart model execution. No wait or timer initiates a new ChatGPT/model turn. After `pending`, continue or resume the named wait only while a model turn is active; if that turn is lost, a successor recovers from the durable checkpoint and explicitly resumes the wait.
+A durable wait may preserve local condition state. It does not preserve, restart, schedule, or create model execution.
 
-End only when one of these is true:
+No local timer or wait should be described as initiating a future ChatGPT turn unless a separate scheduler/runtime actually provides that capability.
 
-1. the mission completion criteria are verified;
+End the mission only when:
+
+1. the assigned mission's completion criteria are established by the authority governing that mission;
 2. the user explicitly stops or replaces the mission; or
-3. continuation is impossible or unsafe and the recoverable state has been checkpointed.
+3. continuation is impossible or unsafe and recoverable state has been preserved when useful.
 
-## Use the cooperative loop
+## Cooperative loop
+
+Use:
 
 ```text
-reason -> act -> checkpoint if meaningful -> wait -> reassess -> continue
+reason -> act -> checkpoint if recovery value exists -> wait -> reassess -> continue
 ```
 
-- Treat `wait(...)=pending` as a cooperative scheduling point. The named wait remains durable; process new steering or do other useful tool work, then resume by the same name when appropriate.
-- Do not manufacture activity. If nothing changed, resume the wait.
-- User steering has priority over the previous next action. Decide whether it supplements, reprioritizes, replaces, or stops the mission; preserve the original mission unless steering changes it.
-- For persistent commands, servers, builds, or interactive work, keep process lifetime in Terminal and use `wait` for output/readiness/exit observation.
-- Keep Terminal work headless by default. If live human visibility is useful from the start, use `terminal_open(..., present:true)` so the exact private tmux PTY is visible in Kitty while tmux/broker remain the lifetime and ownership authority. For an already-running headless session, passive viewing can be offered through the human-side `wsl-term present <session>` frontend; use `terminal_yield` only when human input/control is actually useful.
-- Treat ordinary steering, status requests, progress questions, added context, and compatible side tasks as in-mission events, not implicit termination. For status/progress steering, emit a prompt bounded checkpoint from already-verified state and do not launch broad tests, independent review, or auxiliary verification merely to produce that update. Then continue the active mission in the same turn unless the user explicitly stops/replaces it or continuation becomes impossible/unsafe; steering itself is not a yield or completion condition.
+At each cycle:
 
-## Keep latency and external usage bounded
+- act only when useful;
+- treat `pending` as a cooperative scheduling point;
+- preserve a still-valid named wait rather than recreating it without cause;
+- do not manufacture edits, logs, probes, or verification merely to show liveness;
+- if nothing material changed, resume the relevant wait or continue observing the existing process;
+- re-check the mission boundary after steering or a major external-state change.
 
-- Respond to explicit user steering early within the active turn, then resume the mission. Do not turn a status/checkpoint request into another long implementation or verification cycle before acknowledging it, and do not end/yield the turn merely to improve responsiveness.
-- Persistence does not authorize tests. Create, modify, or run tests only when the user, authoritative mission/specification, or mandatory repository policy explicitly requires testing.
-- Run broad verification only when it is explicitly required at a meaningful transition boundary such as a real merge/completion decision; do not introduce it merely because a progress message arrived or because the mission is long-lived.
-- Treat usage-metered or separately billed external agents/models/CLIs, including Codex, as **explicit opt-in only**. Do not invoke or substitute them for a missing reviewer/subagent unless the user explicitly authorizes that external agent for the current task.
-- If another workflow asks for delegated review but no native or already-authorized reviewer exists, do not silently fall back to Codex or another metered agent. Use bounded in-session review when appropriate, report that delegated review was unavailable, or ask the user at the actual decision boundary.
+## User steering
 
-## Keep repository writer ownership explicit
+Classify steering by its effect on continuity:
 
-For repository missions, process ownership and Git writer ownership are separate contracts. Keep **one writable autonomous process per Git worktree**. Read-only agents/reviewers may run concurrently against a stable tree, but two writers must never share one worktree merely because their intended files differ.
+1. **Status/checkpoint request** - report the latest verified state promptly, then continue the mission if it remains active.
+2. **Additive request** - handle it only when it is compatible with the mission and independently authorized; otherwise preserve the current mission and surface the scope boundary.
+3. **Reprioritization** - update the next action while preserving unchanged completion criteria.
+4. **Mission replacement** - checkpoint the old mission when recovery value exists, retire obsolete waits/process observation safely, and adopt the replacement mission.
+5. **Stop** - preserve requested final state/evidence, retire obsolete waits when safe, and end.
 
-- Before taking over a repository with an existing Terminal/Codex/agent process, inspect Git/worktree state and establish whether that process is still a writer. Do not silently become a second writer.
-- If concurrent writable delegation is genuinely useful, give each writer a separate worktree/branch from a known verified base, keep ownership disjoint, verify each result independently, then integrate centrally. Otherwise serialize writers.
-- Delegated writers must not merge, rebase, reset, switch shared branches, or rewrite another writer's branch unless that mutation is explicitly part of their assignment.
-- Terminal model/human ownership protects PTY input; it does not establish repository writer ownership. Track both independently.
-- Before saying `clean`, `green`, `committed`, or equivalent, obtain fresh repository evidence from the authoritative WSL worktree.
+Do not treat ordinary status questions, progress questions, added context, visibility requests, or compatible side work as implicit termination.
 
-## Compose with agent-work-planner
+Steering classification does not itself authorize implementation mutation. Apply Causal Coding or the relevant authoritative workflow when the steering changes implementation scope.
 
-If `agent-work-planner` is available and the mission still needs explicit decomposition, dependency ordering, execution phases, or substantial replanning, use that Skill for the planning layer and keep this Skill responsible for execution lifetime.
+## Resume conditions
 
-- Let `agent-work-planner` own **what should happen and in what order**.
-- Let `persistent-agent-loop` own **how the mission stays alive while that plan is executed**: durable waits, timers, steering, checkpoints, persistent-process observation, lease renewal, and completion gating.
-- When producing a ready-to-run plan or agent prompt for work that is expected to be long-lived, tell the executing agent to use `persistent-agent-loop` for the execution phase.
-- Normalize long-lived planned phases around a concrete resume condition: `timer` when elapsed time is the condition; an event wait when external state is the condition; Terminal + event wait when a persistent process owns the work.
-- If major steering invalidates the current plan, consult `agent-work-planner` again when useful, then resume the persistent loop with the revised plan.
-- Do not require the planner for a simple long wait or already well-specified mission, and do not duplicate the persistent-loop protocol inside the planner.
+Choose the resume condition from mission semantics:
 
-## Use native timers for time-based conditions
+- **time condition** - reassess after elapsed time or at a specific instant;
+- **event condition** - reassess when external state changes;
+- **persistent-process condition** - reassess on process output, readiness, interaction need, or exit.
 
-Use Dev `wait` with `{kind:"timer", after_seconds:N}` for a relative timer condition, or `{kind:"timer", at:"2026-08-17T09:00:00+05:30"}` for an absolute timezone-qualified timer condition.
+Prefer the condition that can match the real dependency most directly. Do not replace a meaningful event condition with periodic polling merely to keep the loop active.
 
-Do not use Bash `sleep`, repeated polling, or an impossible file/process condition as a timer.
+On connected WSL/Linux targets, use MCP Harness Router for the concrete wait/process primitive and current tool schema/limits rather than duplicating those contracts here.
 
-Choose the resume condition dynamically from mission semantics: use `timer` when elapsed time itself is the reason to reassess; use an event condition such as Terminal output/exit, process exit, TCP readiness, file state, HTTP readiness, or systemd state when external reality is the reason to reassess. Prefer the event condition when it can match earlier and more precisely than a periodic timer.
+## Persistent process continuity
 
-`timeout_seconds` is the durable safety deadline, not the timer itself. Keep it **strictly later** than the timer target because the safety deadline wins ties. It supports at most 86400 seconds; `timer.after_seconds` supports at most 86399 seconds. `hold_seconds` only controls one MCP invocation and remains at most 15 seconds.
+Keep long-running or interactive process lifetime separate from the observer call that watches it.
 
-## Keep long missions recoverable
+Do not infer process completion because an observer wait ended, timed out, or became unavailable.
 
-Checkpoint only meaningful mission state: goal, completion criteria, verified progress, durable process/wait identifiers, artifacts, steering decisions, blockers, and the next intended action. Never checkpoint secrets.
+Preserve the established repository/process ownership arrangement. If resumption would make this session a second writer in an already-owned worktree or otherwise violate the assigned topology, stop mutation and surface the ownership conflict for replanning instead of inventing a new branch/worktree arrangement.
 
-For missions that may span more than 24 hours, renew waits as <=24-hour leases after a checkpoint. Do not increase `hold_seconds` or pretend a single ChatGPT turn is guaranteed to live forever.
+## Checkpoint proportionally
 
-## Read the detailed protocol when needed
+Checkpoint only when durable recovery would materially improve continuation.
 
-Read [references/protocol.md](references/protocol.md) before any mission expected to span more than about 30 minutes, accept repeated user steering, cross a 24-hour lease boundary, or require hard-cutoff recovery; follow its state, steering, lease, and recovery rules.
+Useful checkpoint triggers include:
+
+- a meaningful mission transition;
+- steering that materially changes the next action;
+- a risky handoff or model-turn boundary;
+- a long-lived process/wait whose identifiers matter after interruption;
+- recovery across a real wait-lease or session boundary;
+- an important blocker or decision that a successor must know.
+
+Do **not** create checkpoint artifacts merely because this Skill is active.
+
+Prefer, in order:
+
+1. an existing project progress/status artifact;
+2. an existing Agent Work Planner coordination artifact when the mission originated there;
+3. a locally ignored mission-state artifact only when no existing durable location is appropriate.
+
+Store only state that changes future action. Never checkpoint secrets.
+
+## Recover from authoritative reality
+
+After an unexpected model-turn loss or other hard interruption:
+
+1. read the durable mission checkpoint when one exists;
+2. inspect authoritative repository, process, wait, and artifact state rather than trusting conversational intention;
+3. determine which previously intended actions actually completed;
+4. revalidate the assigned mission boundary and next action;
+5. retire only clearly obsolete waits/process observation;
+6. continue from verified reality.
+
+If the mission originated from Agent Work Planner, recover only that session's assigned mission. Newly ready downstream sessions remain planner/human responsibilities.
+
+## Use the detailed protocol when continuity is complex
+
+Read [references/protocol.md](references/protocol.md) when the mission needs one or more of:
+
+- repeated wait/resume cycles;
+- persistent process ownership;
+- repeated user steering;
+- recovery across model-turn loss;
+- durable checkpoints;
+- long wait leases or multi-day continuity;
+- several simultaneous named resume conditions;
+- a nontrivial handoff between model, process, or human control.
+
+Do not load the detailed protocol merely because a mission is expected to last a particular number of minutes.
 
 ## Completion gate
 
-Before ending a mission:
+Before ending:
 
-- re-read the completion criteria;
-- obtain the fresh evidence required to establish the mission's completion criteria; do not infer testing authorization from persistence;
-- distinguish verified completion from temporary idleness;
-- cancel obsolete waits only when they are no longer part of the mission;
-- leave a durable checkpoint if the mission cannot safely continue.
+- re-read the assigned mission and its completion criteria;
+- obtain only the evidence authorized and required by the governing workflow;
+- distinguish verified mission completion from temporary idleness, wait timeout, timer match, or subtask completion;
+- preserve final recoverable state when the mission cannot safely continue;
+- retire obsolete waits/process observation only when they are no longer part of the mission;
+- if planner-generated, return the mission finish report and stop rather than entering another wave.
 
-Never claim uninterrupted multi-day execution merely because the local wait state can survive that long. Report only the continuity actually observed.
+Report only continuity actually observed. Never claim uninterrupted multi-day execution merely because local wait/process state could theoretically survive that long.
+
+## Guardrails
+
+- Never turn persistence into scope expansion.
+- Never launch another session, reviewer, external agent, branch, or worktree merely to keep a mission alive.
+- Never treat a local wait/timer as future model scheduling.
+- Never infer that an intended command completed after a lost turn.
+- Never create heartbeat work solely to demonstrate activity.
+- Never let checkpoint text outrank current authoritative repository/process reality.
+- Never store secrets in durable mission state.
+- Never cross from a completed planner mission into another session's mission without explicit replanning/assignment.
