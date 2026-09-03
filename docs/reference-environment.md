@@ -29,9 +29,9 @@ On Windows, WebHarness launches or reuses a dedicated visible Chrome profile at:
 %LOCALAPPDATA%\mcp-dev-bridge\chrome-profile
 ```
 
-Chrome chooses an ephemeral loopback DevTools port through `DevToolsActivePort`. `browser-fast` uses Agent Browser for routine interaction; `browser-devtools` connects the Chrome DevTools MCP facade to the same dedicated profile. Everyday Chrome is not attached or copied.
+An explicit Browser Fast `browser_profile` uses a separate persistent directory at `%LOCALAPPDATA%\mcp-dev-bridge\chrome-profiles\<name>`. Chrome chooses an ephemeral loopback DevTools port through `DevToolsActivePort`. `browser-fast` uses Agent Browser for routine interaction; `browser-devtools` connects the Chrome DevTools MCP facade only to the shared default profile. Everyday Chrome is not attached or copied.
 
-On Linux/WSLg, `browser-fast` uses the current user configuration at `~/.config/mcp-dev-bridge/browser-fast.json`. The maintained Personal Workstation can use managed Chrome or a managed Clearcote profile. Browser DevTools uses the Linux Chrome DevTools path when callers pass `browser_target="linux"`.
+On Linux/WSLg, `browser-fast` uses the current user configuration at `~/.config/mcp-dev-bridge/browser-fast.json`. The maintained Personal Workstation can use managed Chrome or a managed Clearcote profile. Explicit Chrome profile names persist beneath `~/.local/state/mcp-dev-bridge/chrome-profiles/` unless `XDG_STATE_HOME` changes the state root; explicit Clearcote names select configured persistent profiles. Browser DevTools uses the Linux Chrome DevTools path when callers pass `browser_target="linux"`.
 
 ## What is not qualified
 
