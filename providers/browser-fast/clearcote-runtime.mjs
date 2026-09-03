@@ -110,7 +110,7 @@ export class ManagedClearcoteRuntime {
           ...backend.profile,
           quiet: true,
           chromiumSandbox: true,
-          args: ['--remote-debugging-port=0', '--remote-debugging-address=127.0.0.1']
+          args: ['--class=google-chrome', '--remote-debugging-port=0', '--remote-debugging-address=127.0.0.1']
         });
         const endpoint = await waitForEndpoint(userDataDir);
         const runtime = {

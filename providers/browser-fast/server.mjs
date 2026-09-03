@@ -22,6 +22,11 @@ const WINDOWS_RUNNER_SOURCE = path.join(DIR, 'windows-runner.cjs');
 const MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
 const AGENT_BROWSER_MAX_OUTPUT_CHARS = 262144;
 const DEFAULT_BROWSER_ARTIFACTS_FILE = path.join(os.homedir(), '.config', 'mcp-dev-bridge', 'browser-artifacts.json');
+const DEFAULT_LINUX_CHROME_PROFILES_ROOT = path.join(
+  process.env.XDG_STATE_HOME || path.join(os.homedir(), '.local', 'state'),
+  'mcp-dev-bridge',
+  'chrome-profiles'
+);
 
 function fastError(code, message, cause) {
   const error = new Error(`${code}: ${message}`, cause ? { cause } : undefined);
@@ -54,20 +59,35 @@ function targetName(value) {
   return target;
 }
 
+function browserProfileName(value) {
+  if (value === undefined) return undefined;
+  const profile = requiredString(value, 'browser_profile');
+  if (
+    profile.length > 64
+    || profile === '.'
+    || profile === '..'
+    || !/^[A-Za-z0-9._-]+$/.test(profile)
+  ) {
+    throw fastError('INVALID_ARGUMENT', 'browser_profile must be 1-64 characters using only letters, numbers, dot, underscore, or hyphen, and cannot be . or ..');
+  }
+  return profile;
+}
+
 function browserSelection(target, backend, profile) {
-  if (target !== 'linux') {
-    if (backend !== undefined || profile !== undefined) {
-      throw fastError('INVALID_ARGUMENT', 'browser_backend and browser_profile are only valid with browser_target=linux');
+  const browserProfile = browserProfileName(profile);
+  if (target === 'windows') {
+    if (backend !== undefined && backend !== 'chrome') {
+      throw fastError('INVALID_ARGUMENT', 'Windows supports only the chrome backend');
     }
-    return {};
+    return { browserBackend: 'chrome', browserProfile };
   }
   if (backend !== undefined && !['chrome', 'clearcote'].includes(backend)) {
     throw fastError('INVALID_ARGUMENT', 'browser_backend must be chrome or clearcote');
   }
-  if (profile !== undefined && backend !== 'clearcote') {
-    throw fastError('INVALID_ARGUMENT', 'browser_profile requires browser_backend=clearcote');
+  if (browserProfile !== undefined && backend === undefined) {
+    throw fastError('INVALID_ARGUMENT', 'browser_profile requires an explicit browser_backend for Linux');
   }
-  return { browserBackend: backend, browserProfile: profile };
+  return { browserBackend: backend, browserProfile };
 }
 
 function artifactName(value) {
@@ -228,14 +248,16 @@ export class AgentBrowserRunner {
     windowsRunnerSource = WINDOWS_RUNNER_SOURCE,
     windowsChromeEnsure,
     linuxBackendResolve = resolveLinuxBrowserBackend,
+    linuxChromeProfilesRoot = DEFAULT_LINUX_CHROME_PROFILES_ROOT,
     clearcoteRuntime = new ManagedClearcoteRuntime()
   } = {}) {
     this.env = env;
     this.processRunner = processRunner;
     this.windowsSource = windowsSource;
     this.windowsRunnerSource = windowsRunnerSource;
-    this.windowsChromeEnsure = windowsChromeEnsure ?? (() => ensureWindowsChrome({ processRunner: this.processRunner }));
+    this.windowsChromeEnsure = windowsChromeEnsure ?? (profile => ensureWindowsChrome({ processRunner: this.processRunner, profile }));
     this.linuxBackendResolve = linuxBackendResolve;
+    this.linuxChromeProfilesRoot = linuxChromeProfilesRoot;
     this.clearcoteRuntime = clearcoteRuntime;
     this.windowsAgentRuntimePromise = null;
     this.linuxSessions = new Map();
@@ -275,8 +297,8 @@ export class AgentBrowserRunner {
     return this.windowsAgentRuntimePromise;
   }
 
-  async windowsRuntime() {
-    const chrome = await this.windowsChromeEnsure();
+  async windowsRuntime(profile) {
+    const chrome = await this.windowsChromeEnsure(profile);
     return { ...chrome, ...(await this.windowsAgentRuntime(chrome)) };
   }
 
@@ -312,10 +334,12 @@ export class AgentBrowserRunner {
     return normalized;
   }
 
-  async windowsBatch(commands, { bail = true } = {}) {
-    const runtime = await this.windowsRuntime();
+  async windowsBatch(commands, { bail = true, browserProfile } = {}) {
+    const runtime = await this.windowsRuntime(browserProfile);
     const args = [
-      '--session', `${DEFAULT_SESSION_PREFIX}-windows`,
+      '--session', browserProfile === undefined
+        ? `${DEFAULT_SESSION_PREFIX}-windows`
+        : `${DEFAULT_SESSION_PREFIX}-windows-${browserProfile}`,
       '--cdp', runtime.wsEndpoint,
       '--pin-tab',
       '--idle-timeout', '0',
@@ -328,7 +352,11 @@ export class AgentBrowserRunner {
       input: JSON.stringify(commands),
       acceptNonZero: true
     });
-    return parseAgentBrowserBatch(result);
+    return {
+      ...parseAgentBrowserBatch(result),
+      browserBackend: 'chrome',
+      browserProfile: browserProfile ?? null
+    };
   }
 
   linuxSession(backend, sessionTab) {
@@ -347,6 +375,13 @@ export class AgentBrowserRunner {
       delete env.AGENT_BROWSER_EXECUTABLE_PATH;
       delete env.AGENT_BROWSER_PROFILE;
       delete env.AGENT_BROWSER_ARGS;
+    } else if (backend.profileName !== undefined) {
+      const profilesRoot = path.resolve(this.linuxChromeProfilesRoot);
+      const profileDir = path.resolve(profilesRoot, backend.profileName);
+      if (path.dirname(profileDir) !== profilesRoot) {
+        throw fastError('BROWSER_FAST_PROFILE_INVALID', `Linux Chrome profile must resolve beneath ${profilesRoot}`);
+      }
+      env.AGENT_BROWSER_PROFILE = profileDir;
     }
     this.linuxSessions.set(session, env);
     const idleTimeout = backend.browser === 'clearcote' && backend.managed === true ? '0' : '1h';
@@ -531,7 +566,7 @@ export class AgentBrowserRunner {
       return { ...result, browserBackend: selected.browser, browserProfile: selected.profileName };
     }
     const result = await this.linuxAgentBatch({ ...selected, session }, commands, { bail });
-    return { ...result, browserBackend: selected.browser, browserProfile: null };
+    return { ...result, browserBackend: selected.browser, browserProfile: selected.profileName ?? null };
   }
 
   async withClearcoteAllocation(profileName, operation) {
@@ -550,11 +585,11 @@ export class AgentBrowserRunner {
   }
 
   async resolveSelection(target, { browserBackend, browserProfile } = {}) {
-    if (target !== 'linux') return { browserBackend: null, browserProfile: null };
+    if (target !== 'linux') return { browserBackend: 'chrome', browserProfile };
     const selected = await this.linuxBackendResolve({ browser: browserBackend, profile: browserProfile });
     return {
       browserBackend: selected.browser,
-      browserProfile: selected.managed === true ? selected.profileName : null
+      browserProfile: selected.profileName
     };
   }
 
@@ -562,7 +597,7 @@ export class AgentBrowserRunner {
     if (target !== 'linux') return { tab, browserBackend, browserProfile };
     const selected = await this.linuxBackendResolve({ browser: browserBackend, profile: browserProfile });
     if (selected.managed !== true) {
-      return { tab, browserBackend: selected.browser, browserProfile: null };
+      return { tab, browserBackend: selected.browser, browserProfile: selected.profileName };
     }
 
     await this.clearcoteRuntime.ensure(selected);
@@ -798,10 +833,8 @@ export class FastBrowser {
     const memory = await resolveBrowserMemory(origin, { root: this.memoryRoot });
     return {
       browser_target: target,
-      ...(target === 'linux' ? {
-        browser_backend: batch.browserBackend ?? browserBackend ?? null,
-        browser_profile: batch.browserProfile ?? browserProfile ?? null
-      } : {}),
+      browser_backend: batch.browserBackend ?? browserBackend ?? (target === 'windows' ? 'chrome' : null),
+      browser_profile: batch.browserProfile ?? browserProfile ?? null,
       active_tab: tabs.find(item => item.active)?.tab_id ?? null,
       origin,
       snapshot: snapshotItem.snapshot ?? '',
@@ -812,7 +845,7 @@ export class FastBrowser {
   }
 
   operationKey(target, { browserBackend, browserProfile, tab } = {}) {
-    if (target !== 'linux') return target;
+    if (target !== 'linux') return `${target}:${browserProfile ?? 'default'}`;
     return `${target}:${browserBackend ?? 'default'}:${browserProfile ?? '-'}:${tab ?? 'browser'}`;
   }
 
@@ -977,10 +1010,8 @@ export class FastBrowser {
 
       return {
         browser_target: target,
-        ...(target === 'linux' ? {
-          browser_backend: initial.browserBackend ?? selection.browserBackend ?? null,
-          browser_profile: initial.browserProfile ?? selection.browserProfile ?? null
-        } : {}),
+        browser_backend: initial.browserBackend ?? selection.browserBackend ?? (target === 'windows' ? 'chrome' : null),
+        browser_profile: initial.browserProfile ?? selection.browserProfile ?? null,
         outcome,
         failed_at: failedAt,
         transition_error: transitionError,
@@ -1035,9 +1066,9 @@ export function createBrowserFastServer({ browser } = {}) {
       inputSchema: {
         type: 'object',
         properties: {
-          browser_target: { type: 'string', enum: ['windows', 'linux'], description: 'Omit for the dedicated persistent Windows MCP Chrome profile; use linux for a Linux Browser Fast backend.' },
-          browser_backend: { type: 'string', enum: ['chrome', 'clearcote'], description: 'Linux only. Select Chrome or managed Clearcote for this call without changing the shared browser-fast config. Omit to use the configured Linux default.' },
-          browser_profile: { type: 'string', minLength: 1, maxLength: 64, pattern: '^[A-Za-z0-9._-]+$', description: 'Linux Clearcote only. Select a named managed Clearcote profile; normally omit to use the configured profile or the only configured Clearcote profile.' },
+          browser_target: { type: 'string', enum: ['windows', 'linux'], description: 'Omit for Windows Chrome; use linux for a Linux Chrome or Clearcote backend.' },
+          browser_backend: { type: 'string', enum: ['chrome', 'clearcote'], description: 'Select Chrome or managed Clearcote. Windows supports only Chrome. On Linux, omit to use the configured default; set it explicitly whenever browser_profile is set.' },
+          browser_profile: { type: 'string', minLength: 1, maxLength: 64, pattern: '^[A-Za-z0-9._-]+$', description: 'Optional named persistent profile on Windows or Linux. Omit for the existing shared default. Windows and Linux Chrome create or reuse an isolated profile by this name; Linux Clearcote selects a profile defined in browser-fast.json.' },
           scope: { type: 'string', enum: ['interactive', 'compact', 'full'], default: 'interactive' },
           include_urls: { type: 'boolean', default: true },
           tab: { type: 'string', minLength: 1, description: 'Optional stable tab ID or CDP target ID to continue/select before observing. For managed Linux Clearcote, omit it to allocate an independent workspace; reuse the returned active_tab on later observations for the same task.' }
@@ -1052,9 +1083,9 @@ export function createBrowserFastServer({ browser } = {}) {
       inputSchema: {
         type: 'object',
         properties: {
-          browser_target: { type: 'string', enum: ['windows', 'linux'], description: 'Omit for the dedicated persistent Windows MCP Chrome profile; use linux for a Linux Browser Fast backend.' },
-          browser_backend: { type: 'string', enum: ['chrome', 'clearcote'], description: 'Linux only. Select Chrome or managed Clearcote for this call without changing the shared browser-fast config. Use the same backend returned by observe for refs/tab identity.' },
-          browser_profile: { type: 'string', minLength: 1, maxLength: 64, pattern: '^[A-Za-z0-9._-]+$', description: 'Linux Clearcote only. Use the same profile returned by observe when one is reported.' },
+          browser_target: { type: 'string', enum: ['windows', 'linux'], description: 'Use the same target returned by observe.' },
+          browser_backend: { type: 'string', enum: ['chrome', 'clearcote'], description: 'Use the same backend returned by observe. Windows supports only Chrome.' },
+          browser_profile: { type: 'string', minLength: 1, maxLength: 64, pattern: '^[A-Za-z0-9._-]+$', description: 'Use the same named persistent profile returned by observe. Omit only when observe returned null.' },
           tab: { type: 'string', minLength: 1, description: 'Required tab ID from the latest observe result. Execution validates that the pinned Agent Browser session is still on this exact tab and fails closed on mismatch; it does not switch tabs.' },
           actions: { type: 'array', items: ACTION_SCHEMA, minItems: 1, maxItems: 64 },
           stop_on_error: { type: 'boolean', default: true, description: 'Stop at the first failed action. The executor never retries actions automatically.' },

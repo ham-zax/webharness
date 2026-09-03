@@ -59,6 +59,16 @@ function optionalBoolean(value, location) {
   return value;
 }
 
+function resolveChrome(profileName) {
+  return {
+    browser: 'chrome',
+    ...(profileName === undefined ? {} : { profileName }),
+    session: profileName === undefined
+      ? 'mcp-browser-fast-linux'
+      : `mcp-browser-fast-linux-chrome-${profileName}`
+  };
+}
+
 function resolveManagedClearcote(config, requestedProfile) {
   rejectUnknownKeys(config, new Set(['version', 'linux', 'clearcote', '_comment']), 'browser-fast config');
   rejectUnknownKeys(config.linux, new Set(['browser', 'profile']), 'browser-fast config linux');
@@ -118,9 +128,6 @@ export async function resolveLinuxBrowserBackend({
     throw configError('BROWSER_FAST_BACKEND_INVALID', 'browser backend must be chrome or clearcote');
   }
   if (requestedProfile !== undefined) requiredProfileName(requestedProfile, 'browser profile');
-  if (requestedBrowser === 'chrome' && requestedProfile !== undefined) {
-    throw configError('BROWSER_FAST_BACKEND_INVALID', 'browser profile is only valid with the clearcote backend');
-  }
   let stat;
   try {
     stat = await lstat(configFile);
@@ -129,7 +136,7 @@ export async function resolveLinuxBrowserBackend({
       if (requestedBrowser === 'clearcote') {
         throw configError('BROWSER_FAST_CONFIG_UNAVAILABLE', 'managed Clearcote requires browser-fast configuration with at least one profile');
       }
-      return { browser: 'chrome', session: 'mcp-browser-fast-linux' };
+      return resolveChrome(requestedProfile);
     }
     throw configError('BROWSER_FAST_CONFIG_UNAVAILABLE', `could not inspect ${configFile}`, error);
   }
@@ -178,10 +185,7 @@ export async function resolveLinuxBrowserBackend({
 
     const browser = requestedBrowser ?? configuredBrowser;
     if (browser === 'chrome') {
-      if (requestedProfile !== undefined) {
-        throw configError('BROWSER_FAST_BACKEND_INVALID', 'browser profile is only valid with the clearcote backend');
-      }
-      return { browser, session: 'mcp-browser-fast-linux' };
+      return resolveChrome(requestedProfile);
     }
     return resolveManagedClearcote(config, requestedProfile);
   }
@@ -202,10 +206,7 @@ export async function resolveLinuxBrowserBackend({
   }
   const browser = requestedBrowser ?? configuredBrowser;
   if (browser === 'chrome') {
-    if (requestedProfile !== undefined) {
-      throw configError('BROWSER_FAST_BACKEND_INVALID', 'browser profile is only valid with the clearcote backend');
-    }
-    return { browser, session: 'mcp-browser-fast-linux' };
+    return resolveChrome(requestedProfile);
   }
   if (configuredBrowser !== 'clearcote' || requestedProfile !== undefined) {
     throw configError('BROWSER_FAST_BACKEND_INVALID', 'V1 Clearcote can only use its configured external cdpPort; use V2 for per-call managed Clearcote profiles');

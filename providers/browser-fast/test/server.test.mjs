@@ -9,6 +9,7 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { resolveBrowserMemory } from '../browser-memory.mjs';
 import { resolveLinuxBrowserBackend } from '../browser-backend-config.mjs';
 import { ManagedClearcoteRuntime } from '../clearcote-runtime.mjs';
+import { ensureWindowsChrome } from '../../browser/windows-chrome-runtime.mjs';
 import {
   AgentBrowserRunner,
   FastBrowser,
@@ -44,6 +45,8 @@ test('browser-fast exposes only observe and execute', async t => {
   assert.equal(actionSchema.properties.artifact.pattern, '^[A-Za-z0-9._-]+$');
   assert.equal(actionSchema.properties.file, undefined);
   assert.deepEqual(tools[1].inputSchema.required, ['tab', 'actions']);
+  assert.match(tools[0].inputSchema.properties.browser_profile.description, /Windows or Linux/i);
+  assert.match(tools[0].inputSchema.properties.browser_profile.description, /persistent/i);
 });
 
 test('action mapping prefers observation refs and keeps batching vocabulary small', () => {
@@ -279,6 +282,126 @@ test('Linux browser backend config defaults to Chrome and rejects Firefox explic
   );
 });
 
+test('an explicit Linux Chrome profile gets its own persistent session', async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'browser-fast-chrome-profile-'));
+  t.after(async () => { await fs.rm(root, { recursive: true, force: true }); });
+  const configFile = path.join(root, 'missing-browser-fast.json');
+
+  assert.deepEqual(await resolveLinuxBrowserBackend({
+    configFile,
+    browser: 'chrome',
+    profile: 'agent-two'
+  }), {
+    browser: 'chrome',
+    profileName: 'agent-two',
+    session: 'mcp-browser-fast-linux-chrome-agent-two'
+  });
+
+  const calls = [];
+  const profilesRoot = path.join(root, 'profiles');
+  const runner = new AgentBrowserRunner({
+    linuxChromeProfilesRoot: profilesRoot,
+    linuxBackendResolve: selection => resolveLinuxBrowserBackend({ configFile, ...selection }),
+    processRunner: async (command, args, options = {}) => {
+      calls.push({ command, args, options });
+      return { code: 0, stdout: JSON.stringify([{ success: true, result: {} }]), stderr: '' };
+    }
+  });
+
+  const result = await runner.linuxBatch([['tab', 'list']], {
+    browserBackend: 'chrome',
+    browserProfile: 'agent-two'
+  });
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].args.includes('mcp-browser-fast-linux-chrome-agent-two'), true);
+  assert.equal(calls[0].options.env.AGENT_BROWSER_PROFILE, path.join(profilesRoot, 'agent-two'));
+  assert.equal(result.browserProfile, 'agent-two');
+});
+
+test('an explicit Windows Chrome profile uses a separate persistent data directory', async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'browser-fast-windows-profile-'));
+  t.after(async () => { await fs.rm(root, { recursive: true, force: true }); });
+  const calls = [];
+  const processRunner = async (command, args) => {
+    calls.push({ command, args });
+    if (command.endsWith('/cmd.exe') && args.includes('%LOCALAPPDATA%')) {
+      return { code: 0, stdout: 'C:\\Users\\Hamza\\AppData\\Local\r\n', stderr: '' };
+    }
+    if (command.endsWith('/cmd.exe') && args.includes('node')) {
+      return { code: 0, stdout: 'C:\\Program Files\\nodejs\\node.exe\r\n', stderr: '' };
+    }
+    if (command === 'wslpath' && args[1].includes('AppData')) {
+      return { code: 0, stdout: `${root}\n`, stderr: '' };
+    }
+    if (command === 'wslpath') {
+      return { code: 0, stdout: '/mnt/c/Program Files/nodejs/node.exe\n', stderr: '' };
+    }
+    if (command === '/mnt/c/Program Files/nodejs/node.exe') {
+      return {
+        code: 0,
+        stdout: JSON.stringify({
+          browserUrl: 'http://127.0.0.1:43111',
+          wsEndpoint: 'ws://127.0.0.1:43111/devtools/browser/agent-two'
+        }),
+        stderr: ''
+      };
+    }
+    throw new Error(`unexpected process ${command}`);
+  };
+
+  const runtime = await ensureWindowsChrome({ processRunner, profile: 'agent-two' });
+  const helperCall = calls.find(call => call.command === '/mnt/c/Program Files/nodejs/node.exe');
+
+  assert.equal(runtime.profileName, 'agent-two');
+  assert.equal(runtime.profileDir, path.join(root, 'mcp-dev-bridge', 'chrome-profiles', 'agent-two'));
+  assert.equal(helperCall.args[1], 'C:\\Users\\Hamza\\AppData\\Local\\mcp-dev-bridge\\chrome-profiles\\agent-two');
+});
+
+test('Windows Browser Fast passes the selected profile to Chrome and its Agent Browser session', async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'browser-fast-windows-runner-profile-'));
+  t.after(async () => { await fs.rm(root, { recursive: true, force: true }); });
+  const source = path.join(root, 'agent-browser-win32-x64.exe');
+  const helperSource = path.join(root, 'windows-runner-source.cjs');
+  await fs.writeFile(source, 'pinned-binary');
+  await fs.writeFile(helperSource, 'helper-source');
+  const selectedProfiles = [];
+  const nativeArgs = [];
+  const runner = new AgentBrowserRunner({
+    windowsSource: source,
+    windowsRunnerSource: helperSource,
+    windowsChromeEnsure: async profile => {
+      selectedProfiles.push(profile);
+      return {
+        localAppData: root,
+        windowsLocalAppData: 'C:\\Users\\Hamza\\AppData\\Local',
+        nodeExecutable: '/mnt/c/Program Files/nodejs/node.exe',
+        wsEndpoint: 'ws://127.0.0.1:43111/devtools/browser/agent-two'
+      };
+    },
+    processRunner: async (_command, args) => {
+      nativeArgs.push(JSON.parse(args[2]));
+      return {
+        code: 0,
+        stdout: JSON.stringify({
+          code: 0,
+          signal: null,
+          stdout: JSON.stringify([{ success: true, result: { tabs: [] } }]),
+          stderr: ''
+        }),
+        stderr: ''
+      };
+    }
+  });
+
+  const result = await runner.windowsBatch([['tab', 'list']], { browserProfile: 'agent-two' });
+
+  assert.deepEqual(selectedProfiles, ['agent-two']);
+  assert.deepEqual(nativeArgs[0].slice(0, 2), ['--session', 'mcp-browser-fast-windows-agent-two']);
+  assert.equal(result.browserBackend, 'chrome');
+  assert.equal(result.browserProfile, 'agent-two');
+});
+
 test('Linux runner hot-switches from managed Chrome to a Clearcote CDP session', async t => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'browser-fast-backend-switch-'));
   t.after(async () => { await fs.rm(root, { recursive: true, force: true }); });
@@ -310,6 +433,50 @@ test('Linux runner hot-switches from managed Chrome to a Clearcote CDP session',
   assert.deepEqual(calls[1].args.slice(calls[1].args.indexOf('--cdp'), calls[1].args.indexOf('--cdp') + 2), ['--cdp', '9222']);
   assert.equal(calls[1].options.env.AGENT_BROWSER_EXECUTABLE_PATH, undefined);
   assert.equal(calls[1].options.env.AGENT_BROWSER_PROFILE, undefined);
+});
+
+test('per-call Chrome selection stays profileless through Linux observation preparation', async () => {
+  const selections = [];
+  const runner = new AgentBrowserRunner({
+    linuxBackendResolve: async selection => {
+      selections.push(selection);
+      if (selection.profile !== undefined) throw new Error(`unexpected Chrome profile: ${String(selection.profile)}`);
+      return { browser: 'chrome', session: 'mcp-browser-fast-linux' };
+    }
+  });
+
+  const selected = await runner.resolveSelection('linux', { browserBackend: 'chrome' });
+  assert.deepEqual(selected, { browserBackend: 'chrome', browserProfile: undefined });
+
+  const prepared = await runner.prepareObservation('linux', selected);
+  assert.deepEqual(prepared, { tab: undefined, browserBackend: 'chrome', browserProfile: undefined });
+  assert.deepEqual(selections, [
+    { browser: 'chrome', profile: undefined },
+    { browser: 'chrome', profile: undefined }
+  ]);
+});
+
+test('headless managed Clearcote keeps supported input on the Clearcote executor', async () => {
+  const runner = new AgentBrowserRunner({
+    processRunner: async () => { throw new Error('Agent Browser must not execute managed Clearcote input'); }
+  });
+  runner.managedClearcoteCommand = async command => ({
+    command,
+    success: true,
+    error: null,
+    result: { executor: 'clearcote' }
+  });
+
+  const result = await runner.managedLinuxBatch({
+    browser: 'clearcote',
+    managed: true,
+    profileName: 'x-main',
+    profile: { headless: true, humanize: true },
+    session: 'mcp-browser-fast-linux-clearcote-x-main',
+    cdp: '43111'
+  }, [['click', '@e1']]);
+
+  assert.deepEqual(result.items[0].result, { executor: 'clearcote' });
 });
 
 test('managed Clearcote allocates a fresh tab for a second independent agent', async () => {
@@ -402,6 +569,30 @@ test('managed Clearcote coalesces concurrent startup of the same profile without
 
   assert.equal(launches, 1);
   assert.equal(firstRuntime, secondRuntime);
+});
+
+test('managed Clearcote launch supplies a stable WSLg application class', async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'browser-fast-clearcote-wslg-class-'));
+  t.after(async () => { await fs.rm(root, { recursive: true, force: true }); });
+  let launchOptions;
+  const runtime = new ManagedClearcoteRuntime({
+    stateRoot: root,
+    launch: async (_userDataDir, options) => {
+      launchOptions = options;
+      const error = new Error('launch options captured');
+      error.code = 'TEST_CAPTURE_COMPLETE';
+      throw error;
+    }
+  });
+
+  await assert.rejects(runtime.ensure({
+    browser: 'clearcote',
+    managed: true,
+    profileName: 'x-main',
+    profile: { headless: false, humanize: true }
+  }), error => error?.code === 'TEST_CAPTURE_COMPLETE');
+
+  assert.equal(launchOptions.args.includes('--class=google-chrome'), true);
 });
 
 test('Agent Browser structured batch failures stay structured instead of becoming invalid output', async () => {
@@ -598,6 +789,72 @@ test('browser-fast serializes the same Linux tab and releases its queue after fa
   const secondResult = await second;
   assert.equal(secondResult.outcome, 'completed');
   assert.equal(initialLists, 2);
+});
+
+test('browser selection is explicit and Windows profile locks are isolated', async () => {
+  const runner = {
+    async resolveSelection(target, selection) {
+      return {
+        browserBackend: target === 'windows' ? 'chrome' : selection.browserBackend,
+        browserProfile: selection.browserProfile
+      };
+    },
+    async prepareObservation(_target, selection) {
+      return selection;
+    },
+    async batch(_target, commands, options) {
+      if (commands.length === 1 && commands[0][0] === 'tab' && commands[0][1] === 'list') {
+        return {
+          browserBackend: 'chrome',
+          browserProfile: options.browserProfile,
+          exitCode: 0,
+          items: [{ success: true, result: { tabs: [
+            { active: true, targetId: 'TARGET-A', title: 'Example', url: 'https://example.test/' }
+          ] } }]
+        };
+      }
+      if (commands.length === 1 && commands[0][0] === 'tab') {
+        return { exitCode: 0, items: [{ success: true, result: { targetId: 'TARGET-A' } }] };
+      }
+      return {
+        browserBackend: 'chrome',
+        browserProfile: options.browserProfile,
+        exitCode: 0,
+        items: [
+          { success: true, result: { origin: 'https://example.test/', snapshot: '', refs: {} } },
+          { success: true, result: { tabs: [
+            { active: true, targetId: 'TARGET-A', title: 'Example', url: 'https://example.test/' }
+          ] } }
+        ]
+      };
+    }
+  };
+  const browser = new FastBrowser({ runner });
+
+  const observed = await browser.observe({
+    browser_target: 'windows',
+    browser_backend: 'chrome',
+    browser_profile: 'agent-two'
+  });
+
+  assert.equal(observed.browser_backend, 'chrome');
+  assert.equal(observed.browser_profile, 'agent-two');
+  assert.notEqual(
+    browser.operationKey('windows', { browserProfile: 'agent-one', tab: 'TARGET-A' }),
+    browser.operationKey('windows', { browserProfile: 'agent-two', tab: 'TARGET-A' })
+  );
+  assert.equal(
+    browser.operationKey('windows', { browserProfile: 'agent-two', tab: 'TARGET-A' }),
+    browser.operationKey('windows', { browserProfile: 'agent-two', tab: 'TARGET-B' })
+  );
+  await assert.rejects(
+    browser.observe({ browser_target: 'windows', browser_backend: 'clearcote' }),
+    /Windows supports only the chrome backend/
+  );
+  await assert.rejects(
+    browser.observe({ browser_target: 'linux', browser_profile: 'agent-two' }),
+    /browser_profile requires an explicit browser_backend for Linux/
+  );
 });
 
 test('observe explicitly rebinds the current target and attaches bounded site memory', async t => {

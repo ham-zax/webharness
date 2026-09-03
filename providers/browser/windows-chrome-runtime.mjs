@@ -8,11 +8,31 @@ const WINDOWS_CHROME_HELPER_SOURCE = path.join(DIR, 'windows-chrome.cjs');
 const WINDOWS_CMD = '/mnt/c/Windows/System32/cmd.exe';
 const MAX_OUTPUT_BYTES = 1024 * 1024;
 const STARTUP_TIMEOUT_MS = 15000;
+const MAX_PROFILE_NAME_LENGTH = 64;
+const PROFILE_NAME = /^[A-Za-z0-9._-]+$/;
 
 function runtimeError(code, message, cause) {
   const error = new Error(`${code}: ${message}`, cause ? { cause } : undefined);
   error.code = code;
   return error;
+}
+
+function optionalProfileName(value) {
+  if (value === undefined) return undefined;
+  if (
+    typeof value !== 'string'
+    || value.length === 0
+    || value.length > MAX_PROFILE_NAME_LENGTH
+    || value === '.'
+    || value === '..'
+    || !PROFILE_NAME.test(value)
+  ) {
+    throw runtimeError(
+      'WINDOWS_MCP_CHROME_PROFILE_INVALID',
+      `profile must be 1-${MAX_PROFILE_NAME_LENGTH} characters using only letters, numbers, dot, underscore, or hyphen, and cannot be . or ..`
+    );
+  }
+  return value;
 }
 
 export async function runWindowsHostProcess(command, args, { cwd = '/mnt/c', input, acceptNonZero = false } = {}) {
@@ -112,12 +132,19 @@ export async function resolveWindowsHost({ processRunner = runWindowsHostProcess
   return hostPromise;
 }
 
-export async function ensureWindowsChrome({ processRunner = runWindowsHostProcess } = {}) {
+export async function ensureWindowsChrome({ processRunner = runWindowsHostProcess, profile } = {}) {
+  const profileName = optionalProfileName(profile);
   const host = await resolveWindowsHost({ processRunner });
+  const profileDir = profileName === undefined
+    ? host.profileDir
+    : path.join(host.localAppData, 'mcp-dev-bridge', 'chrome-profiles', profileName);
+  const windowsProfileDir = profileName === undefined
+    ? host.windowsProfileDir
+    : `${host.windowsLocalAppData}\\mcp-dev-bridge\\chrome-profiles\\${profileName}`;
   await fs.copyFile(WINDOWS_CHROME_HELPER_SOURCE, host.helper);
   const result = await processRunner(host.nodeExecutable, [
     host.windowsHelper,
-    host.windowsProfileDir,
+    windowsProfileDir,
     String(STARTUP_TIMEOUT_MS)
   ], { cwd: '/mnt/c' });
 
@@ -130,7 +157,7 @@ export async function ensureWindowsChrome({ processRunner = runWindowsHostProces
   if (typeof endpoint.browserUrl !== 'string' || typeof endpoint.wsEndpoint !== 'string') {
     throw runtimeError('WINDOWS_MCP_CHROME_START_FAILED', result.stderr || 'Windows MCP Chrome helper did not return a DevTools endpoint');
   }
-  return { ...host, ...endpoint };
+  return { ...host, profileDir, windowsProfileDir, profileName: profileName ?? null, ...endpoint };
 }
 
 export const WINDOWS_MCP_CHROME_PROFILE_SUFFIX = 'mcp-dev-bridge\\chrome-profile';

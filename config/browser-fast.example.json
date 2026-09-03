@@ -1,5 +1,5 @@
 {
-  "_comment": "Keep managed Clearcote x-main as the normal Linux Browser Fast default. Use per-call browser_backend=chrome when Chrome is needed; do not change the shared Linux selector unless the user explicitly approves it.",
+  "_comment": "Keep managed Clearcote x-main as the shared Linux default. Select Chrome per call without rewriting this file. For explicit isolation, send browser_profile with browser_backend; Chrome creates persistent named profiles, while Clearcote names must be defined below.",
   "version": 2,
   "linux": {
     "browser": "clearcote",
