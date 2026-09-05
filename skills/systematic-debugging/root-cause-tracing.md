@@ -8,8 +8,19 @@ Bugs often manifest deep in the call stack (git init in wrong directory, file cr
 
 ## When to Use
 
-```text
-symptom -> immediate cause -> caller/input -> originating owner -> repair owner -> verify invariant
+```dot
+digraph when_to_use {
+    "Bug appears deep in stack?" [shape=diamond];
+    "Can trace backwards?" [shape=diamond];
+    "Fix at symptom point" [shape=box];
+    "Trace to original trigger" [shape=box];
+    "BETTER: Also add defense-in-depth" [shape=box];
+
+    "Bug appears deep in stack?" -> "Can trace backwards?" [label="yes"];
+    "Can trace backwards?" -> "Trace to original trigger" [label="yes"];
+    "Can trace backwards?" -> "Fix at symptom point" [label="no - dead end"];
+    "Trace to original trigger" -> "BETTER: Also add defense-in-depth";
+}
 ```
 
 **Use when:**
@@ -71,9 +82,9 @@ async function gitInit(directory: string) {
 }
 ```
 
-Use a diagnostic channel that is observable in the failing environment; in a test runner this may mean stderr rather than a suppressed application logger.
+**Critical:** Use `console.error()` in tests (not logger - may not show)
 
-If running the relevant test is independently authorized, capture only the signal needed for the hypothesis:
+**Run and capture:**
 ```bash
 npm test 2>&1 | grep 'DEBUG git init'
 ```
@@ -87,13 +98,11 @@ npm test 2>&1 | grep 'DEBUG git init'
 
 If something appears during tests but you don't know which test:
 
-When the task explicitly authorizes running the relevant tests, the bundled helper can bisect a polluting test:
+Use the bisection script `find-polluter.sh` in this directory:
 
 ```bash
-../scripts/find-polluter.sh '.git' 'src/**/*.test.ts'
+./find-polluter.sh '.git' 'src/**/*.test.ts'
 ```
-
-Do not run this helper merely because the debugging workflow mentions it; testing authorization still comes from the user, authoritative specification, or mandatory repository policy.
 
 Runs tests one-by-one, stops at first polluter. See script for usage.
 
@@ -112,23 +121,49 @@ Runs tests one-by-one, stops at first polluter. See script for usage.
 
 **Fix:** Made tempDir a getter that throws if accessed before beforeEach
 
-**Repair boundary:** Validate the value at the owner/trust boundary that actually permits the invalid state. Add another guard only when it protects a distinct real boundary; do not duplicate validation at every layer by default.
+**Also added defense-in-depth:**
+- Layer 1: Project.create() validates directory
+- Layer 2: WorkspaceManager validates not empty
+- Layer 3: NODE_ENV guard refuses git init outside tmpdir
+- Layer 4: Stack trace logging before git init
 
 ## Key Principle
 
-```text
-found immediate cause
-  -> trace one level up while it can change ownership
-  -> identify originating owner/invariant
-  -> repair that owner
-  -> re-run the original falsifying evidence
+```dot
+digraph principle {
+    "Found immediate cause" [shape=ellipse];
+    "Can trace one level up?" [shape=diamond];
+    "Trace backwards" [shape=box];
+    "Is this the source?" [shape=diamond];
+    "Fix at source" [shape=box];
+    "Add validation at each layer" [shape=box];
+    "Bug impossible" [shape=doublecircle];
+    "NEVER fix just the symptom" [shape=octagon, style=filled, fillcolor=red, fontcolor=white];
+
+    "Found immediate cause" -> "Can trace one level up?";
+    "Can trace one level up?" -> "Trace backwards" [label="yes"];
+    "Can trace one level up?" -> "NEVER fix just the symptom" [label="no"];
+    "Trace backwards" -> "Is this the source?";
+    "Is this the source?" -> "Trace backwards" [label="no - keeps going"];
+    "Is this the source?" -> "Fix at source" [label="yes"];
+    "Fix at source" -> "Add validation at each layer";
+    "Add validation at each layer" -> "Bug impossible";
+}
 ```
 
 **NEVER fix just where the error appears.** Trace back to find the original trigger.
 
 ## Stack Trace Tips
 
-**Observable channel:** Use stderr or another channel the failing environment actually exposes when the normal logger is suppressed.
-**Before operation:** Log before the dangerous operation, not after it fails.
-**Include context:** Include only fields that can change the causal conclusion, such as directory, cwd, relevant environment/config, and stack.
-**Capture stack:** `new Error().stack` can reveal the call chain when static tracing is insufficient.
+**In tests:** Use `console.error()` not logger - logger may be suppressed
+**Before operation:** Log before the dangerous operation, not after it fails
+**Include context:** Directory, cwd, environment variables, timestamps
+**Capture stack:** `new Error().stack` shows complete call chain
+
+## Real-World Impact
+
+From debugging session (2025-10-03):
+- Found root cause through 5-level trace
+- Fixed at source (getter validation)
+- Added 4 layers of defense
+- 1847 tests passed, zero pollution

@@ -1,23 +1,29 @@
 ---
 name: finishing-a-development-branch
-description: Use when implementation is complete and you need to decide how to integrate, publish, preserve, or clean up the branch/worktree.
+description: Use when implementation is complete, all tests pass, and you need to decide how to integrate the work
 ---
 
 # Finishing a Development Branch
 
 ## Overview
 
-**Core principle:** Establish required completion evidence → Detect environment → Present options → Execute choice → Clean up.
+**Core principle:** Verify tests → Detect environment → Present options → Execute choice → Clean up.
 
-## Step 1: Establish Required Completion Evidence
+**Announce at start:** "I'm using the finishing-a-development-branch skill to complete this work."
 
-Branch finishing does not authorize testing. Re-read the task/spec/repository requirements and determine what evidence is actually required before integration.
+## Step 1: Verify Tests
 
-- If testing or a specific test command is explicitly required, run only that authorized test surface and stop on a real failure.
-- If testing is not authorized, do not run a test suite merely because the branch is being finished. Use fresh repository evidence and any required non-test checks instead.
-- Do not turn an optional confidence check into a merge prerequisite.
+Run the project's full test suite (`npm test` / `cargo test` / `pytest` / `go test ./...`).
 
-Continue to Step 2 once the requested completion criteria and explicitly required validation are satisfied.
+**If tests fail**, report the failures and stop — the menu comes after a green suite:
+
+```
+Tests failing (<N> failures). Must fix before completing:
+
+[Show failures]
+```
+
+**If tests pass:** continue to Step 2.
 
 ## Step 2: Detect Environment
 
@@ -89,16 +95,15 @@ git checkout <base-branch>
 git pull
 git merge <feature-branch>
 
-# Re-establish only integration evidence invalidated by the merge.
-# Run tests here only when testing is explicitly required for integration.
-<required validation command, if any>
+# Verify tests on merged result
+<test command>
 ```
 
-If required integration validation fails: stop, leave the worktree and branch in
+If tests fail on the merged result: stop, leave the worktree and branch in
 place, and investigate — nothing has been pushed, so the merge is local
 and recoverable.
 
-Once required integration evidence is satisfied: clean up the worktree (Step 6), then
+Once the merged result is green: clean up the worktree (Step 6), then
 delete the branch:
 
 ```bash
@@ -169,6 +174,29 @@ git worktree remove "$WORKTREE_PATH"
 git worktree prune  # Self-healing: clean up any stale registrations
 ```
 
+**If removal is refused** (`contains modified or untracked files`): the
+worktree holds files that exist nowhere else — uncommitted plans, notes,
+or scratch work. Never `--force` on your own initiative. Show your human
+partner what is at stake and ask:
+
+```bash
+git -C "$WORKTREE_PATH" status --porcelain -uall
+```
+
+```
+Worktree removal refused — these files were never committed:
+
+<file list>
+
+1. Commit them to <branch> before cleanup
+2. Move them into <main repo root>
+3. Delete them (unrecoverable)
+
+Which?
+```
+
+Carry out the choice, then remove the worktree.
+
 **Otherwise:** The host environment owns this workspace — leave it in
 place. If your platform provides a workspace-exit tool, use it.
 
@@ -185,12 +213,13 @@ place. If your platform provides a workspace-exit tool, use it.
 
 | Excuse | Reality |
 |--------|---------|
-| "Finishing always means run the full suite" | Integration does not create testing authorization. Run only tests or other validation explicitly required for this integration; otherwise use fresh repository evidence. |
+| "Tests passed earlier this session" | Run the suite on the tree you are about to integrate. A green run only proves the tree it ran on. |
 | "They obviously want it merged" | Integration is your human partner's decision. Present the menu and wait. |
 | "They seem done with this feature — I'll offer to discard it" | The menu is complete as written. Discard happens only when your human partner asks for it in so many words. |
 | "'Yeah, get rid of it' counts as confirmation" | Only the typed word `discard` authorizes deletion. |
 | "The PR is up, so the worktree is clutter now" | PR feedback gets fixed in that worktree. It stays until the work lands. |
 | "This other worktree looks stale — I'll clean it too" | Clean up only worktrees under `.worktrees/` or `worktrees/`. Everything else belongs to the host. |
-| "Required merged-result validation is probably flaky" | A failing required integration check stops the integration. Branch and worktree stay put while you investigate. |
+| "Removal refused — `--force` is just finishing the cleanup" | The refusal means files exist only in that worktree. `--force` destroys them permanently. Show your human partner and ask. |
+| "The merged-result failure is probably flaky" | A failing merged result stops everything. Branch and worktree stay put while you investigate. |
 | "The base branch is obviously main" | Confirm the fork point or ask. Merging into the wrong base is expensive to undo. |
 | "The push was rejected — force-push will fix it" | A rejected push means the remote moved. Investigate; force-push only on your human partner's explicit request. |

@@ -1,46 +1,95 @@
 ---
 name: requesting-code-review
-description: Use when the user explicitly asks for an independent code review, or an authoritative user-approved workflow requires one. Do not auto-trigger merely because implementation finished or a merge is approaching.
+description: Use when completing tasks, implementing major features, or before merging to verify work meets requirements
 ---
 
 # Requesting Code Review
 
-Independent review is an explicit workflow, not a default completion ritual. Causal Coding remains authoritative for whether another review cycle is in scope.
+Dispatch a code reviewer subagent to catch issues before they cascade. The reviewer gets precisely crafted context for evaluation — never your session's history.
 
-## Review Target
+**Core principle:** Review early, review often.
 
-Use the exact target the user/workflow requested: working tree, branch, commit range, pull request, patch, files, or implementation against a named plan/spec. Resolve the smallest reproducible review scope rather than reviewing the whole repository by default.
+## When to Request Review
 
-## Reviewer Selection
+**Mandatory:**
+- After each task in subagent-driven development
+- After completing major feature
+- Before merge to main
 
-Prefer, in order:
+**Optional but valuable:**
+- When stuck (fresh perspective)
+- Before refactoring (baseline check)
+- After fixing complex bug
 
-1. An installed `code-review` Skill when available for the target environment.
-2. A real independent reviewer/subagent when the runtime exposes one and independence is actually requested or required. Use [code-reviewer.md](code-reviewer.md) as the bounded prompt template.
-3. If neither exists, perform an inline self-review only when the user still wants a review and label it honestly as non-independent.
+## How to Request
 
-Do not invent a reviewer identity or claim independence that the runtime does not provide.
-
-## Review Contract
-
-- Keep review read-only unless the user separately asks to fix findings.
-- Give the reviewer requirements/plan, exact change scope, relevant repository rules, and enough surrounding code to validate findings; do not dump irrelevant conversation history.
-- Existing tests/results may be inspected as evidence. Running tests is not authorized merely because a review is happening; execute tests only when the user, authoritative specification, or mandatory repository policy independently requires it.
-- Require concrete, change-linked, reachable findings. Suppress style nits and speculative issues.
-- Treat reviewer feedback as evidence to evaluate, not commands to implement blindly. Use `receiving-code-review` when acting on returned feedback.
-
-## Git Range
-
-When a commit range is appropriate, resolve it explicitly rather than assuming `HEAD~1`:
-
+**1. Get git SHAs:**
 ```bash
-BASE_SHA=<resolved base or merge-base>
-HEAD_SHA=<reviewed head>
-git diff --stat "$BASE_SHA".."$HEAD_SHA"
+BASE_SHA=$(git rev-parse HEAD~1)  # or origin/main
+HEAD_SHA=$(git rev-parse HEAD)
 ```
 
-For dirty working-tree review, include staged, unstaged, and relevant untracked files instead of forcing an artificial commit range.
+**2. Dispatch code reviewer subagent:**
 
-## Stop Condition
+Dispatch a `general-purpose` subagent, filling the template at [code-reviewer.md](code-reviewer.md)
 
-Return the review result and stop. Do not automatically start fixes, another reviewer pass, tests, or a broader suite unless independently authorized.
+**Placeholders:**
+- `{DESCRIPTION}` - Brief summary of what you built
+- `{PLAN_OR_REQUIREMENTS}` - What it should do
+- `{BASE_SHA}` - Starting commit
+- `{HEAD_SHA}` - Ending commit
+
+**3. Act on feedback:**
+- Fix Critical issues immediately
+- Fix Important issues before proceeding
+- Note Minor issues for later
+- Push back if reviewer is wrong (with reasoning)
+
+## Example
+
+```
+[Just completed Task 2: Add verification function]
+
+You: Let me request code review before proceeding.
+
+BASE_SHA=$(git log --oneline | grep "Task 1" | head -1 | awk '{print $1}')
+HEAD_SHA=$(git rev-parse HEAD)
+
+[Dispatch code reviewer subagent]
+  DESCRIPTION: Added verifyIndex() and repairIndex() with 4 issue types
+  PLAN_OR_REQUIREMENTS: Task 2 from docs/superpowers/plans/deployment-plan.md
+  BASE_SHA: a7981ec
+  HEAD_SHA: 3df7661
+
+[Subagent returns]:
+  Strengths: Clean architecture, real tests
+  Issues:
+    Important: Missing progress indicators
+    Minor: Magic number (100) for reporting interval
+  Assessment: Ready to proceed
+
+You: [Fix progress indicators]
+[Continue to Task 3]
+```
+
+## Common Rationalizations
+
+| Excuse | Reality |
+|--------|---------|
+| "I'll just review the diff myself instead of dispatching a reviewer" | You're the coordinator — reviewing the diff inline burns the context window you need to keep driving the work. Dispatch a reviewer subagent: the diff and the evaluation live in its context, and only the findings come back to you. |
+| "The reviewer needs my whole session history to understand the change" | Hand it precisely crafted context, never your session's history. That keeps the reviewer on the work product, not your thought process. |
+
+## Red Flags
+
+**Never:**
+- Skip review because "it's simple"
+- Ignore Critical issues
+- Proceed with unfixed Important issues
+- Argue with valid technical feedback
+
+**If reviewer wrong:**
+- Push back with technical reasoning
+- Show code/tests that prove it works
+- Request clarification
+
+See template at: [code-reviewer.md](code-reviewer.md)

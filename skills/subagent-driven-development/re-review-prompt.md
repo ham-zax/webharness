@@ -43,6 +43,15 @@ Subagent (general-purpose):
     Your review is read-only on this checkout. Do not mutate the working
     tree, the index, HEAD, or branch state in any way.
 
+    ## You Do Not Dispatch Subagents
+
+    Do all of this review yourself. Never spawn a subagent to review part
+    of the diff, and never spawn another reviewer for a second opinion.
+    This process already provides every review seat the work gets; a
+    reviewer you spawn duplicates one of them at full cost, and its
+    verdict counts for nothing. If the diff feels too large for one
+    pass, review it in passes yourself and say so in your report.
+
     ## Scope
 
     Your scope is the findings list and the fix diff. Verdict every finding.
@@ -52,9 +61,15 @@ Subagent (general-purpose):
     does not block this task and does not extend the loop. A broad
     whole-branch review happens after all tasks are complete.
 
-    ## Validation and tests
+    ## Tests
 
-    Treat the implementer's fix report as unverified claims and verify required-validation claims against the diff. Re-review does not authorize tests. Run a test only when testing was already explicitly authorized by the task/spec/repository policy and the smallest authorized test is necessary to resolve a concrete review doubt. Never add a package-wide suite by ritual.
+    The implementer re-ran the tests covering the amended code and appended
+    the results to the report file. Treat the report as unverified claims:
+    confirm the fix report names the covering tests and shows their output,
+    and verify the claims against the diff. Do not re-run the suite to
+    confirm their report. Run a test only when reading the code raises a
+    specific doubt that no existing run answers — and then a focused test,
+    never a package-wide suite.
 
     ## Output Format
 

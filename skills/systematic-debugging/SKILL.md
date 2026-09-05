@@ -1,17 +1,15 @@
 ---
 name: systematic-debugging
-description: Root-cause debugging for concrete technical failures including bugs, failing builds or tests, integration issues, performance regressions, and unexpected behavior. Use before proposing or implementing a repair when diagnosis is required. Reproduce the symptom, trace the responsible owner, maintain one leading causal hypothesis, and falsify it with the smallest direct evidence. Compose with Causal Coding for source mutation; testing is opt-in and requires independent authorization.
+description: Use when encountering any bug, test failure, or unexpected behavior, before proposing fixes
 ---
 
 # Systematic Debugging
 
 ## Overview
 
-**Core principle:** Find the root cause before attempting a repair. Do not patch the visible symptom while the responsible owner remains unknown.
+**Core principle:** ALWAYS find root cause before attempting fixes. Symptom fixes are failure.
 
-Causal Coding remains authoritative for mutation scope, testing authorization, verification cadence, and stopping. This Skill governs diagnosis: establish the visible failure, demonstrated mismatch, violated invariant, responsible owner, and a falsifiable repair hypothesis.
-
-Testing is opt-in. Debugging requires a reproducible symptom and falsifiable evidence, not automatically an automated test. Create, modify, or run tests only when the user, authoritative user-approved specification, or mandatory repository policy explicitly authorizes testing.
+**Violating the letter of this process is violating the spirit of debugging.**
 
 ## The Iron Law
 
@@ -20,6 +18,28 @@ NO FIXES WITHOUT ROOT CAUSE INVESTIGATION FIRST
 ```
 
 If you haven't completed Phase 1, you cannot propose fixes.
+
+## When to Use
+
+Use for ANY technical issue:
+- Test failures
+- Bugs in production
+- Unexpected behavior
+- Performance problems
+- Build failures
+- Integration issues
+
+**Use this ESPECIALLY when:**
+- Under time pressure (emergencies make guessing tempting)
+- "Just one quick fix" seems obvious
+- You've already tried multiple fixes
+- Previous fix didn't work
+- You don't fully understand the issue
+
+**Don't skip when:**
+- Issue seems simple (simple bugs have root causes too)
+- You're in a hurry (rushing guarantees rework)
+- Manager wants it fixed NOW (systematic is faster than thrashing)
 
 ## The Four Phases
 
@@ -89,7 +109,7 @@ You MUST complete each phase before proceeding to the next.
 
    **WHEN error is deep in call stack:**
 
-   Read [references/root-cause-tracing.md](references/root-cause-tracing.md) when the failure is deep in a call chain or the bad value's origin is unclear.
+   See `root-cause-tracing.md` in this directory for the complete backward tracing technique.
 
    **Quick version:**
    - Where does bad value originate?
@@ -106,9 +126,9 @@ You MUST complete each phase before proceeding to the next.
    - What works that's similar to what's broken?
 
 2. **Compare Against References**
-   - If an existing implementation or documented pattern governs the broken path, read the smallest relevant material that establishes its contract
-   - Expand only when a concrete unanswered question could change the diagnosis
-   - Understand the required pattern before applying it
+   - If implementing pattern, read reference implementation COMPLETELY
+   - Don't skim - read every line
+   - Understand the pattern fully before applying
 
 3. **Identify Differences**
    - What's different between working and broken?
@@ -120,25 +140,24 @@ You MUST complete each phase before proceeding to the next.
    - What settings, config, environment?
    - What assumptions does it make?
 
-### Phase 3: Hypothesis and Falsification
+### Phase 3: Hypothesis and Testing
 
 **Scientific method:**
 
-1. **Form One Leading Hypothesis**
+1. **Form Single Hypothesis**
    - State clearly: "I think X is the root cause because Y"
-   - Be specific and falsifiable
-   - Keep one leading hypothesis at a time
+   - Write it down
+   - Be specific, not vague
 
-2. **Falsify Minimally**
-   - Use the smallest observation, command, runtime probe, or reversible change that can disprove the hypothesis
+2. **Test Minimally**
+   - Make the SMALLEST possible change to test hypothesis
    - One variable at a time
-   - Do not stack candidate fixes
-   - An automated test is only one possible probe and still requires independent testing authorization
+   - Don't fix multiple things at once
 
-3. **Evaluate Before Continuing**
-   - Supported? Proceed to Phase 4
-   - Contradicted? Return to the smallest reproduction and form a new hypothesis
-   - Do not add more fixes on top
+3. **Verify Before Continuing**
+   - Did it work? Yes → Phase 4
+   - Didn't work? Form NEW hypothesis
+   - DON'T add more fixes on top
 
 4. **When You Don't Know**
    - Say "I don't understand X"
@@ -150,12 +169,12 @@ You MUST complete each phase before proceeding to the next.
 
 **Fix the root cause, not the symptom:**
 
-1. **Establish a Failing Reproduction**
-   - Use the simplest observable reproduction of the real symptom
-   - Prefer direct runtime/input/output evidence when that is sufficient
-   - Use an automated test only when testing is explicitly authorized
-   - Do not create a one-off test script merely to manufacture a test requirement
-   - The reproduction must be capable of disproving the proposed fix
+1. **Create Failing Test Case**
+   - Simplest possible reproduction
+   - Automated test if possible
+   - One-off test script if no framework
+   - MUST have before fixing
+   - Use the `superpowers:test-driven-development` skill for writing proper failing tests
 
 2. **Implement Single Fix**
    - Address the root cause identified
@@ -164,44 +183,52 @@ You MUST complete each phase before proceeding to the next.
    - No bundled refactoring
 
 3. **Verify Fix**
-   - Does the original reproduction now succeed?
-   - Is the violated invariant restored at the responsible boundary?
-   - Run tests only when testing is independently authorized; otherwise do not expand the validation surface just because a bug was fixed
-   - Use the completion-evidence workflow before claiming success
+   - Test passes now?
+   - No other tests broken?
+   - Issue actually resolved?
+   - Use the `superpowers:verification-before-completion` skill before claiming success
 
-4. **If the Repair Doesn't Work**
-   - STOP and return to the original reproduction
-   - If two repair attempts were based on the same causal hypothesis, do not make a third repair under that hypothesis
-   - Re-establish the mismatch and responsible owner from new evidence before another repair
-   - Do not stack patches merely because the previous one failed
+4. **If Fix Doesn't Work**
+   - STOP
+   - Count: How many fixes have you tried?
+   - If < 3: Return to Phase 1, re-analyze with new information
+   - **If ≥ 3: STOP and question the architecture (step 5 below)**
+   - DON'T attempt Fix #4 without architectural discussion
 
-5. **Question Architecture Only When Evidence Requires It**
+5. **If 3+ Fixes Failed: Question Architecture**
 
-   **Signals of an architectural problem:**
-   - distinct evidence-backed repairs repeatedly expose the same shared-state or coupling flaw across owners
-   - the responsible invariant cannot be restored without changing an actual architecture or public-contract boundary
-   - each local repair necessarily creates a new failure elsewhere
+   **Pattern indicating architectural problem:**
+   - Each fix reveals new shared state/coupling/problem in different place
+   - Fixes require "massive refactoring" to implement
+   - Each fix creates new symptoms elsewhere
 
-   If the evidence now requires an architectural or public-contract decision, stop and surface that boundary before redesigning. Repeated failed guesses alone do not justify a rewrite.
+   **STOP and question fundamentals:**
+   - Is this pattern fundamentally sound?
+   - Are we "sticking with it through sheer inertia"?
+   - Should we refactor architecture vs. continue fixing symptoms?
+
+   **Discuss with your human partner before attempting more fixes**
+
+   This is NOT a failed hypothesis - this is a wrong architecture.
 
 ## Red Flags - STOP and Follow Process
 
 If you catch yourself thinking:
 - "Quick fix for now, investigate later"
 - "Just try changing X and see if it works"
-- "Add multiple changes and see what happens"
-- "Skip the reproduction; I'll just eyeball the fix"
+- "Add multiple changes, run tests"
+- "Skip the test, I'll manually verify"
 - "It's probably X, let me fix that"
 - "I don't fully understand but this might work"
 - "Pattern says X but I'll adapt it differently"
 - "Here are the main problems: [lists fixes without investigation]"
 - Proposing solutions before tracing data flow
-- **"One more fix attempt" under a causal hypothesis that already failed twice**
-- **Each attempted repair reveals a different owner without new evidence**
+- **"One more fix attempt" (when already tried 2+)**
+- **Each fix reveals new problem in different place**
 
 **ALL of these mean: STOP. Return to Phase 1.**
 
-Question architecture only when evidence establishes an architectural boundary, not merely because several guesses failed.
+**If 3+ fixes failed:** Question the architecture (see Phase 4.5)
 
 ## your human partner's Signals You're Doing It Wrong
 
@@ -221,11 +248,11 @@ Question architecture only when evidence establishes an architectural boundary, 
 | "Issue is simple, don't need process" | Simple issues have root causes too. Process is fast for simple bugs. |
 | "Emergency, no time for process" | Systematic debugging is FASTER than guess-and-check thrashing. |
 | "Just try this first, then investigate" | First fix sets the pattern. Do it right from the start. |
-| "I'll add a test because this is a bug fix" | A bug fix requires a falsifiable reproduction; automated testing is separate and only in scope when independently authorized. |
-| "Multiple fixes at once saves time" | You cannot isolate what changed the outcome. Make one causal repair at a time. |
-| "Reference too long, I'll adapt the pattern" | Read the relevant contract and governing implementation closely enough to know which differences matter; do not substitute guesswork for evidence. |
+| "I'll write test after confirming fix works" | Untested fixes don't stick. Test first proves it. |
+| "Multiple fixes at once saves time" | Can't isolate what worked. Causes new bugs. |
+| "Reference too long, I'll adapt the pattern" | Partial understanding guarantees bugs. Read it completely. |
 | "I see the problem, let me fix it" | Seeing symptoms ≠ understanding root cause. |
-| "One more fix attempt" under the same twice-failed hypothesis | Return to the original reproduction and establish a new evidence-backed hypothesis before another repair. |
+| "One more fix attempt" (after 2+ failures) | 3+ failures = architectural problem. Question pattern, don't fix again. |
 
 ## Quick Reference
 
@@ -233,8 +260,8 @@ Question architecture only when evidence establishes an architectural boundary, 
 |-------|---------------|------------------|
 | **1. Root Cause** | Read errors, reproduce, check changes, gather evidence | Understand WHAT and WHY |
 | **2. Pattern** | Find working examples, compare | Identify differences |
-| **3. Hypothesis** | Form one theory, falsify minimally | Supported or replaced hypothesis |
-| **4. Implementation** | Establish reproduction, repair owner, verify invariant | Original symptom resolved with required evidence |
+| **3. Hypothesis** | Form theory, test minimally | Confirmed or new hypothesis |
+| **4. Implementation** | Create test, fix, verify | Bug resolved, tests pass |
 
 ## When Process Reveals "No Root Cause"
 
@@ -249,7 +276,8 @@ If systematic investigation reveals issue is truly environmental, timing-depende
 
 ## Supporting Techniques
 
-Load these references only when the failure shape requires them:
+These techniques are part of systematic debugging and available in this directory:
 
-- [references/root-cause-tracing.md](references/root-cause-tracing.md) — trace a bad value or side effect backward to its originating owner.
-- [references/condition-based-waiting.md](references/condition-based-waiting.md) — diagnose timing/flakiness caused by arbitrary delays; use only when the task actually involves timing or explicitly authorized tests.
+- **`root-cause-tracing.md`** - Trace bugs backward through call stack to find original trigger
+- **`defense-in-depth.md`** - Add validation at multiple layers after finding root cause
+- **`condition-based-waiting.md`** - Replace arbitrary timeouts with condition polling

@@ -9,18 +9,19 @@ description: Use when receiving code review feedback, before implementing sugges
 
 Code review requires technical evaluation, not emotional performance.
 
-**Core principle:** Verify before implementing. Resolve ordinary ambiguity with evidence and the simplest reversible interpretation; ask only when the unresolved point would materially change the repair, contract, scope, or safety boundary.
+**Core principle:** Verify before implementing. Ask before assuming. Technical correctness over social comfort.
 
 ## The Response Pattern
 
 ```
 WHEN receiving code review feedback:
 
-1. READ: understand the complete feedback and its claimed failure
-2. VERIFY: check the claim against the actual code, contracts, and repository rules
-3. EVALUATE: confirm, narrow, reject, or convert the item to a material question
-4. IMPLEMENT: if fixes were requested, make the smallest complete in-scope repair
-5. EVIDENCE: re-establish only the evidence invalidated by that repair; tests require independent authorization
+1. READ: Complete feedback without reacting
+2. UNDERSTAND: Restate requirement in own words (or ask)
+3. VERIFY: Check against codebase reality
+4. EVALUATE: Technically sound for THIS codebase?
+5. RESPOND: Technical acknowledgment or reasoned pushback
+6. IMPLEMENT: One item at a time, test each
 ```
 
 ## Forbidden Responses
@@ -38,11 +39,22 @@ WHEN receiving code review feedback:
 
 ## Handling Unclear Feedback
 
-Do not let one unclear comment block unrelated clear work. Separate independent items first.
+```
+IF any item is unclear:
+  STOP - do not implement anything yet
+  ASK for clarification on unclear items
 
-- If the ambiguity can be resolved from code, contracts, or a simple reversible interpretation, resolve it and proceed.
-- If an unclear item materially changes a public contract, persistence, security/auth semantics, ownership, destructive behavior, or product scope, surface that decision before implementing that item.
-- If items are coupled such that the unclear point changes the correct fix for the others, pause that coupled group rather than guessing.
+WHY: Items may be related. Partial understanding = wrong implementation.
+```
+
+**Example:**
+```
+your human partner: "Fix 1-6"
+You understand 1,2,3,6. Unclear on 4,5.
+
+❌ WRONG: Implement 1,2,3,6 now, ask about 4,5 later
+✅ RIGHT: "I understand items 1,2,3,6. Need clarification on 4 and 5 before proceeding."
+```
 
 ## Source-Specific Handling
 
@@ -64,8 +76,8 @@ BEFORE implementing:
 IF suggestion seems wrong:
   Push back with technical reasoning
 
-IF evidence is unavailable:
-  state exactly what is unverified; proceed with a clearly labeled reversible assumption only when the uncertainty does not materially change the result
+IF can't easily verify:
+  Say so: "I can't verify this without [X]. Should I [investigate/ask/proceed]?"
 
 IF conflicts with your human partner's prior decisions:
   Stop and discuss with your human partner first
@@ -89,11 +101,13 @@ IF reviewer suggests "implementing properly":
 
 ```
 FOR multi-item feedback:
-  1. Group items by shared root cause / dependency
-  2. Fix the highest-consequence confirmed issue first
-  3. Keep each repair scoped to its demonstrated cause
-  4. Re-establish only the evidence invalidated by the repair
-  5. Run tests only when testing is independently authorized
+  1. Clarify anything unclear FIRST
+  2. Then implement in this order:
+     - Blocking issues (breaks, security)
+     - Simple fixes (typos, imports)
+     - Complex fixes (refactoring, logic)
+  3. Test each fix individually
+  4. Verify no regressions
 ```
 
 ## When To Push Back
@@ -116,7 +130,22 @@ Push back when:
 
 ## Acknowledging Correct Feedback
 
-When feedback is correct, state the technical conclusion or the change made. Do not add performative agreement or praise unless there is specific merit worth identifying.
+When feedback IS correct:
+```
+✅ "Fixed. [Brief description of what changed]"
+✅ "Good catch - [specific issue]. Fixed in [location]."
+✅ [Just fix it and show in the code]
+
+❌ "You're absolutely right!"
+❌ "Great point!"
+❌ "Thanks for catching that!"
+❌ "Thanks for [anything]"
+❌ ANY gratitude expression
+```
+
+**Why no thanks:** Actions speak. Just fix it. The code itself shows you heard the feedback.
+
+**If you catch yourself about to write "Thanks":** DELETE IT. State the fix instead.
 
 ## Gracefully Correcting Your Pushback
 
@@ -138,11 +167,11 @@ State the correction factually and move on.
 |---------|-----|
 | Performative agreement | State requirement or just act |
 | Blind implementation | Verify against codebase first |
-| Batch unrelated fixes | Group by root cause and preserve causal attribution |
+| Batch without testing | One at a time, test each |
 | Assuming reviewer is right | Check if breaks things |
 | Avoiding pushback | Technical correctness > comfort |
-| One unclear item blocks unrelated clear fixes | Separate independent items; escalate only the material ambiguity |
-| Can't verify, present guess as fact | State the limitation; use a labeled reversible assumption only when safe |
+| Partial implementation | Clarify all items first |
+| Can't verify, proceed anyway | State limitation, ask for direction |
 
 ## Real Examples
 

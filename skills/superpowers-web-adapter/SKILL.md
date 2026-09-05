@@ -9,7 +9,7 @@ Bridge the standalone Superpowers-derived Skills to ChatGPT/WSL execution withou
 
 ## Core rule
 
-When a standalone Superpowers-derived workflow is relevant, invoke the specific Skill that owns the task. Use `using-superpowers` only as a tie-breaker when several workflow Skills plausibly overlap; do not bootstrap every engineering turn through it.
+When a standalone Superpowers-derived workflow is relevant, invoke the specific Skill that owns the task before acting. Superpowers 6.3.0 also ships `using-superpowers` as a bootstrap skill; in ChatGPT, the product's own skill router already performs that pre-response matching, so do not recursively invoke `using-superpowers` merely to emulate another harness. If `using-superpowers` is itself selected or requested, follow it, then continue with the most specific applicable workflow skill.
 
 Treat this adapter as a compatibility layer only:
 
@@ -23,9 +23,9 @@ Treat this adapter as a compatibility layer only:
 
 Use the installed standalone Superpowers-derived Skills for the engineering workflow pieces that still apply:
 
-- Explicit ideation/design work, or implementation blocked by material product/architecture ambiguity -> `brainstorming`. Clear implementation work does not require a brainstorming gate.
+- Creative implementation work, feature design, new functionality, or behavior changes -> `brainstorming` first, matching the current 6.3.0 skill. Use its Spike/Bounded/Architectural classification and preserve the human-approval gate. If the same design/intent has already been explicitly approved in the current conversation, treat that approval as satisfied rather than asking the user to repeat it. Causal Coding still governs whether mutation may proceed.
 - Bug, failing test, unexpected behavior, or regression -> `systematic-debugging`.
-- Feature or bugfix implementation -> use the normal implementation workflow without introducing tests by default. Invoke `test-driven-development` only when the user explicitly requests TDD/testing, an authoritative user-approved specification requires it, or mandatory repository policy specifically requires it.
+- Feature or bugfix implementation -> use the normal implementation workflow without introducing tests by default. The 6.3.0 Superpowers skills may say that TDD applies, but that wording does not create testing authority in this ChatGPT composition. Invoke or apply `test-driven-development` only when the user explicitly requests TDD/testing, an authoritative user-approved specification requires it, or mandatory repository policy specifically requires it; otherwise preserve Causal Coding's non-test implementation path.
 - Requirements/spec for multi-step work -> `writing-plans`.
 - Existing implementation plan -> `executing-plans` by default. Use `subagent-driven-development` only when the user explicitly requests that delegated workflow.
 - Starting work that has already passed the isolation gate below -> `using-git-worktrees`. Never invoke it merely because an implementation plan exists.
@@ -35,6 +35,8 @@ Use the installed standalone Superpowers-derived Skills for the engineering work
 - After implementation is verified and integration is next -> `finishing-a-development-branch`.
 
 Do not route to a subagent-dependent Superpowers skill merely because it exists. Use the fallback matrix below when this web session has no subagent dispatch primitive.
+
+Superpowers 6.3.0 also includes Brainstorming's optional Visual Companion. In ChatGPT Web, use that companion only when the current product actually exposes the companion runtime and the user accepts the skill's just-in-time offer. Do not substitute WebHarness `browser-fast` or `browser-devtools` merely to imitate the companion; those surfaces control real resource-local browsers and have different ownership/authority.
 
 ## Local-PC execution contract
 

@@ -1,23 +1,21 @@
 ---
 name: writing-skills
-description: Legacy/advanced pressure-testing guidance for skill authoring. Use only when explicitly asked to pressure-test a Skill with TDD-style scenarios or when another authoritative workflow specifically requires that mode; normal ChatGPT Skill creation/update uses skill-creator instead.
+description: Use when creating new skills, editing existing skills, or verifying skills work before deployment
 ---
 
 # Writing Skills
 
 ## Overview
 
-For ChatGPT Skill creation, editing, validation, and packaging, use `skill-creator` as the authoritative workflow when it is available. This legacy Skill does **not** make TDD, subagent pressure scenarios, or baseline-failure exercises mandatory for ordinary Skill work.
+**Writing skills IS Test-Driven Development applied to process documentation.**
 
-The TDD/pressure-testing material below is an explicit opt-in mode. Use it only when the user specifically requests pressure testing/TDD for a Skill or an authoritative workflow mandates it. Otherwise write/update the Skill directly, validate/package it through `skill-creator`, and stop.
-
-**In explicit pressure-testing mode, writing skills uses Test-Driven Development ideas for process documentation.**
+**Personal skills live in your runtime's skills directory** (`~/.claude/skills/` on Claude Code) — see [codex-tools.md](../using-superpowers/references/codex-tools.md) or [gemini-tools.md](../using-superpowers/references/gemini-tools.md) for the path on those runtimes. Codex, Copilot CLI, and Gemini CLI all also recognize `~/.agents/skills/` as a cross-runtime alias.
 
 You write test cases (pressure scenarios with subagents), watch them fail (baseline behavior), write the skill (documentation), watch tests pass (agents comply), and refactor (close loopholes).
 
 **Core principle:** If you didn't watch an agent fail without the skill, you don't know if the skill teaches the right thing.
 
-**Pressure-testing background:** When explicit TDD/pressure-testing mode is authorized, use the standalone `test-driven-development` Skill if it is installed before applying the RED-GREEN-REFACTOR material below. Do not load or apply TDD merely because a Skill is being created or edited.
+**REQUIRED BACKGROUND:** You MUST understand superpowers:test-driven-development before using this skill. That skill defines the fundamental RED-GREEN-REFACTOR cycle. This skill adapts TDD to documentation.
 
 **Official guidance:** For Anthropic's official skill authoring best practices, see anthropic-best-practices.md. This document provides additional patterns and guidelines that complement the TDD-focused approach in this skill.
 
@@ -170,7 +168,7 @@ description: Use for TDD - write test first, watch it fail, write minimal code, 
 description: Use when executing implementation plans with independent tasks in the current session
 
 # ✅ GOOD: Triggering conditions only
-description: Use only when the user explicitly requests test-first/TDD implementation or an authoritative workflow requires it
+description: Use when implementing any feature or bugfix, before writing implementation code
 ```
 
 **Content:**
@@ -282,8 +280,8 @@ wc -w skills/path/SKILL.md
 **When writing documentation that references other skills:**
 
 Use skill name only, with explicit requirement markers:
-- ✅ Good: `**REQUIRED SUB-SKILL:** Use test-driven-development`
-- ✅ Good: `**REQUIRED BACKGROUND:** You MUST understand systematic-debugging`
+- ✅ Good: `**REQUIRED SUB-SKILL:** Use superpowers:test-driven-development`
+- ✅ Good: `**REQUIRED BACKGROUND:** You MUST understand superpowers:systematic-debugging`
 - ❌ Bad: `See skills/testing/test-driven-development` (unclear if required)
 - ❌ Bad: `@skills/testing/test-driven-development/SKILL.md` (force-loads, burns context)
 
@@ -392,7 +390,7 @@ Edit skill without testing? Same violation.
 - Don't "adapt" while running tests
 - Delete means delete
 
-**REQUIRED BACKGROUND:** When pressure testing is explicitly authorized, the standalone `test-driven-development` Skill explains why this matters. The same principles apply to documentation.
+**REQUIRED BACKGROUND:** The superpowers:test-driven-development skill explains why this matters. Same principles apply to documentation.
 
 ## Testing All Skill Types
 
@@ -548,7 +546,7 @@ Make it easy for agents to self-check when rationalizing:
 Add to description: symptoms of when you're ABOUT to violate the rule:
 
 ```yaml
-description: use only when explicit TDD/test-first authorization exists and the workflow is about to violate that authorized discipline
+description: use when implementing any feature or bugfix, before writing implementation code
 ```
 
 ## RED-GREEN-REFACTOR for Skills

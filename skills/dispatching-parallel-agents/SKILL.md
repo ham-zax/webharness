@@ -1,6 +1,6 @@
 ---
 name: dispatching-parallel-agents
-description: Use when the user explicitly asks for parallel agents, or when multiple genuinely independent tasks materially benefit from concurrent delegated work without shared writable state or sequential dependencies. Do not dispatch agents merely because several tasks exist.
+description: Use when facing 2+ independent tasks that can be worked on without shared state or sequential dependencies
 ---
 
 # Dispatching Parallel Agents
@@ -9,11 +9,9 @@ description: Use when the user explicitly asks for parallel agents, or when mult
 
 You delegate tasks to specialized agents with isolated context. By precisely crafting their instructions and context, you ensure they stay focused and succeed at their task. They should never inherit your session's context or history — you construct exactly what they need. This also preserves your own context for coordination work.
 
-Parallel delegation is worthwhile only when independence is real and the coordination cost is lower than doing the work sequentially.
+When you have multiple unrelated failures (different test files, different subsystems, different bugs), investigating them sequentially wastes time. Each investigation is independent and can happen in parallel.
 
-**Core principle:** dispatch one bounded agent per genuinely independent problem domain only when parallelism materially helps.
-
-Delegation does not expand testing scope. Each delegated mission inherits the original task's test authorization; do not tell agents to add, modify, or run tests unless the user/spec/repository policy already authorized testing for that mission.
+**Core principle:** Dispatch one agent per independent problem domain. Let them work concurrently.
 
 ## When to Use
 
@@ -36,17 +34,15 @@ digraph when_to_use {
 ```
 
 **Use when:**
-- the user explicitly requests multiple/parallel agents;
-- several independent subsystems or failures can be investigated without shared writable state;
-- each mission can be specified self-containedly;
-- concurrency materially reduces elapsed work or protects coordinator context.
+- 3+ test files failing with different root causes
+- Multiple subsystems broken independently
+- Each problem can be understood without context from others
+- No shared state between investigations
 
 **Don't use when:**
-- tasks are related or one result can change another task;
-- a single agent needs the full system context;
-- agents would edit the same files/state or compete for the same resource;
-- delegation overhead exceeds the benefit;
-- the only reason is that there is more than one checklist item.
+- Failures are related (fix one might fix others)
+- Need to understand full system state
+- Agents would interfere with each other
 
 ## The Pattern
 
@@ -85,7 +81,7 @@ Multiple dispatch calls in one response = parallel execution. One per response =
 When agents return:
 - Read each summary
 - Verify fixes don't conflict
-- Run only integration validation explicitly required by the original task/spec/repository policy; a full test suite is not automatic
+- Run full test suite
 - Integrate all changes
 
 ## Agent Prompt Structure
@@ -160,12 +156,12 @@ Agent 3 → Fix tool-approval-race-conditions.test.ts
 - Agent 2: Fixed event structure bug (threadId in wrong place)
 - Agent 3: Added wait for async tool execution to complete
 
-**Integration:** All fixes independent, no conflicts, explicitly required integration validation green
+**Integration:** All fixes independent, no conflicts, full suite green
 
 ## Verification
 
 After agents return:
 1. **Review each summary** - Understand what changed
 2. **Check for conflicts** - Did agents edit same code?
-3. **Run required integration validation** - Use tests only when testing was already authorized; do not add a full-suite gate by ritual
-4. **Spot check** - Use bounded non-test evidence where sufficient; agents can make systematic errors
+3. **Run full suite** - Verify all fixes work together
+4. **Spot check** - Agents can make systematic errors

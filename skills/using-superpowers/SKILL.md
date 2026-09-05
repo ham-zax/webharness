@@ -1,32 +1,63 @@
 ---
 name: using-superpowers
-description: Lightweight router for the standalone Superpowers-derived engineering Skills in ChatGPT. Use when several engineering workflow Skills could plausibly apply and the correct sequence is unclear. Do not use as a global bootstrap for ordinary conversation.
+description: Use when starting any conversation - establishes how to find and use skills, requiring skill invocation before ANY response including clarifying questions
 ---
 
-# Superpowers Workflow Router
+<SUBAGENT-STOP>
+If you were dispatched as a subagent to execute a specific task, ignore this skill.
+</SUBAGENT-STOP>
 
-Use ChatGPT's native Skill routing first. This Skill is only a tie-breaker when several standalone Superpowers-derived workflows overlap.
+<EXTREMELY-IMPORTANT>
+If you think there is even a 1% chance a skill might apply to what you are doing, you ABSOLUTELY MUST invoke the skill.
 
-For source mutation, Causal Coding remains authoritative for scope, testing authorization, verification cadence, and stopping. This router must not add tests, reviews, worktrees, approval gates, or other process merely because a Superpowers workflow mentions them.
+IF A SKILL APPLIES TO YOUR TASK, YOU DO NOT HAVE A CHOICE. YOU MUST USE IT.
 
-## Route the Engineering Task
+This is not negotiable. You cannot rationalize your way out of this.
+</EXTREMELY-IMPORTANT>
 
-- Materially ambiguous product/design problem, or explicit ideation/design request -> `brainstorming`.
-- Concrete bug, failing build/test, regression, or unexplained behavior -> `systematic-debugging`.
-- Multi-step implementation plan requested -> `writing-plans`.
-- Existing plan to execute -> `executing-plans`; use `subagent-driven-development` only when the user explicitly requests that high-process delegated workflow.
-- Independent parallel work that genuinely benefits from separate agents -> `dispatching-parallel-agents`.
-- Workspace isolation is actually justified -> `using-git-worktrees`.
-- User provides review feedback to evaluate -> `receiving-code-review`.
-- User or authoritative workflow explicitly asks for an independent review -> `requesting-code-review`.
-- Explicit TDD/test-first requirement -> `test-driven-development`.
-- About to make a completion/readiness claim -> `verification-before-completion`.
-- Branch/worktree integration or cleanup decision -> `finishing-a-development-branch`.
+## The Rule
 
-Do not route a clear implementation task through brainstorming merely because it changes behavior. Do not introduce a review, worktree, subagent, or testing phase unless independently justified.
+**Invoke relevant or requested skills BEFORE any response or action** — including clarifying questions, exploring the codebase, or checking files. If it turns out wrong for the situation, you don't have to use it.
 
-## Composition
+**Before entering plan mode:** if you haven't already brainstormed, invoke the brainstorming skill first.
 
-If `superpowers-web-adapter` applies, let it adapt local ChatGPT/WSL execution details while this Skill only selects the workflow. Repository instructions and the user's current request remain authoritative within their scope.
+Then announce "Using [skill] to [purpose]" and follow the skill exactly. If it has a checklist, create a todo per item.
 
-Prefer the smallest sufficient workflow. If one specialized Skill clearly owns the task, invoke that Skill directly and stop routing.
+## Skill Priority
+
+When multiple skills apply, process skills come first — they set the approach, then implementation skills (frontend-design, etc.) carry it out. Brainstorming and systematic-debugging are Superpowers' most common process skills, but the rule holds for any of them.
+
+- "Let's build X" → superpowers:brainstorming first, then implementation skills.
+- "Fix this bug" → superpowers:systematic-debugging first, then domain skills.
+
+## Red Flags
+
+These thoughts mean STOP—you're rationalizing:
+
+| Thought | Reality |
+|---------|---------|
+| "This is just a simple question" | Questions are tasks. Check for skills. |
+| "I need more context first" | Skill check comes BEFORE clarifying questions. |
+| "Let me explore the codebase first" | Skills tell you HOW to explore. Check first. |
+| "I can check git/files quickly" | Files lack conversation context. Check for skills. |
+| "Let me gather information first" | Skills tell you HOW to gather information. |
+| "This doesn't need a formal skill" | If a skill exists, use it. |
+| "I remember this skill" | Skills evolve. Read current version. |
+| "This doesn't count as a task" | Action = task. Check for skills. |
+| "The skill is overkill" | Simple things become complex. Use it. |
+| "I'll just do this one thing first" | Check BEFORE doing anything. |
+| "This feels productive" | Undisciplined action wastes time. Skills prevent this. |
+| "I know what that means" | Knowing the concept ≠ using the skill. Invoke it. |
+
+## Platform Adaptation
+
+If your harness appears here, read its reference file for special instructions:
+
+- Codex: `references/codex-tools.md`
+- Pi: `references/pi-tools.md`
+- Antigravity: `references/antigravity-tools.md`
+- Hermes Agent: `references/hermes-tools.md`
+
+## User Instructions
+
+User instructions (CLAUDE.md, AGENTS.md, GEMINI.md, etc, direct requests) take precedence over skills, which in turn override default behavior. Only skip skill workflows or instructions when your human partner has explicitly told you to.

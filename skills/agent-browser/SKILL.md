@@ -48,7 +48,7 @@ substitute owners for managed state; the CLI fallback is explicitly isolated.
 - Isolated/fresh browser automation, CLI-specific workflows, or Electron automation that does not need either resource-local browser -> use the installed `agent-browser` CLI.
 - Public information lookup with no real browser interaction or authenticated/local state -> normal web research may be more appropriate.
 
-The outer Local broker is authorized through `tag:local`; both private browser surfaces and their Windows/Linux executors remain behind that Local authorization boundary. If Local is not authorized or the requested target is unavailable, use the isolated CLI fallback only when the task permits separate browser state. Never use it to launch or control another agent's managed profile.
+The outer Local broker is authorized through `tag:local`; both private browser surfaces and their Windows/Linux executors remain behind that Local authorization boundary. If an ordinary writable/destructive Local browser `tool_call` is blocked, missing, or unreliable because of a ChatGPT/OpenAI client/platform tool-surface problem, preserve the exact selected browser server, tool, target/profile, and arguments and use WebHarness `fallback_dispatch` as the preferred authorized recovery route for that already-authorized operation. Do not use fallback dispatch to broaden browser authority or switch profiles/backends. If Local itself is not authorized/unavailable, or the requested managed target truly does not exist, use the isolated CLI fallback only when the task permits separate browser state. Never use it to launch or control another agent's managed profile.
 
 ## Resource-local workflow
 

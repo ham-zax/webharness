@@ -1,6 +1,6 @@
 ---
 name: verification-before-completion
-description: Use when about to claim work is complete, fixed, passing, committed, or ready. Require fresh claim-specific evidence before assertions, without introducing tests or broad checks that the task did not authorize.
+description: Use when about to claim work is complete, fixed, or passing, before committing or creating PRs - requires running verification commands and confirming output before making any success claims; evidence before assertions always
 ---
 
 # Verification Before Completion
@@ -17,17 +17,17 @@ description: Use when about to claim work is complete, fixed, passing, committed
 NO COMPLETION CLAIMS WITHOUT FRESH VERIFICATION EVIDENCE
 ```
 
-Use fresh evidence from the authoritative environment. A command is required only when the claim itself depends on command execution; focused reads, diffs, status, or direct behavior may be the correct evidence for other claims. This Skill does not authorize tests.
+If you haven't run the verification command in this message, you cannot claim it passes.
 
 ## The Gate Function
 
 ```
 BEFORE claiming any status or expressing satisfaction:
 
-1. IDENTIFY: What smallest authoritative evidence proves this claim?
-2. OBTAIN: Read/inspect/run only that evidence fresh. Run tests only when testing is independently authorized.
-3. READ: Inspect the complete relevant result, including exit status when a command was used.
-4. VERIFY: Does the evidence confirm the claim?
+1. IDENTIFY: What command proves this claim?
+2. RUN: Execute the FULL command (fresh, complete)
+3. READ: Full output, check exit code, count failures
+4. VERIFY: Does output confirm the claim?
    - If NO: State actual status with evidence
    - If YES: State claim WITH evidence
 5. ONLY THEN: Make the claim
@@ -42,8 +42,8 @@ Skip any step = lying, not verifying
 | Tests pass | Test command output: 0 failures | Previous run, "should pass" |
 | Linter clean | Linter output: 0 errors | Partial check, extrapolation |
 | Build succeeds | Build command: exit 0 | Linter passing, logs look good |
-| Bug fixed | Original symptom/reproduction no longer fails and responsible invariant is restored | Code changed, assumed fixed |
-| Regression test works (only when testing was authorized) | Required test behavior demonstrated under the authorized test workflow | Test file merely exists |
+| Bug fixed | Test original symptom: passes | Code changed, assumed fixed |
+| Regression test works | Red-green cycle verified | Test passes once |
 | Agent completed | VCS diff shows changes | Agent reports "success" |
 | Requirements met | Line-by-line checklist | Tests passing |
 
@@ -62,7 +62,7 @@ Skip any step = lying, not verifying
 
 | Excuse | Reality |
 |--------|---------|
-| "Should work now" | Obtain fresh claim-specific evidence |
+| "Should work now" | RUN the verification |
 | "I'm confident" | Confidence ≠ evidence |
 | "Just this once" | No exceptions |
 | "Linter passed" | Linter ≠ compiler |
@@ -73,13 +73,17 @@ Skip any step = lying, not verifying
 
 ## Key Patterns
 
-**Tests, only when testing is independently authorized:**
+**Tests:**
 ```
-✅ [Run the authorized test command] [See: 34/34 pass] "All authorized tests pass"
+✅ [Run test command] [See: 34/34 pass] "All tests pass"
 ❌ "Should pass now" / "Looks correct"
 ```
 
-Do not create, modify, or run tests merely because a completion claim is approaching. Testing authorization comes from the user, authoritative user-approved specification, or mandatory repository policy—not from this Skill.
+**Regression tests (TDD Red-Green):**
+```
+✅ Write → Run (pass) → Revert fix → Run (MUST FAIL) → Restore → Run (pass)
+❌ "I've written a regression test" (without red-green verification)
+```
 
 **Build:**
 ```
@@ -95,7 +99,7 @@ Do not create, modify, or run tests merely because a completion claim is approac
 
 **Agent delegation:**
 ```
-✅ Agent reports success → Check authoritative VCS/artifact evidence → Report actual state
+✅ Agent reports success → Check VCS diff → Verify changes → Report actual state
 ❌ Trust agent report
 ```
 

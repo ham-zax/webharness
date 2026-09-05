@@ -33,9 +33,9 @@ Subagent (general-purpose):
 
     Once you're clear on requirements:
     1. Implement exactly what the task specifies
-    2. Create/modify tests only if the task, authoritative spec, or mandatory repository policy explicitly requires testing; follow TDD only if TDD itself is required
-    3. Establish the task's observable success conditions and run only explicitly required validation
-    4. Commit your work when the assigned workflow authorizes committing
+    2. Write tests (following TDD if task says to)
+    3. Verify implementation works
+    4. Commit your work
     5. Self-review (see below)
     6. Report back
 
@@ -44,7 +44,20 @@ Subagent (general-purpose):
     **While you work:** If you encounter something unexpected or unclear, **ask questions**.
     It's always OK to pause and clarify. Don't guess or make assumptions.
 
-    While iterating, use direct evidence first. Run tests only when testing is explicitly authorized for this task, and run a full suite only when that exact broader command is required by the task/spec/repository policy.
+    While iterating, run the focused test for what you're changing; run the
+    full suite once before committing, not after every edit.
+
+    ## You Do Not Dispatch Subagents
+
+    Do all of this task's work yourself. Never spawn a subagent to
+    implement part of the task, and above all never spawn a reviewer to
+    check your work. Self-review (below) means reading your own diff.
+    Review is the controller's job: after you report, it dispatches a
+    fresh reviewer against your diff. A reviewer you spawn duplicates
+    that review at full cost, and its approval counts for nothing in
+    the process. If you catch yourself thinking "an independent review
+    would strengthen my report" — that review is already scheduled.
+    Report instead.
 
     ## Code Organization
 
@@ -95,25 +108,28 @@ Subagent (general-purpose):
     - Did I only build what was requested?
     - Did I follow existing patterns in the codebase?
 
-    **Validation/testing:**
-    - Was testing explicitly authorized for this task? If not, do not add, modify, or run tests.
-    - If tests were required, do they verify the required behavior rather than incidental implementation details?
-    - Did I follow TDD only if TDD was explicitly required?
-    - Did I avoid broad validation that the task did not require?
+    **Testing:**
+    - Do tests actually verify behavior (not just mock behavior)?
+    - Did I follow TDD if required?
+    - Are tests comprehensive?
+    - Is the test output pristine (no stray warnings or noise)?
 
     If you find issues during self-review, fix them now before reporting.
 
     ## After Review Findings
 
     If the task review finds issues, you will be resumed with the findings.
-    Fix them, re-establish only validation required for the amended code, and append a fix report to your report file: what you changed, the required validation you ran (if any), the command, and the output. Do not introduce tests unless already authorized. Reviewers rely on the evidence you actually provide. Then reply with the same short
+    Fix them, re-run the tests that cover the amended code, and append a fix
+    report to your report file: what you changed, the covering tests you
+    ran, the command, and the output. Reviewers will not re-run tests for
+    you — your report is the test evidence. Then reply with the same short
     status contract as your first report.
 
     ## Report Format
 
     Write your full report to [REPORT_FILE]:
     - What you implemented (or what you attempted, if blocked)
-    - Required validation actually run, if any; otherwise `none`
+    - What you tested and test results
     - **TDD Evidence** (if TDD was required for this task):
       - RED: command run, relevant failing output before implementation, and why the failure was expected
       - GREEN: command run and relevant passing output after implementation
@@ -125,7 +141,7 @@ Subagent (general-purpose):
     report file):
     - **Status:** DONE | DONE_WITH_CONCERNS | BLOCKED | NEEDS_CONTEXT
     - Commits created (short SHA + subject)
-    - One-line required-validation summary (e.g. "typecheck passed" or "none required")
+    - One-line test summary (e.g. "14/14 passing, output pristine")
     - Your concerns, if any
     - The report file path
 

@@ -5,7 +5,7 @@ reads the task's diff once and returns two verdicts: spec compliance and
 code quality.
 
 **Purpose:** Verify one task's implementation matches its requirements (nothing
-more, nothing less) and is well-built (clean, maintainable, and validated only as required)
+more, nothing less) and is well-built (clean, tested, maintainable)
 
 ```
 Subagent (general-purpose):
@@ -52,6 +52,15 @@ Subagent (general-purpose):
     Your review is read-only on this checkout. Do not mutate the working
     tree, the index, HEAD, or branch state in any way.
 
+    ## You Do Not Dispatch Subagents
+
+    Do all of this review yourself. Never spawn a subagent to review part
+    of the diff, and never spawn another reviewer for a second opinion.
+    This process already provides every review seat the work gets; a
+    reviewer you spawn duplicates one of them at full cost, and its
+    verdict counts for nothing. If the diff feels too large for one
+    pass, review it in passes yourself and say so in your report.
+
     ## Do Not Trust the Report
 
     Treat the implementer's report as unverified claims about the code. It
@@ -61,11 +70,26 @@ Subagent (general-purpose):
     implementer grading their own work. Judge the code on its merits — a
     stated rationale never downgrades a finding's severity.
 
-    ## Validation and tests
+    ## Tests
 
-    Reviewing a delegated task does not authorize tests. Inspect the implementer's reported validation and existing test code/results as evidence. Run a test only when testing was explicitly authorized by the task/spec/repository policy; even then, run only the smallest authorized command needed to resolve a concrete review doubt, never a package-wide suite by ritual.
+    The implementer already ran the tests and reported results with TDD
+    evidence for exactly this code. Do not re-run the suite to confirm their
+    report. Run a test only when reading the code raises a specific doubt
+    that no existing run answers — and then a focused test, never a
+    package-wide suite, race detector run, or repeated/high-count loop. If
+    heavy validation seems warranted, recommend it in your report instead of
+    running it. If you cannot run commands in this environment, name the
+    test you would run.
 
-    If testing was not authorized, do not penalize the task for lacking new test execution. Judge the observable behavior, diff, contracts, and any required non-test validation instead.
+    Warnings or other noise in the implementer's reported test output are
+    findings — test output should be pristine.
+
+    Evidence you cannot see is not evidence that doesn't exist. If the
+    report or its test evidence looks truncated, or you cannot locate the
+    results it claims, re-read the file at its stated path — and if it is
+    genuinely missing or garbled, report that as a gap for the controller.
+    Re-running the suite to regenerate what you failed to read is not
+    verification; illegibility of the evidence is not invalidation of it.
 
     ## Part 1: Spec Compliance
 
@@ -77,6 +101,12 @@ Subagent (general-purpose):
       "nice to haves"
     - **Misunderstood:** right feature built the wrong way, wrong problem
       solved
+
+    If the brief lists several files each with its own change (a batched
+    dispatch), check the diff against that list file by file: every listed
+    file must have its corresponding hunk. A listed file the diff never
+    touches is a Missing finding, no matter how clean the rest of the
+    batch looks.
 
     If a requirement cannot be verified from this diff alone (it lives in
     unchanged code or spans tasks), report it as a ⚠️ item instead of
@@ -90,9 +120,9 @@ Subagent (general-purpose):
     - DRY without premature abstraction?
     - Edge cases handled?
 
-    **Tests, only when testing was authorized and tests changed:**
-    - Do the authorized new/changed tests verify real required behavior rather than incidental implementation details?
-    - Do not request extra coverage merely because more cases are imaginable.
+    **Tests:**
+    - Do the new and changed tests verify real behavior, not mocks?
+    - Are the task's edge cases covered?
 
     **Structure:**
     - Does each file have one clear responsibility with a well-defined interface?
