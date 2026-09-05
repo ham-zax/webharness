@@ -1,6 +1,8 @@
 # WebSession master bearer
 
-The WebSession master bearer is an optional password-equivalent bootstrap secret for richer HTTP clients. It is not an ordinary WebSession submission capability and is never accepted by `/v1/calls` or any URL-based universal GET route.
+The WebSession master bearer is an optional password-equivalent bootstrap secret for richer HTTP clients. It is useful for any AI environment that can make HTTPS POST requests with a custom `Authorization` header; it is not tied to a particular model, SDK, or programming language. It is not an ordinary WebSession submission capability and is never accepted by `/v1/calls` or any URL-based universal GET route.
+
+WebSession itself is manual/on-demand. The operator must explicitly start `bin/adapter start` before the public `/v1/*` routes are usable and may stop it with `bin/adapter stop` when the access window is over. The main WebHarness `/mcp` lifecycle does not supervise the adapter.
 
 ## Lifetime
 
@@ -74,4 +76,4 @@ A GET-only client such as a constrained `open`-only session cannot safely use th
 
 ## Security boundary
 
-The master bearer does not expand WebSession or 1MCP permissions. It only bootstraps an ordinary WebSession capability for the adapter's existing authenticated 1MCP authority. Tool names, schemas, availability, OAuth scope, and effective permissions remain owned by 1MCP.
+The master bearer does not expand WebSession or 1MCP permissions. It only bootstraps an ordinary WebSession capability for the adapter's existing authenticated 1MCP authority. Tool names, schemas, availability, OAuth scope, and effective permissions remain owned by 1MCP. WebSession discovers that live catalog from 1MCP rather than maintaining per-tool mappings, so clients should rediscover tools instead of hard-coding a stale list.

@@ -1,16 +1,39 @@
 # WebSession client bootstrap prompts
 
-Use this guide when connecting chat-based AI clients to the existing WSL bridge through WebSession.
+Use this guide when connecting an AI environment to the existing WSL bridge through ordinary HTTPS. WebSession is intentionally an **on-demand transport adapter**: the main WebHarness lifecycle does not start, stop, or supervise it.
 
-WebSession is a transport adapter only. 1MCP remains the authority for OAuth scope, tool names, tool schemas, availability, and permissions. For master-bearer lifetime, rotation, exchange, and storage rules, see [WebSession master bearer](websession-master-bearer.md).
+While the adapter is running, an AI environment with a usable outbound HTTPS primitive can use WebSession as long as it can retain an ordinary capability secret for the session. Programmable clients that support POST plus custom headers use the richer JSON profile. Constrained `GET`/`open`/`fetch`-only agents use the universal GET profile with an explicit confirmation step. Native MCP clients should normally use `/mcp` directly and treat WebSession as an optional secondary path.
+
+WebSession does not maintain a copied tool catalog or per-tool compatibility layer. It asks the authenticated live 1MCP endpoint for current tool names and schemas during discovery and verifies availability again before dispatch. 1MCP therefore remains the authority for OAuth scope, tool names, tool schemas, availability, and permissions. Rediscover tools in a fresh client session rather than hard-coding a previously observed catalog.
+
+For master-bearer lifetime, rotation, exchange, and storage rules, see [WebSession master bearer](websession-master-bearer.md).
+
+## Compatibility at a glance
+
+| Client capability | WebSession profile | Credential bootstrap |
+|---|---|---|
+| HTTPS GET + POST + custom headers | enhanced JSON (`json-post-v1`) | master bearer exchange or finite capability |
+| Generic code/runtime HTTP client | enhanced JSON (`json-post-v1`) | master bearer exchange or finite capability |
+| HTTPS GET/open/fetch only | universal GET (`universal-get-v1`) | finite capability issued by the operator |
+| Native MCP client | direct `/mcp` preferred | normal MCP OAuth; WebSession optional |
+
+An environment with no outbound HTTPS primitive, or one that cannot safely retain a capability secret between requests, cannot use WebSession.
 
 ## Operator setup
 
-From the repository root:
+Start the adapter only when you want the HTTP compatibility path exposed:
 
 ```bash
+bin/adapter start
 bin/adapter auth-status
 bin/adapter status
+```
+
+The main `/mcp` endpoint is independent. The public `/v1/*` WebSession routes are available only while the adapter is running; when it is stopped those routes are intentionally unavailable (typically surfaced by the tunnel as an upstream error).
+
+For a finite client capability:
+
+```bash
 bin/adapter issue-cap 3600
 ```
 
@@ -29,7 +52,11 @@ Give the client the value after `capability:`. Do not give it `capability_id`; t
 bin/adapter revoke-cap <capability-id>
 ```
 
-Treat the capability as a secret. Do not commit it, paste it into documentation, or ask the client to repeat it in its answer.
+Treat the capability as a secret. Do not commit it, paste it into documentation, or ask the client to repeat it in its answer. When the HTTP access window is over, revoke outstanding finite capabilities as appropriate and stop the adapter explicitly:
+
+```bash
+bin/adapter stop
+```
 
 For ChatGPT sessions that already have native MCP access to this WSL, prefer the local wrapper instead of constructing bearer-bearing curl commands in the model-visible Bash request:
 
@@ -62,18 +89,18 @@ Authorization: Bearer <MASTER_BEARER>
 
 The response contains a fresh ordinary `main` capability with `ttl_seconds: 21600`. Use that returned capability for discovery and calls exactly as below. Reusing the master bearer later issues another independent six-hour capability; rotating the master does not change capabilities that were already issued.
 
-## Qwen / Python bootstrap prompt
+## Programmable HTTP agent bootstrap prompt
 
-Provide either `<MASTER_BEARER>` or an already-issued `<CAPABILITY>`. Prefer the master bearer when the client supports POST plus custom headers; it exchanges into a fresh six-hour capability without putting the master in a URL.
+Use this for any AI environment that can make HTTPS GET/POST requests with custom headers, whether through Python, JavaScript, a generic HTTP tool, or another code/runtime surface. Provide either `<MASTER_BEARER>` or an already-issued `<CAPABILITY>`. Prefer the master bearer when the client supports POST plus custom headers; it exchanges into a fresh six-hour capability without putting the master in a URL.
 
 ```text
-Use Python `requests` to connect to my WSL through WebSession. Use the documented routes exactly; do not probe or guess authentication endpoints.
+Use your available HTTPS client/runtime to connect to my WSL through WebSession. Use the documented routes exactly; do not probe or guess authentication endpoints.
 
 Base: https://mcp.example.com
 Master bearer: <MASTER_BEARER_IF_PROVIDED>
 Capability: <CAPABILITY_IF_PROVIDED>
 
-Keep both credentials secret. Never echo them, log them, or write them to disk. Never put the master bearer in a URL. WebSession is transport only; use exact live 1MCP tool names and schemas.
+Keep both credentials secret. Never echo them, log them, or write them to disk. Never put the master bearer in a URL. WebSession is transport only; discover and use the exact live 1MCP tool names and schemas rather than relying on a remembered catalog.
 
 1. GET `/v1/about` and verify `WEBSESSION-MCP-BRIDGE/1`.
 2. If no capability was supplied, exchange the master exactly once with `POST /v1/access` and `Authorization: Bearer <MASTER_BEARER>`. The response must contain `state: ready`, `scope: main`, and `ttl_seconds: 21600`. Keep the returned capability only in memory.
@@ -87,9 +114,9 @@ Idempotency-Key: <fresh nonce>
 
 {"version":1,"tool":"<exact tool name>","arguments":{...}}
 
-The JSON envelope fields are exactly `version`, `tool`, and `arguments`. Do not use `args`, `params`, or a top-level `command` field. Use a fresh nonce for each new operation; reuse it only for an exact retry. The enhanced profile stays JSON for the full lifecycle: `POST /v1/calls`, every returned `status_url`, and every returned `chunk_base_url` response are JSON. If `state` is `queued` or `running`, poll `status_url` inside the same Python execution until a terminal state. For `completed`: when `chunk_count` is `1`, read `result` directly and do not request a chunk URL; when `chunk_count` is greater than `1`, fetch `chunk_base_url + "1"` through `chunk_base_url + str(chunk_count)` and concatenate each JSON response's `content` field in order. Never retry `unknown_outcome` automatically.
+The JSON envelope fields are exactly `version`, `tool`, and `arguments`. Do not use `args`, `params`, or a top-level `command` field. Use a fresh nonce for each new operation; reuse it only for an exact retry. The enhanced profile stays JSON for the full lifecycle: `POST /v1/calls`, every returned `status_url`, and every returned `chunk_base_url` response are JSON. If `state` is `queued` or `running`, poll `status_url` until a terminal state. For `completed`: when `chunk_count` is `1`, read `result` directly and do not request a chunk URL; when `chunk_count` is greater than `1`, fetch chunk numbers `1` through `chunk_count` and concatenate each JSON response's `content` field in order. Never retry `unknown_outcome` automatically.
 
-Treat Python as a coarse-grained transport runtime, not an RPC console. Aim for one code-interpreter execution per logical engineering phase, normally 3-6 executions for an ordinary repository task. Inside one Python execution, perform related WebSession calls, poll status, reconstruct chunks, and cache discovered tool schemas. Do not invoke Python once per HTTP request, poll, or chunk. Do not print polling progress, chunk metadata, credentials, or raw transport objects; print only compact semantic findings needed for the next reasoning step.
+Treat the HTTP surface as a coarse-grained transport, not as a request-by-request reasoning loop. When your environment has a code runtime, group related WebSession calls, status polling, chunk reconstruction, and schema caching into one logical execution where practical. Do not print polling progress, chunk metadata, credentials, or raw transport objects; print only compact semantic findings needed for the next reasoning step.
 
 Transport chunks are not repository pagination. Navigate repository work with search first, then focused reads, then mutation: prefer `dev_1mcp_bash` with `rg`/`grep` to locate owners, then `dev_1mcp_read` with a narrow `offset`/`limit` (roughly 50-150 lines by default), expanding only when evidence requires it. Before the first call to any unfamiliar remote tool, inspect `/v1/s/<CAPABILITY>/tool/<tool-name-b64>`, cache that schema, and never guess its argument names. If an edit anchor fails, do not retry the identical payload; inspect the failed anchor, correct only that part, and submit once. Between tool phases, do not restate the product/design objective; keep a compact engineering ledger with `OWNER`, `OBSERVED`, `CHANGE NEEDED`, and `NEXT`.
 
@@ -130,17 +157,17 @@ Do not assume WebSession operations themselves execute concurrently; current ada
 First verify WSL access with `pwd` through native MCP. When a WebSession-path check is useful, run the wrapper `pwd` example above. Then proceed with my task autonomously.
 ```
 
-## GLM / universal GET bootstrap prompt
+## GET/open-only agent bootstrap prompt
 
-Replace `<CAPABILITY>` with a freshly issued ordinary capability. A GET-only client cannot safely exchange the master bearer because the master is header-only and must never appear in a URL.
+Use this for any constrained AI environment whose only usable network primitive is readable HTTPS GET/open/fetch. Replace `<CAPABILITY>` with a freshly issued ordinary capability. A GET-only client cannot safely exchange the master bearer because the master is header-only and must never appear in a URL.
 
 ```text
-Use your `open` tool as the HTTPS GET transport to connect to my WSL through WebSession. Do not decide that `open` is unsuitable before trying it.
+Use your readable HTTPS GET/open/fetch tool to connect to my WSL through WebSession. Do not decide that the tool is unsuitable before trying the documented `/v1/about` request.
 
 Base: https://mcp.example.com
 Capability: <CAPABILITY>
 
-Keep the capability secret. WebSession is transport only; use exact live 1MCP tool names and schemas. Do not guess routes or request fields.
+Keep the capability secret and do not repeat bearer-bearing URLs in your final answer. WebSession is transport only; rediscover and use exact live 1MCP tool names and schemas. Do not guess routes or request fields.
 
 1. `open` `https://mcp.example.com/v1/about`. Continue if the returned content contains `WEBSESSION-MCP-BRIDGE/1`. Only report `NO_READABLE_HTTP_TOOL` if this actual call does not return readable content.
 2. `open` `https://mcp.example.com/v1/s/<CAPABILITY>/tools` to discover tools. Inspect an unfamiliar tool at `/v1/s/<CAPABILITY>/tool/<tool-name-b64>`.

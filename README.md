@@ -15,7 +15,7 @@ Agents should reason about four capability domains rather than individual backen
 | **Dev** | files, guarded edits, native file import, aggregate Git review, structured argv execution, native Bash, durable waits, local host actions | execution and file mutation have the authority of the selected trust profile |
 | **Code** | repository structure, symbols, semantic context, callers/dependencies | routes to the nearest canonical Git root; raw CodeDB tools stay hidden |
 | **Terminal** | long-running or interactive commands and human handoff | tmux owns PTY/process lifetime; the broker owns transcript and control state |
-| **Local** | high-cardinality local capabilities without bloating the outer MCP catalog | exposes only `tool_list`, `tool_schema`, `tool_call`, and `tool_batch`; Browser is currently the main downstream domain |
+| **Local** | high-cardinality local capabilities without bloating the outer MCP catalog | exposes only `tool_list`, `tool_schema`, `tool_call`, `dispatch_intent`, and `tool_batch`; Browser is currently the main downstream domain |
 
 The full workstation composition is deliberately small at the client boundary:
 
@@ -23,7 +23,7 @@ The full workstation composition is deliberately small at the client boundary:
 Dev       read edit write import_file file_ops review_changes wait exec bash pc_sleep
 Code      code_search code_context code_symbol
 Terminal  terminal_open terminal_read terminal_send terminal_resize terminal_list terminal_yield terminal_close
-Local     tool_list tool_schema tool_call tool_batch
+Local     tool_list tool_schema tool_call dispatch_intent tool_batch
             |-- browser-fast      observe / execute
             `-- browser-devtools  Chrome DevTools diagnostics
 ```
@@ -182,7 +182,7 @@ webharness stop
 | Event-driven waiting | Dev `wait` persists named process/port/file/HTTP/systemd/timer conditions | a wait does not itself create a new model turn |
 | Browser interaction | `browser-fast` provides compact observe/execute with persistent browser state | Chromium/CDP is the qualified browser family |
 | Browser diagnostics | `browser-devtools` provides the full Chrome DevTools MCP surface | shares the Local authorization domain with routine Browser |
-| High-cardinality local MCPs | Local keeps four outer metatools, including same-route `tool_batch`, and discovers downstream schemas on demand | all MCPs admitted to one Local broker share its authorization domain |
+| High-cardinality local MCPs | Local keeps five outer metatools, including one-shot `dispatch_intent` and same-route `tool_batch`, and discovers downstream schemas on demand | all MCPs admitted to one Local broker share its authorization domain |
 | First-class delegated workers | not implemented in the stabilized runtime | Chat WSL-style Agents and cross-chat recordings are the primary current capability gap |
 
 The next planned additive capability is a small Agents surface—`spawn`, `message`, `status`, `finish`—backed by an Agent Broker. It is intentionally not part of this stabilization and does not require a Workspace/worktree/project-authority subsystem. See the [Agents implementation plan](docs/superpowers/plans/2026-08-29-webharness-agents-implementation.md) for that follow-on.

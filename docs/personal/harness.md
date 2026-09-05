@@ -8,7 +8,7 @@ The `personal` profile is the full WebHarness reference deployment. It runs with
 Dev       read edit write import_file file_ops review_changes wait exec bash pc_sleep
 Code      code_search code_context code_symbol
 Terminal  terminal_open terminal_read terminal_send terminal_resize terminal_list terminal_yield terminal_close
-Local     tool_list tool_schema tool_call tool_batch
+Local     tool_list tool_schema tool_call dispatch_intent tool_batch
             |-- browser-fast      observe/execute interaction; Windows default, WSLg on request
             `-- browser-devtools  full Chrome DevTools diagnostics; Windows default, WSLg on request
 ```
@@ -18,7 +18,7 @@ Think in four model-facing domains:
 - **Dev** handles focused text/file work, ChatGPT-native file ingress, aggregate Git review, bounded execution, durable waits, and explicit Windows-host sleep. Prefer `exec` with structured `argv[]` for ordinary executable invocation; use `bash` only when shell syntax is actually required.
 - **Code** provides rooted indexed repository intelligence without exposing raw CodeDB mechanics; first use may create or update heavyweight persistent index state.
 - **Terminal** owns durable PTY/process lifetime and human/model terminal ownership.
-- **Local** exposes only four stable broker tools. Use `tool_call` for one downstream invocation and `tool_batch` when the same logical `{server, tool}` should receive several independent structured argument objects; do not rebuild that batching in Bash. The built-in browser routes remain `browser-fast` for routine interaction and `browser-devtools` for diagnostics. Personal deployments may additionally grant owner-selected local MCPs through `MCP_LOCAL_SERVERS_FILE`; discover them by logical server name and load only the exact downstream schema needed. All such servers share the same `tag:local` authorization domain. For `browser-fast`, observe once, consume any returned `memory` that applies to the current host, then pass the returned `active_tab` to `execute` with the mechanical sequence. Policy memory is local operator policy; exact-site memory is more specific than reusable platform memory; live browser state wins when strategy memory is stale. Unknown/custom sites need no predefined ATS entry and continue through the generic observe/execute flow. `execute.tab` is required and stale/unavailable tab context fails before action dispatch. A click follows exactly one newly opened target before later actions; multiple new targets stop the sequence without guessing and require another observation. Upload uses an observed file-input ref plus a logical artifact key from `~/.config/mcp-dev-bridge/browser-artifacts.json`; never substitute an arbitrary filesystem path. Omit `arguments.browser_target` for the dedicated persistent Windows MCP Chrome profile; use `arguments.browser_target="linux"` for WSLg. The Windows MCP profile is separate from everyday Chrome and keeps its own persistent sign-ins; Windows MCP and Linux browser state remain separate.
+- **Local** exposes only five stable broker tools. Use `dispatch_intent` for one downstream invocation and `tool_batch` when the same logical `{server, tool}` should receive several independent structured argument objects; do not rebuild that batching in Bash. The built-in browser routes remain `browser-fast` for routine interaction and `browser-devtools` for diagnostics. Personal deployments may additionally grant owner-selected local MCPs through `MCP_LOCAL_SERVERS_FILE`; discover them by logical server name and load only the exact downstream schema needed. All such servers share the same `tag:local` authorization domain. For `browser-fast`, observe once, consume any returned `memory` that applies to the current host, then pass the returned `active_tab` to `execute` with the mechanical sequence. Policy memory is local operator policy; exact-site memory is more specific than reusable platform memory; live browser state wins when strategy memory is stale. Unknown/custom sites need no predefined ATS entry and continue through the generic observe/execute flow. `execute.tab` is required and stale/unavailable tab context fails before action dispatch. A click follows exactly one newly opened target before later actions; multiple new targets stop the sequence without guessing and require another observation. Upload uses an observed file-input ref plus a logical artifact key from `~/.config/mcp-dev-bridge/browser-artifacts.json`; never substitute an arbitrary filesystem path. Omit `arguments.browser_target` for the dedicated persistent Windows MCP Chrome profile; use `arguments.browser_target="linux"` for WSLg. The Windows MCP profile is separate from everyday Chrome and keeps its own persistent sign-ins; Windows MCP and Linux browser state remain separate.
 
 ## Learning exact-site browser memory
 
@@ -107,13 +107,18 @@ The direct renderer, toolbox setup, unit installers, and `bin/start`/`bin/stop` 
 The WSL side is persistent after the explicit startup install, but a new ChatGPT environment still owns two client-side pieces that the repository cannot silently mutate:
 
 1. connect ChatGPT to the configured public MCP endpoint and complete OAuth;
-2. install any desired client-side Skills separately, then refresh/reopen the MCP connection when the outer model-facing schema changes. Ordinary Local downstream tool additions/removals are discovered through Local and do not by themselves change the outer four-tool broker schema.
+2. install any desired client-side Skills separately, then refresh/reopen the MCP connection when the outer model-facing schema changes. Ordinary Local downstream tool additions/removals are discovered through Local and do not by themselves change the outer five-tool broker schema.
 
 These are client-side actions, not recurring WSL service-start commands.
 
 ### AI clients without native MCP support
 
-For other AI environments that can execute Python and make outbound HTTPS requests but do not provide a native MCP client, use the copy/paste bootstrap prompt in [`non-native-ai-mcp-python.md`](non-native-ai-mcp-python.md). It directs the environment to use the official MCP Python SDK, headless OAuth/PKCE, and a small session-local `portable_mcp` shim instead of hand-written JSON-RPC.
+There are two supported HTTP-oriented paths, depending on what the AI environment can actually do:
+
+- **Direct standards-native MCP:** if the environment can run a real MCP client or Python SDK, use the copy/paste bootstrap prompt in [`non-native-ai-mcp-python.md`](non-native-ai-mcp-python.md). It connects directly to `/mcp` through normal MCP OAuth/PKCE and Streamable HTTP.
+- **On-demand WebSession compatibility:** if the environment has only generic HTTPS capabilities, start `bin/adapter start` manually and use [`websession-clients.md`](../websession-clients.md). Programmable HTTP agents with POST/custom headers use the enhanced JSON profile; constrained GET/open/fetch-only agents use the universal GET profile with a finite capability and confirmation step.
+
+The WebSession adapter is deliberately not part of Personal Workstation automatic startup and is not supervised by `webharness start`/`stop`. Once running, it mirrors the live authenticated 1MCP tool catalog rather than maintaining model-specific or per-tool adapters. Stop it explicitly with `bin/adapter stop` when that compatibility access is no longer needed.
 
 ## Dev
 

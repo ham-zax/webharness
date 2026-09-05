@@ -30,6 +30,27 @@ It also installs a personal `mcp-dev-bridge.service.d/personal.conf` drop-in wit
 
 Omitting `--enable-startup` prepares dependencies/configuration and the user-local `wsl-term` command but deliberately leaves user-systemd and linger untouched.
 
+## Optional WebSession HTTP compatibility adapter
+
+WebSession is intentionally **manual/on-demand** and is separate from the main bridge lifecycle. Neither `webharness start` nor the personal user-systemd units start or supervise it.
+
+Start it only for an HTTP compatibility window:
+
+```bash
+bin/adapter start
+bin/adapter status
+```
+
+While it is running, the configured tunnel routes `/v1/*` to the adapter. Programmable HTTP clients can use the enhanced POST/JSON profile; constrained GET/open/fetch-only clients can use the universal GET profile. The adapter discovers the current authenticated 1MCP tool catalog dynamically, so it does not require per-tool maintenance when the MCP surface changes.
+
+When finished:
+
+```bash
+bin/adapter stop
+```
+
+Stopping WebSession does not stop the main `/mcp` endpoint. See [WebSession client bootstrap prompts](websession-clients.md) for client-specific connection prompts and capability handling.
+
 ## Smaller-profile user-systemd bridge service
 
 Install the generic bridge unit with:
@@ -175,7 +196,7 @@ Failed launches report only native log bytes written by that launch, plus a sepa
 
 These are pinned-version compatibility behaviors. Requalify them when upgrading 1MCP.
 
-For the Personal Workstation Local domain, the outer 1MCP exposes only Local `tool_list`, `tool_schema`, `tool_call`, and `tool_batch` under `tag:local`; the Local provider starts an inner 1MCP over stdio in normal direct mode. Unscoped `tool_list` reports configured logical servers with availability/tool counts; scope it with `server=...` to enumerate that downstream's tools. `tool_batch` repeats one selected downstream route over several structured argument objects with bounded concurrency, avoiding shell/CLI orchestration. That inner config always contains the `browser-devtools` and `browser-fast` surfaces and may also contain explicit owner-configured downstream MCPs from `MCP_LOCAL_SERVERS_FILE`. Owner stdio MCPs are supervised with `restartOnExit: true` by default. The Local child enables only 1MCP's reload management action for broker-owned targeted recovery, while the reserved `1mcp` namespace remains filtered and unreachable through model-facing Local routing. Scoped discovery/schema/batch may reload one configured-but-missing server; a failed direct call is never auto-replayed after recovery because its original outcome may be ambiguous. The renderer writes the inner config before the outer config so a hot reload cannot start Local against a missing file, and carries a deterministic inner-config revision on the outer Local provider so downstream changes recycle only that provider. Stock lazy `tool_invoke` remains outside this path because direct mode preserves downstream MCP results.
+For the Personal Workstation Local domain, the outer 1MCP exposes only Local `tool_list`, `tool_schema`, `tool_call`, `dispatch_intent`, and `tool_batch` under `tag:local`; the Local provider starts an inner 1MCP over stdio in normal direct mode. Unscoped `tool_list` reports configured logical servers with availability/tool counts; scope it with `server=...` to enumerate that downstream's tools. `tool_batch` repeats one selected downstream route over several structured argument objects with bounded concurrency, avoiding shell/CLI orchestration. That inner config always contains the `browser-devtools` and `browser-fast` surfaces and may also contain explicit owner-configured downstream MCPs from `MCP_LOCAL_SERVERS_FILE`. Owner stdio MCPs are supervised with `restartOnExit: true` by default. The Local child enables only 1MCP's reload management action for broker-owned targeted recovery, while the reserved `1mcp` namespace remains filtered and unreachable through model-facing Local routing. Scoped discovery/schema/batch may reload one configured-but-missing server; a failed direct call is never auto-replayed after recovery because its original outcome may be ambiguous. The renderer writes the inner config before the outer config so a hot reload cannot start Local against a missing file, and carries a deterministic inner-config revision on the outer Local provider so downstream changes recycle only that provider. Stock lazy `tool_invoke` remains outside this path because direct mode preserves downstream MCP results.
 
 Windows browser calls do not attach to the everyday Chrome profile and require no `chrome://inspect` setup. Profileless calls use `%LOCALAPPDATA%\\mcp-dev-bridge\\chrome-profile`, which remains shared by `browser-fast` and `browser-devtools`. An explicit Browser Fast `browser_profile=<name>` instead uses `%LOCALAPPDATA%\\mcp-dev-bridge\\chrome-profiles\\<name>` with its own Chrome process, DevTools endpoint, Agent Browser session, and operation queue; Browser DevTools currently targets only the shared default. On first use or after the selected browser exits, the runtime launches visible Chrome with `--user-data-dir=<selected directory>` and `--remote-debugging-port=0`, waits for that directory's `DevToolsActivePort`, and health-checks the loopback endpoint. Chrome chooses the port, so the bridge does not reserve a global `9222`. Profiles are persistent: sign into the selected MCP Chrome window once when needed, and cookies/local storage remain across restarts. Do not copy the everyday Chrome data directory into them. Agent Browser 0.35.0 plus its one-shot Windows Node helper remain materialized under `%LOCALAPPDATA%\\mcp-dev-bridge\\agent-browser\\0.35.0`; the helper owns bounded stdout/stderr files so cold daemon startup cannot keep the WSL interop lifetime open. Do not publish debugging endpoints beyond the trusted local machine. `browser_target=linux` selects the separate WSLg paths.
 

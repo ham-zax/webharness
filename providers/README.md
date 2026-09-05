@@ -39,10 +39,10 @@ The MCP provider talks to a local broker over a Unix socket. tmux owns PTY/proce
 Stable downstream tool-broker surface:
 
 ```text
-tool_list tool_schema tool_call tool_batch
+tool_list tool_schema tool_call dispatch_intent tool_batch
 ```
 
-The Local provider connects over stdio to one inner 1MCP in direct mode. It exposes logical `{server, tool}` identities, bounded live discovery, exact schema lookup, raw single-call `CallToolResult` forwarding, and bounded same-tool batch dispatch over structured arguments. V1 has no catalog/schema cache. The Personal Workstation inner composition contains `browser-devtools` plus the compact `browser-fast` interaction surface; the outer Local provider remains tagged only `local`.
+The Local provider connects over stdio to one inner 1MCP in direct mode. It exposes logical `{server, tool}` identities, bounded live discovery, exact schema lookup, raw one-shot `CallToolResult` forwarding through both `tool_call` and `dispatch_intent`, and bounded same-tool batch dispatch over structured arguments. V1 has no catalog/schema cache. The Personal Workstation inner composition contains `browser-devtools` plus the compact `browser-fast` interaction surface; the outer Local provider remains tagged only `local`.
 
 ## Browser — `providers/browser/`
 

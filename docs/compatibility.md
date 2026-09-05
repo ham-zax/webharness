@@ -11,17 +11,17 @@ Dev       read edit write import_file file_ops review_changes wait exec bash pc_
 Code      code_search code_context code_symbol
 Terminal  terminal_open terminal_read terminal_send terminal_resize
           terminal_list terminal_yield terminal_close
-Local     tool_list tool_schema tool_call tool_batch
+Local     tool_list tool_schema tool_call dispatch_intent tool_batch
 ```
 
 The current outer provider IDs are `dev`, `code`, `terminal`, and `local`. `restricted` and `trusted-dev` intentionally expose smaller compositions.
 
-Local is one authorization domain. Its four broker tools address downstream MCPs by logical `{server, tool}` identity. The maintained Personal Workstation composes:
+Local is one authorization domain. Its five broker tools address downstream MCPs by logical `{server, tool}` identity. The maintained Personal Workstation composes:
 
 - `browser-fast` for routine observe/execute interaction;
 - `browser-devtools` for Chrome DevTools diagnostics.
 
-`tool_list` returns bounded live catalog results, `tool_schema` returns the exact downstream tool definition, and `tool_call` forwards the downstream `CallToolResult` rather than translating it into a second result model. `tool_batch` applies several structured argument objects to one selected `{server, tool}` route with bounded concurrency; its member envelope adds attribution/status while each fulfilled downstream result remains intact.
+`tool_list` returns bounded live catalog results, `tool_schema` returns the exact downstream tool definition, and both `tool_call` and `dispatch_intent` forward the downstream `CallToolResult` rather than translating it into a second result model. `dispatch_intent` is the preferred one-shot broker name; `tool_batch` applies several structured argument objects to one selected `{server, tool}` route with bounded concurrency, and its member envelope adds attribution/status while each fulfilled downstream result remains intact.
 
 ## Compatibility rules
 

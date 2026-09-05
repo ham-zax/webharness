@@ -539,7 +539,7 @@ export function createLocalBrokerServer({ broker } = {}) {
 
   const server = new Server(
     { name: 'local-tools', version: '0.1.0' },
-    { capabilities: { tools: {} }, instructions: 'Stable local tool broker. Discover narrowly, load one schema when needed, then call by logical server/tool. Use tool_batch for several independent downstream calls instead of shell/CLI orchestration.' }
+    { capabilities: { tools: {} }, instructions: 'Stable local tool broker. Discover narrowly, load one schema when needed, then dispatch by logical server/tool. Use dispatch_intent for one downstream action and tool_batch for several independent downstream calls instead of shell/CLI orchestration.' }
   );
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: [
     {
@@ -587,6 +587,21 @@ export function createLocalBrokerServer({ broker } = {}) {
       }
     },
     {
+      name: 'dispatch_intent',
+      description: 'Execute one downstream Local MCP tool by logical server name, tool name, and structured arguments. This dispatcher may perform writes, browser actions, process operations, or other side effects depending on the selected downstream tool. Use tool_schema first when the downstream schema is unfamiliar.',
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          server: { type: 'string', minLength: 1 },
+          tool: { type: 'string', minLength: 1 },
+          arguments: { type: 'object', additionalProperties: true }
+        },
+        required: ['server', 'tool'],
+        additionalProperties: false
+      }
+    },
+    {
       name: 'tool_batch',
       description: 'Call the same downstream tool several times with bounded concurrency. Set server/tool once and pass structured arguments per call. Prefer this over shell or CLI loops for independent repeated MCP calls. All call envelopes are validated before dispatch. Results preserve input order; downstream isError results are fulfilled entries, while broker or transport failures are rejected entries.',
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
@@ -620,6 +635,7 @@ export function createLocalBrokerServer({ broker } = {}) {
       if (request.params.name === 'tool_list') return jsonResult(await broker.list(request.params.arguments ?? {}));
       if (request.params.name === 'tool_schema') return jsonResult(await broker.schema(request.params.arguments ?? {}));
       if (request.params.name === 'tool_call') return broker.call(request.params.arguments ?? {}, extra.signal);
+      if (request.params.name === 'dispatch_intent') return broker.call(request.params.arguments ?? {}, extra.signal);
       if (request.params.name === 'tool_batch') {
         if (typeof broker.batch !== 'function') throw brokerError('LOCAL_BATCH_UNAVAILABLE', 'local broker does not implement batch dispatch');
         return batchResult(await broker.batch(request.params.arguments ?? {}, extra.signal));
