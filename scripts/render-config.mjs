@@ -385,6 +385,13 @@ export async function renderConfig(options) {
       rendered.mcpServers.dev.env[key] = ownerEnv[key];
       rendered.mcpServers.terminal.env[key] = ownerEnv[key];
     }
+    const mirrorFallbackServer = (server) => {
+      const mirrored = structuredClone(server);
+      delete mirrored.tags;
+      return mirrored;
+    };
+    localRendered.mcpServers.dev = mirrorFallbackServer(rendered.mcpServers.dev);
+    localRendered.mcpServers.terminal = mirrorFallbackServer(rendered.mcpServers.terminal);
     for (const key of OWNER_BROWSER_ENV_KEYS) {
       if (ownerEnv[key] === undefined) continue;
       localRendered.mcpServers['browser-devtools'].env[key] = ownerEnv[key];

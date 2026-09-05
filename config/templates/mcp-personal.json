@@ -57,7 +57,8 @@
       ],
       "env": {
         "MCP_LOCAL_INNER_CONFIG": "__LOCAL_INNER_CONFIG__",
-        "MCP_LOCAL_ONE_MCP_ENTRY": "__ONE_MCP_ENTRY__"
+        "MCP_LOCAL_ONE_MCP_ENTRY": "__ONE_MCP_ENTRY__",
+        "MCP_LOCAL_FALLBACK_ONLY_SERVERS": "dev,terminal"
       },
       "tags": [
         "local"

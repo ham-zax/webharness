@@ -11,17 +11,14 @@ Dev       read edit write import_file file_ops review_changes wait exec bash pc_
 Code      code_search code_context code_symbol
 Terminal  terminal_open terminal_read terminal_send terminal_resize
           terminal_list terminal_yield terminal_close
-Local     tool_list tool_schema tool_call dispatch_intent tool_batch
+Local     tool_list tool_schema tool_call fallback_dispatch tool_batch
 ```
 
 The current outer provider IDs are `dev`, `code`, `terminal`, and `local`. `restricted` and `trusted-dev` intentionally expose smaller compositions.
 
-Local is one authorization domain. Its five broker tools address downstream MCPs by logical `{server, tool}` identity. The maintained Personal Workstation composes:
+Local is one authorization domain. Its five broker tools address downstream MCPs by logical `{server, tool}` identity. The maintained Personal Workstation composes public Local servers for `browser-fast` and `browser-devtools`, plus fallback-only mirrors of the outer Dev and Terminal providers.
 
-- `browser-fast` for routine observe/execute interaction;
-- `browser-devtools` for Chrome DevTools diagnostics.
-
-`tool_list` returns bounded live catalog results, `tool_schema` returns the exact downstream tool definition, and both `tool_call` and `dispatch_intent` forward the downstream `CallToolResult` rather than translating it into a second result model. `dispatch_intent` is the preferred one-shot broker name; `tool_batch` applies several structured argument objects to one selected `{server, tool}` route with bounded concurrency, and its member envelope adds attribution/status while each fulfilled downstream result remains intact.
+`tool_list`, `tool_schema`, `tool_call`, and `tool_batch` exclude the fallback-only mirrors. Ordinary one-shot Local work uses `tool_call`. `fallback_dispatch` is reserved for an already-authorized operation whose normal writable MCP call is unavailable or unreliable; it can reach the fallback-only Dev/Terminal mirrors as well as public Local servers and forwards the downstream `CallToolResult` unchanged. Its `readOnlyHint` is intentionally retained for fallback transport compatibility and is not a promise that the selected downstream action is side-effect free. `tool_batch` applies several structured argument objects to one public `{server, tool}` route with bounded concurrency, and its member envelope adds attribution/status while each fulfilled downstream result remains intact.
 
 ## Compatibility rules
 

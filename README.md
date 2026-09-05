@@ -15,7 +15,7 @@ Agents should reason about four capability domains rather than individual backen
 | **Dev** | files, guarded edits, native file import, aggregate Git review, structured argv execution, native Bash, durable waits, local host actions | execution and file mutation have the authority of the selected trust profile |
 | **Code** | repository structure, symbols, semantic context, callers/dependencies | routes to the nearest canonical Git root; raw CodeDB tools stay hidden |
 | **Terminal** | long-running or interactive commands and human handoff | tmux owns PTY/process lifetime; the broker owns transcript and control state |
-| **Local** | high-cardinality local capabilities without bloating the outer MCP catalog | exposes only `tool_list`, `tool_schema`, `tool_call`, `dispatch_intent`, and `tool_batch`; Browser is currently the main downstream domain |
+| **Local** | high-cardinality local capabilities plus a recovery transport for failed writable calls | exposes only `tool_list`, `tool_schema`, `tool_call`, `fallback_dispatch`, and `tool_batch`; `fallback_dispatch` can reach fallback-only Dev/Terminal mirrors without advertising them through normal Local discovery |
 
 The full workstation composition is deliberately small at the client boundary:
 
@@ -23,7 +23,7 @@ The full workstation composition is deliberately small at the client boundary:
 Dev       read edit write import_file file_ops review_changes wait exec bash pc_sleep
 Code      code_search code_context code_symbol
 Terminal  terminal_open terminal_read terminal_send terminal_resize terminal_list terminal_yield terminal_close
-Local     tool_list tool_schema tool_call dispatch_intent tool_batch
+Local     tool_list tool_schema tool_call fallback_dispatch tool_batch
             |-- browser-fast      observe / execute
             `-- browser-devtools  Chrome DevTools diagnostics
 ```
@@ -48,6 +48,7 @@ Cloudflare Tunnel
   `-- Local
         |
         `-- inner 1MCP
+              |-- dev / terminal -------> fallback_dispatch only
               |-- browser-fast ---------> Agent Browser
               `-- browser-devtools -----> Chrome DevTools MCP
                          |
@@ -114,6 +115,7 @@ Use the narrowest domain that owns the task:
 | command must persist, needs a PTY, or may need human input | Terminal |
 | routine navigation/forms/clicks in a resource-local browser | Local -> `browser-fast` |
 | network/console/performance/screenshot/DevTools investigation | Local -> `browser-devtools` |
+| normal writable MCP operation is unavailable or unreliable | Local -> `fallback_dispatch` with the same logical server/tool/arguments |
 
 For large or unfamiliar repositories, begin with `exec(argv=["rg", ...])` and focused reads before paying the cost of a new CodeDB index unless indexed intelligence is specifically useful. Use Bash only when the discovery command itself needs shell composition.
 
@@ -182,7 +184,7 @@ webharness stop
 | Event-driven waiting | Dev `wait` persists named process/port/file/HTTP/systemd/timer conditions | a wait does not itself create a new model turn |
 | Browser interaction | `browser-fast` provides compact observe/execute with persistent browser state | Chromium/CDP is the qualified browser family |
 | Browser diagnostics | `browser-devtools` provides the full Chrome DevTools MCP surface | shares the Local authorization domain with routine Browser |
-| High-cardinality local MCPs | Local keeps five outer metatools, including one-shot `dispatch_intent` and same-route `tool_batch`, and discovers downstream schemas on demand | all MCPs admitted to one Local broker share its authorization domain |
+| High-cardinality local MCPs | Local keeps five outer metatools, including recovery-only `fallback_dispatch` and same-route `tool_batch`; fallback-only Dev/Terminal mirrors stay out of normal discovery | `fallback_dispatch` is intentionally read-only-annotated but can perform the selected downstream mutation, so `tag:local` must be treated as granting that recovery authority |
 | First-class delegated workers | not implemented in the stabilized runtime | Chat WSL-style Agents and cross-chat recordings are the primary current capability gap |
 
 The next planned additive capability is a small Agents surface—`spawn`, `message`, `status`, `finish`—backed by an Agent Broker. It is intentionally not part of this stabilization and does not require a Workspace/worktree/project-authority subsystem. See the [Agents implementation plan](docs/superpowers/plans/2026-08-29-webharness-agents-implementation.md) for that follow-on.
@@ -216,7 +218,7 @@ Forks should preserve the model-facing contracts they rely on, then deliberately
 
 - The project currently pins 1MCP 0.37.0 after qualification of the current provider composition, direct-mode rich Browser results, config reload, OAuth behavior, and the supervised-stdio compatibility patches described in the operations guide. Upgrade it deliberately rather than treating it as an unqualified interchangeable dependency.
 - 1MCP listens on loopback; Cloudflare supplies the public HTTPS route. OAuth remains required for the public MCP origin.
-- The Local broker is one authorization domain. Every downstream MCP admitted behind the same `tag:local` grant must legitimately share that authority.
+- The Local broker is one authorization domain. `fallback_dispatch` additionally reaches fallback-only Dev and Terminal mirrors and is intentionally advertised with `readOnlyHint`; treat its description and selected downstream operation—not that hint—as the real side-effect boundary.
 - Browser debugging endpoints are local implementation details and are not intentionally published beyond loopback.
 - Sudo/password/MFA input belongs in a human-controlled Terminal client, not in MCP arguments or agent-visible logs.
 
