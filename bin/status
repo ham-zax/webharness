@@ -46,6 +46,16 @@ RUN_PID="$(cat "$BRIDGE_ONE_MCP_PID_FILE" 2>/dev/null || true)"
 echo "listener :3050 pid: ${LISTENER_PID:-none}"
 echo "1MCP server.pid pid: ${SERVER_PID:-none}"
 echo "bridge one-mcp.pid: ${RUN_PID:-none}"
+ONE_MCP_LEASE_HELD=false
+if bridge_1mcp_lease_held; then
+  ONE_MCP_LEASE_HELD=true
+fi
+echo "runtime lease: $([ "$ONE_MCP_LEASE_HELD" = true ] && echo held || echo free)"
+if [ "$MCP_COUNT" -eq 1 ] && [ "$ONE_MCP_LEASE_HELD" != true ]; then
+  warn "1MCP process ${MCP_PIDS[0]} is not holding the WebHarness runtime lease"
+elif [ "$MCP_COUNT" -eq 0 ] && [ "$ONE_MCP_LEASE_HELD" = true ]; then
+  warn "WebHarness runtime lease is held without a config-scoped 1MCP process"
+fi
 
 if [ -n "$LISTENER_PID" ] && [ -n "$SERVER_PID" ] && [ "$LISTENER_PID" != "$SERVER_PID" ]; then
   warn "PID/listener mismatch: 1MCP server.pid=$SERVER_PID but :3050 listener=$LISTENER_PID"

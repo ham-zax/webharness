@@ -66,7 +66,9 @@ if ! bridge_wait_url "$TUNNEL_URL/health/ready" "$PUBLIC_ATTEMPTS" "$PUBLIC_INTE
 fi
 
 bridge_enable
-bridge_start_watchdog
+if [ "${BRIDGE_WATCHDOG_MANAGED:-0}" != "1" ]; then
+  bridge_start_watchdog
+fi
 START_COMMITTED=true
 bridge_lock_release
 trap - EXIT INT TERM

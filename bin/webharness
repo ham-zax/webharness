@@ -33,20 +33,48 @@ install_self() {
   echo "installed webharness: $link -> $ROOT/bin/webharness"
 }
 
-restart_command() {
+systemd_bridge_available() {
   local runtime_dir bus_address
   runtime_dir="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
   bus_address="${DBUS_SESSION_BUS_ADDRESS:-unix:path=$runtime_dir/bus}"
-
-  if command -v systemctl >/dev/null 2>&1 && [ -S "$runtime_dir/bus" ]; then
-    if XDG_RUNTIME_DIR="$runtime_dir" DBUS_SESSION_BUS_ADDRESS="$bus_address" \
+  command -v systemctl >/dev/null 2>&1 && [ -S "$runtime_dir/bus" ] && \
+    XDG_RUNTIME_DIR="$runtime_dir" DBUS_SESSION_BUS_ADDRESS="$bus_address" \
       systemctl --user show mcp-dev-bridge.service --property=LoadState --value 2>/dev/null \
-      | grep -qx loaded; then
-      XDG_RUNTIME_DIR="$runtime_dir" DBUS_SESSION_BUS_ADDRESS="$bus_address" \
-        systemctl --user restart --no-block mcp-dev-bridge.service
-      echo "WebHarness restart queued through mcp-dev-bridge.service"
-      return 0
-    fi
+      | grep -qx loaded
+}
+
+systemd_bridge_action() {
+  local action="$1" runtime_dir bus_address
+  shift
+  runtime_dir="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+  bus_address="${DBUS_SESSION_BUS_ADDRESS:-unix:path=$runtime_dir/bus}"
+  XDG_RUNTIME_DIR="$runtime_dir" DBUS_SESSION_BUS_ADDRESS="$bus_address" \
+    systemctl --user "$action" "$@" mcp-dev-bridge.service
+}
+
+start_command() {
+  if systemd_bridge_available; then
+    systemd_bridge_action start
+    echo "WebHarness started through mcp-dev-bridge.service"
+    return 0
+  fi
+  exec "$ROOT/bin/start"
+}
+
+stop_command() {
+  if systemd_bridge_available; then
+    systemd_bridge_action stop --no-block
+    echo "WebHarness stop queued through mcp-dev-bridge.service"
+    return 0
+  fi
+  exec "$ROOT/bin/stop"
+}
+
+restart_command() {
+  if systemd_bridge_available; then
+    systemd_bridge_action restart --no-block
+    echo "WebHarness restart queued through mcp-dev-bridge.service"
+    return 0
   fi
 
   "$ROOT/bin/stop"
@@ -105,11 +133,11 @@ case "$COMMAND" in
     ;;
   start)
     [ "$#" -eq 0 ] || { usage >&2; exit 2; }
-    exec "$ROOT/bin/start"
+    start_command
     ;;
   stop)
     [ "$#" -eq 0 ] || { usage >&2; exit 2; }
-    exec "$ROOT/bin/stop"
+    stop_command
     ;;
   restart)
     [ "$#" -eq 0 ] || { usage >&2; exit 2; }

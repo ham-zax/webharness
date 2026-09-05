@@ -59,6 +59,7 @@ TUNNEL_NAME="${TUNNEL_NAME:-${MCP_TUNNEL_NAME:-}}"
 BRIDGE_ENABLED_FILE="$BRIDGE_RUN_DIR/cloudflare-oauth.enabled"
 BRIDGE_LOCK_FILE="$BRIDGE_RUN_DIR/lifecycle.lock"
 BRIDGE_ONE_MCP_PID_FILE="$BRIDGE_RUN_DIR/one-mcp.pid"
+BRIDGE_ONE_MCP_LOCK_FILE="$BRIDGE_RUN_DIR/one-mcp.lock"
 BRIDGE_ONE_MCP_LOG_FILE="${BRIDGE_ONE_MCP_LOG_FILE:-$BRIDGE_STATE_DIR/logs/one-mcp.log}"
 BRIDGE_ONE_MCP_STDERR_FILE="${BRIDGE_ONE_MCP_STDERR_FILE:-$BRIDGE_RUN_DIR/one-mcp.stderr}"
 BRIDGE_CLOUDFLARED_PID_FILE="$BRIDGE_RUN_DIR/cloudflared.pid"
@@ -204,6 +205,19 @@ bridge_1mcp_count() {
   printf '%s\n' "$count"
 }
 
+bridge_1mcp_lease_held() {
+  [ -e "$BRIDGE_ONE_MCP_LOCK_FILE" ] || return 1
+  local fd
+  exec {fd}<>"$BRIDGE_ONE_MCP_LOCK_FILE" || return 1
+  if flock -n "$fd"; then
+    flock -u "$fd" 2>/dev/null || true
+    exec {fd}>&-
+    return 1
+  fi
+  exec {fd}>&-
+  return 0
+}
+
 bridge_1mcp_matches() {
   local pid="$1" external="$2" cmdline
   cmdline="$(bridge_pid_cmdline "$pid")" || return 1
@@ -249,11 +263,12 @@ bridge_one_mcp_entry() {
 }
 
 bridge_stop_1mcp() {
-  bridge_stop_pidfile "$BRIDGE_ONE_MCP_PID_FILE" '@1mcp/agent/build/index.js' "--config-dir $BRIDGE_CONFIG_DIR"
+  BRIDGE_STOP_ATTEMPTS="${BRIDGE_ONE_MCP_STOP_ATTEMPTS:-100}" \
+    bridge_stop_pidfile "$BRIDGE_ONE_MCP_PID_FILE" '@1mcp/agent/build/index.js' "--config-dir $BRIDGE_CONFIG_DIR"
   local pid
   while IFS= read -r pid; do
     [ -n "$pid" ] || continue
-    bridge_stop_pid "$pid"
+    BRIDGE_STOP_ATTEMPTS="${BRIDGE_ONE_MCP_STOP_ATTEMPTS:-100}" bridge_stop_pid "$pid"
   done < <(bridge_find_1mcp_pids)
   rm -f "$BRIDGE_ONE_MCP_PID_FILE" "$BRIDGE_CONFIG_DIR/server.pid"
 }
@@ -292,7 +307,6 @@ bridge_start_1mcp() {
   # Remove the legacy unbounded console capture and stale pre-tailable rotations before launch.
   rm -f "$BRIDGE_RUN_DIR/one-mcp.log"
   bridge_prune_stale_1mcp_logs
-  "${BRIDGE_NODE_BIN:-node}" "$BRIDGE_ROOT/lib/one-mcp-runtime-ownership.mjs" "$BRIDGE_CONFIG_DIR"
   if [ -r "$BRIDGE_ONE_MCP_LOG_FILE" ]; then
     log_inode_before="$(stat -c %i "$BRIDGE_ONE_MCP_LOG_FILE" 2>/dev/null || true)"
     log_size_before="$(stat -c %s "$BRIDGE_ONE_MCP_LOG_FILE" 2>/dev/null || printf '0')"
@@ -300,13 +314,21 @@ bridge_start_1mcp() {
   (
     cd "${BRIDGE_WORKSPACE_ROOT:-$BRIDGE_ROOT}"
     umask 077
-    setsid node "$entry" serve \
+    # fd 8 is a process-scoped ownership lease. It survives exec into 1MCP
+    # and the kernel releases it automatically on exit, SIGKILL, or OOM.
+    exec 8>"$BRIDGE_ONE_MCP_LOCK_FILE"
+    if ! flock -n 8; then
+      echo "another WebHarness 1MCP runtime already owns $BRIDGE_CONFIG_DIR" >&2
+      exit 75
+    fi
+    "${BRIDGE_NODE_BIN:-node}" "$BRIDGE_ROOT/lib/one-mcp-runtime-ownership.mjs" "$BRIDGE_CONFIG_DIR"
+    exec setsid "${BRIDGE_NODE_BIN:-node}" "$entry" serve \
       --config-dir "$BRIDGE_CONFIG_DIR" \
       --enable-auth \
       --external-url "$external" \
-      9>&- >/dev/null 2>"$BRIDGE_ONE_MCP_STDERR_FILE" </dev/null &
-    printf '%s\n' "$!" > "$BRIDGE_ONE_MCP_PID_FILE"
-  )
+      9>&- >/dev/null 2>"$BRIDGE_ONE_MCP_STDERR_FILE" </dev/null
+  ) &
+  printf '%s\n' "$!" > "$BRIDGE_ONE_MCP_PID_FILE"
 
   if ! bridge_wait_url http://127.0.0.1:3050/health/ready \
     "${BRIDGE_LOCAL_HEALTH_ATTEMPTS:-15}" "${BRIDGE_LOCAL_HEALTH_INTERVAL:-1}" 3; then
@@ -343,6 +365,11 @@ bridge_start_1mcp() {
     return 1
   fi
   pid="$(bridge_find_1mcp_pids | head -n1)"
+  if ! bridge_1mcp_lease_held; then
+    echo "1MCP process $pid is not holding the WebHarness runtime lease" >&2
+    bridge_stop_1mcp
+    return 1
+  fi
   if ! bridge_1mcp_matches "$pid" "$external"; then
     echo "1MCP process $pid does not match Cloudflare OAuth configuration" >&2
     bridge_stop_1mcp
@@ -354,7 +381,7 @@ bridge_start_1mcp() {
 bridge_reconcile_1mcp() {
   local external="$1"
   mapfile -t MCP_PIDS < <(bridge_find_1mcp_pids)
-  if [ "${#MCP_PIDS[@]}" -eq 1 ] && bridge_local_health && \
+  if [ "${#MCP_PIDS[@]}" -eq 1 ] && bridge_local_health && bridge_1mcp_lease_held && \
      bridge_1mcp_matches "${MCP_PIDS[0]}" "$external"; then
     printf '%s\n' "${MCP_PIDS[0]}" > "$BRIDGE_ONE_MCP_PID_FILE"
     return 0

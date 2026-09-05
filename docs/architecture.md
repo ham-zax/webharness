@@ -94,7 +94,7 @@ Terminal broker socket   ${XDG_RUNTIME_DIR:-/run/user/$UID}/wsl-agent-terminal.s
 
 ## Lifecycle boundaries
 
-The bridge supervises one config-scoped 1MCP process, one cloudflared process, and one watchdog. Lifecycle operations use an exclusive lock and validated process ownership.
+The bridge supervises one config-scoped 1MCP process, one cloudflared process, and one watchdog. Lifecycle operations use an exclusive lock and validated process ownership. When user-systemd is installed, the watchdog stays in the foreground as the service main process instead of leaving systemd with an `active (exited)` one-shot launcher. 1MCP additionally holds a kernel `flock` lease for its full process lifetime; upstream `runtime.owner` cleanup is therefore recovery metadata rather than WebHarness's authoritative liveness lock.
 
 Personal Workstation Terminal lifetime is split into two user services:
 

@@ -1,16 +1,16 @@
 [Unit]
 Description=WebHarness MCP runtime
 Documentation=file://@REPO_ROOT@/README.md
-ConditionPathExists=@REPO_ROOT@/bin/start
+ConditionPathExists=@REPO_ROOT@/bin/run
 
 [Service]
-Type=oneshot
-RemainAfterExit=yes
+Type=notify
+NotifyAccess=all
 WorkingDirectory=@REPO_ROOT@
 Environment=HOME=@USER_HOME@
 EnvironmentFile=-@STATE_DIR@/bridge.env
 Environment=PATH=@PATH@
-ExecStart=@REPO_ROOT@/bin/start
+ExecStart=@REPO_ROOT@/bin/run
 ExecStop=@REPO_ROOT@/bin/stop
 TimeoutStartSec=180
 TimeoutStopSec=60

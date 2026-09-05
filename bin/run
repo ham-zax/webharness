@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+set -euo pipefail
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# User-systemd owns this persistent supervisor. bin/start performs the initial
+# health-gated reconciliation but leaves the watchdog in the foreground here.
+export BRIDGE_WATCHDOG_MANAGED=1
+if [ -n "${NOTIFY_SOCKET:-}" ] && ! command -v systemd-notify >/dev/null 2>&1; then
+  echo "systemd-notify is required for the supervised WebHarness service" >&2
+  exit 1
+fi
+if [ -n "${NOTIFY_SOCKET:-}" ]; then
+  env -u NOTIFY_SOCKET "$DIR/bin/start"
+else
+  "$DIR/bin/start"
+fi
+
+if [ -n "${NOTIFY_SOCKET:-}" ]; then
+  systemd-notify --ready --status="WebHarness ready"
+fi
+
+exec bash "$DIR/lib/bridge/watchdog.sh"

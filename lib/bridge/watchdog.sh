@@ -14,6 +14,17 @@ export TUNNEL_NAME TUNNEL_URL
   exit 2
 }
 
+if [ "${BRIDGE_WATCHDOG_MANAGED:-0}" = "1" ]; then
+  printf '%s\n' "$$" > "$BRIDGE_WATCHDOG_PID_FILE"
+  cleanup_managed_watchdog() {
+    local recorded
+    recorded="$(cat "$BRIDGE_WATCHDOG_PID_FILE" 2>/dev/null || true)"
+    [ "$recorded" != "$$" ] || rm -f "$BRIDGE_WATCHDOG_PID_FILE"
+  }
+  trap cleanup_managed_watchdog EXIT
+  trap 'exit 0' INT TERM
+fi
+
 while true; do
   if ! bridge_enabled; then
     echo "$(date -Is) watchdog exiting: Cloudflare OAuth Bridge is disabled" >> "$LOG"

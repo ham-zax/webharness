@@ -8,7 +8,7 @@ webharness status
 webharness stop
 ```
 
-Healthy status should report one config-scoped 1MCP process, local health ready, cloudflared running, watchdog running, public health OK, bounded retained-diagnostic storage, and `issues: 0`. It prints both the rendered live source root and, when different, the checkout from which diagnostics are being run; live watchdog ownership is matched against the rendered root so inspecting from a candidate worktree does not create a false "watchdog stopped" result. In personal mode it also reports the Terminal broker socket and, when the user-systemd bus is directly reachable, `ActiveState` plus `NRestarts` for the broker unit. A missing user bus is reported separately from the broker socket so user-systemd observability ambiguity is not mistaken for broker failure.
+Healthy status should report one config-scoped 1MCP process, its WebHarness runtime lease held, local health ready, cloudflared running, watchdog running, public health OK, bounded retained-diagnostic storage, and `issues: 0`. It prints both the rendered live source root and, when different, the checkout from which diagnostics are being run; live watchdog ownership is matched against the rendered root so inspecting from a candidate worktree does not create a false "watchdog stopped" result. In personal mode it also reports the Terminal broker socket and, when the user-systemd bus is directly reachable, `ActiveState` plus `NRestarts` for the broker unit. A missing user bus is reported separately from the broker socket so user-systemd observability ambiguity is not mistaken for broker failure.
 
 ## Personal Workstation installed lifecycle
 
@@ -60,7 +60,7 @@ scripts/install-systemd-user.sh
 systemctl --user start mcp-dev-bridge.service
 ```
 
-The generated unit uses external `bridge.env` state and the repository's public lifecycle entrypoints.
+The generated unit uses external `bridge.env` state and keeps the foreground watchdog as the supervised service process. It reports ready only after the initial WebHarness reconciliation succeeds; ordinary `webharness start` routes through this unit when it is installed.
 
 ## Personal Workstation Terminal services: lower-level repair path
 
@@ -149,7 +149,7 @@ For ordinary bridge reconciliation after the rendered state is current:
 webharness restart
 ```
 
-When the installed user-systemd bridge unit is available, this command queues `mcp-dev-bridge.service` for restart with `--no-block`. The systemd manager therefore owns the stop/start sequence and starts it immediately even when the caller is connected through the 1MCP process being replaced or has only a minimal non-login `PATH`. If the user service is unavailable, the CLI falls back to the direct `bin/stop` + `bin/start` lifecycle.
+When the installed user-systemd bridge unit is available, `webharness start`, `stop`, and `restart` route lifecycle ownership through `mcp-dev-bridge.service`; stop/restart remain non-blocking so an MCP caller can hand the replacement to systemd before its current 1MCP process disappears. The service keeps the watchdog in the foreground as its supervised main process and reports ready only after the initial local/public reconciliation succeeds. If the user service is unavailable, the CLI falls back to the direct `bin/start` / `bin/stop` lifecycle.
 
 If the source update changed generated provider/application policy (including the bounded 1MCP `config.toml`), rerun `scripts/render-config.mjs` or the appropriate bootstrap first. A fresh hardened 1MCP launch removes the legacy runtime append log and begins native rotated logging.
 
@@ -186,7 +186,9 @@ A tmux-owned Terminal shell is suitable as an external control process because t
 This project intentionally:
 
 - supervises the real 1MCP Node entrypoint instead of relying on `serve --background`;
-- reclaims a persisted `runtime.owner` only when no live 1MCP process matches that exact config root, covering malformed records and PID reuse after an unclean WSL restart;
+- holds a kernel `flock` lease for the entire 1MCP process lifetime; the inherited descriptor is released automatically by the kernel on normal exit, crash, SIGKILL, or OOM, so WebHarness ownership does not depend on cleanup code running;
+- reclaims upstream 1MCP's persisted `runtime.owner` only after acquiring that process-scoped lease and only when no live 1MCP process matches the exact config root; this is recovery for legacy/crash residue rather than the primary ownership mechanism;
+- gives 1MCP a 10-second graceful TERM window by default before escalating to KILL, while retaining the shorter generic daemon stop window for the watchdog and Cloudflare transport;
 - verifies that the pinned runtime supports structured native `logging.maxSize` / `logging.maxFiles` rotation before relying on it;
 - patches 1MCP's consent-page CSP to permit an exact registered HTTPS callback origin; upstream 0.37.0 still permits only registered loopback callbacks, which blocks ChatGPT's HTTPS callback after consent;
 - patches 1MCP's stdio supervisor so a recovered client is activated only after the supervisor state has become `connected`; upstream 0.37.0 activates the fresh client while still marked `restarting`, causing `ClientManager` to erase its freshly negotiated capabilities and making the recovered server disappear from `tools/list`;
