@@ -24,6 +24,9 @@ done
 echo "=== Checking documentation links ==="
 node "$ROOT/scripts/check-doc-links.mjs"
 
+echo "=== Checking Skill snapshot ==="
+bash "$ROOT/scripts/skill-snapshot.sh" check
+
 echo "=== Checking bash syntax ==="
 bash -n "$ROOT"/bin/* "$ROOT"/lib/bridge/*.sh "$ROOT"/scripts/*.sh "$ROOT"/tests/*.sh
 

@@ -46,7 +46,7 @@ The Local provider connects over stdio to one inner 1MCP in direct mode. It expo
 
 ## Browser — `providers/browser/`
 
-The `browser-devtools` logical server is the resource-local DevTools surface behind Local. It republishes the complete pinned Chrome DevTools MCP catalog internally, adds `browser_target`, defaults to the dedicated persistent Windows MCP Chrome profile, and routes `browser_target=linux` to WSLg Chrome. Keep it for network, console, performance, Lighthouse, heap, screenshots, and detailed debugging.
+The `browser-devtools` logical server is the resource-local DevTools surface behind Local. It republishes the complete pinned Chrome DevTools MCP catalog internally and adds `browser_target`, `browser_backend`, and `browser_profile`. Calls default to the dedicated persistent Windows MCP Chrome profile. On Linux, the same backend/profile policy as `browser-fast` selects Chrome or Clearcote; managed Clearcote attaches to the selected running profile's live loopback CDP endpoint, while an explicit Chrome backend can use a standalone named persistent profile. Keep this surface for network, console, performance, Lighthouse, heap, screenshots, and detailed debugging.
 
 ## Browser Fast — `providers/browser-fast/`
 

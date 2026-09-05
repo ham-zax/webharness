@@ -52,7 +52,7 @@ Cloudflare Tunnel
               `-- browser-devtools -----> Chrome DevTools MCP
                          |
                          +-- Windows: dedicated persistent MCP Chrome
-                         `-- Linux: managed visible Chrome through WSLg
+                         `-- Linux: configured Chrome/Clearcote backend and profile through WSLg
 ```
 
 Cloudflare is the current public HTTPS transport and 1MCP is the OAuth/MCP gateway. The maintained workstation uses a locally-managed Cloudflare Tunnel configured outside the repository and leaves `MCP_TUNNEL_NAME` empty, so WebHarness runs `cloudflared tunnel run` against the operator-owned default Cloudflare configuration. OpenAI Secure MCP Tunnel is a separate future connector path that could keep 1MCP private behind a local `tunnel-client`; WebHarness does not currently implement or supervise that path. See [Getting Started](docs/getting-started.md#provision-the-cloudflare-transport-used-by-the-reference-deployment) for both boundaries. Providers remain local stdio processes. The Local broker exists so adding or upgrading a large downstream tool catalog does not force the entire catalog into every client session.

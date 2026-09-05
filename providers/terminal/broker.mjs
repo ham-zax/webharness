@@ -213,9 +213,9 @@ export async function createBroker(config = loadConfig()) {
     };
   }
 
-  async function reconcileHumanControl(name) {
+  async function reconcileHumanControl(name, allClients = undefined) {
     const now = Date.now();
-    const clients = (await tmux.listClients()).filter((client) => client.session === name);
+    const clients = (allClients ?? await tmux.listClients()).filter((client) => client.session === name);
     let lease = leases.get(name);
 
     if (lease) {
@@ -320,10 +320,10 @@ export async function createBroker(config = loadConfig()) {
         });
       }
       case 'session.list': {
-        const sessions = await tmux.listSessions();
+        const [sessions, clients] = await Promise.all([tmux.listSessions(), tmux.listClients()]);
         const listed = [];
         for (const session of sessions) {
-          const control = await reconcileHumanControl(session.name);
+          const control = await reconcileHumanControl(session.name, clients);
           listed.push({
             ...session,
             humanLease: control.humanHasControl,

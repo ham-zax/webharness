@@ -31,7 +31,7 @@ Full reference-workstation authority.
 - Code can inspect Git repositories reachable by that user.
 - Terminal can create and control persistent tmux-backed PTYs.
 - Durable waits can observe local process/port/file/HTTP/systemd and WebHarness Terminal state.
-- Local Browser access can control the dedicated persistent Windows MCP Chrome profile or the separate managed WSLg Chrome profile after explicit `tag:local` authorization; everyday Windows Chrome remains outside MCP control.
+- Local Browser access can control the dedicated persistent Windows MCP Chrome profile or the configured WSLg browser identity (Chrome or Clearcote) after explicit `tag:local` authorization; everyday Windows Chrome remains outside MCP control.
 
 This profile is intentionally powerful. Treat it like giving a coding agent an interactive shell as your WSL user plus, when `tag:local` is granted, access to the local capability domain, which currently includes authenticated browser control.
 

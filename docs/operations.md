@@ -128,6 +128,8 @@ For ordinary bridge reconciliation after the rendered state is current:
 webharness restart
 ```
 
+When the installed user-systemd bridge unit is available, this command queues `mcp-dev-bridge.service` for restart with `--no-block`. The systemd manager therefore owns the stop/start sequence and starts it immediately even when the caller is connected through the 1MCP process being replaced or has only a minimal non-login `PATH`. If the user service is unavailable, the CLI falls back to the direct `bin/stop` + `bin/start` lifecycle.
+
 If the source update changed generated provider/application policy (including the bounded 1MCP `config.toml`), rerun `scripts/render-config.mjs` or the appropriate bootstrap first. A fresh hardened 1MCP launch removes the legacy runtime append log and begins native rotated logging.
 
 For a personal broker-code update:
@@ -177,13 +179,15 @@ For the Personal Workstation Local domain, the outer 1MCP exposes only Local `to
 
 Windows browser calls do not attach to the everyday Chrome profile and require no `chrome://inspect` setup. Profileless calls use `%LOCALAPPDATA%\\mcp-dev-bridge\\chrome-profile`, which remains shared by `browser-fast` and `browser-devtools`. An explicit Browser Fast `browser_profile=<name>` instead uses `%LOCALAPPDATA%\\mcp-dev-bridge\\chrome-profiles\\<name>` with its own Chrome process, DevTools endpoint, Agent Browser session, and operation queue; Browser DevTools currently targets only the shared default. On first use or after the selected browser exits, the runtime launches visible Chrome with `--user-data-dir=<selected directory>` and `--remote-debugging-port=0`, waits for that directory's `DevToolsActivePort`, and health-checks the loopback endpoint. Chrome chooses the port, so the bridge does not reserve a global `9222`. Profiles are persistent: sign into the selected MCP Chrome window once when needed, and cookies/local storage remain across restarts. Do not copy the everyday Chrome data directory into them. Agent Browser 0.35.0 plus its one-shot Windows Node helper remain materialized under `%LOCALAPPDATA%\\mcp-dev-bridge\\agent-browser\\0.35.0`; the helper owns bounded stdout/stderr files so cold daemon startup cannot keep the WSL interop lifetime open. Do not publish debugging endpoints beyond the trusted local machine. `browser_target=linux` selects the separate WSLg paths.
 
-### Selecting the Linux browser-fast backend
+### Selecting the Linux browser backend
 
-`~/.config/mcp-dev-bridge/browser-fast.json` defines the Linux default and managed Clearcote profiles. The maintained workstation keeps `clearcote` / `x-main` as its normal default. Do not rewrite this shared selector merely to use Chrome; changing it affects other conversations that omit an explicit backend.
+`~/.config/mcp-dev-bridge/browser-fast.json` defines the Linux default and managed Clearcote profiles for both browser surfaces. The maintained workstation keeps `clearcote` / `x-main` as its normal default. Do not rewrite this shared selector merely to use Chrome; set `browser_backend="chrome"` on the call that needs Chrome.
 
-For a normal Clearcote operation, use `browser_target="linux"` and omit `browser_backend`, or set `browser_backend="clearcote"`. `browser-fast` returns the resolved `browser_backend` and `browser_profile`; pass those values back to `execute` with the observed tab/ref state.
+For a normal Clearcote operation, use `browser_target="linux"` and omit `browser_backend`, or set `browser_backend="clearcote"`. `browser-fast` returns the resolved `browser_backend` and `browser_profile`; pass those values back to `execute` with the observed tab/ref state. It also owns the managed Clearcote process lifecycle.
 
-For a Chrome operation, use `browser_target="linux"` with `browser_backend="chrome"`. Omit `browser_profile` for the existing shared Chrome behavior, or provide a stable name to create/reuse a persistent isolated profile beneath the bridge state directory. This does not change `browser-fast.json` or close a managed Clearcote runtime.
+Use the same selector on `browser-devtools`. It attaches Chrome DevTools MCP to the live Clearcote CDP endpoint, so both surfaces see the same tabs, cookies, and authenticated session. If that managed profile is not running, initialize it once through `browser-fast` and retry; `browser-devtools` does not launch a second process against the Clearcote profile.
+
+For a Chrome operation, use `browser_target="linux"` with `browser_backend="chrome"`. On `browser-fast`, omit `browser_profile` for the existing shared Chrome behavior, or provide a stable name to create/reuse a persistent isolated profile beneath the bridge state directory. On `browser-devtools`, an explicit Chrome backend keeps the standalone Linux Chrome path; a named profile uses the corresponding persistent bridge-state directory. This does not change `browser-fast.json` or close a managed Clearcote runtime.
 
 When more than one managed Clearcote profile exists and the configured default does not identify the desired one, set `browser_profile` together with `browser_backend="clearcote"`. The named profile must be defined under `clearcote.profiles`; unknown names fail instead of cloning state or falling back. Otherwise omit `browser_profile`; the configured profile, or the only configured Clearcote profile, is used.
 

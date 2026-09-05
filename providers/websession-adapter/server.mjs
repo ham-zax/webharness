@@ -60,6 +60,19 @@ function recordEvidence(req, url, route, extra = {}) {
   return entry;
 }
 
+function requestLogPath(url) {
+  const parts = url.pathname.split('/').filter(Boolean);
+  if (parts[0] === 'v1' && parts[1] === 's') {
+    return parts[3] ? `/v1/s/{secret}/${parts[3]}` : '/v1/s/{secret}';
+  }
+  if (parts[0] === 'v1' && parts[1] === 'operations') {
+    return parts[4] === 'chunk'
+      ? '/v1/operations/{secret}/{operation}/chunk/{chunk}'
+      : '/v1/operations/{secret}/{operation}';
+  }
+  return url.pathname;
+}
+
 function sendText(res, status, body) {
   const req = res.req;
   if (req?.headers?.accept?.includes('text/html')) {
@@ -556,14 +569,16 @@ async function handleHttpProbe(req, res, url, noncePart) {
 }
 
 const server = createServer((req, res) => {
-  console.log(`${new Date().toISOString()} ${req.method} ${req.url} - UA: ${req.headers['user-agent']}`);
+  const requestAt = new Date().toISOString();
   let url;
   try {
     url = new URL(req.url || '/', `http://${host}:${port}`);
   } catch {
+    console.log(`${requestAt} ${req.method} <invalid-url> - UA: ${req.headers['user-agent']}`);
     sendText(res, 400, 'WEBSESSION-PROBE/1\nstate: rejected\ncode: invalid_url');
     return;
   }
+  console.log(`${requestAt} ${req.method} ${requestLogPath(url)} - UA: ${req.headers['user-agent']}`);
 
   const parts = url.pathname.split('/').filter(Boolean);
   if (req.method === 'POST' && parts[0] === 'probe' && parts[1] === 'http' && parts.length === 3) {

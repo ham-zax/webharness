@@ -25,51 +25,114 @@ test('browser facade adds locality and deployment path guidance without changing
   assert.deepEqual(tool.inputSchema.properties.format, upstream.inputSchema.properties.format);
   assert.match(tool.inputSchema.properties.filePath.description, /selected target.*OS temporary directory/i);
   assert.deepEqual(tool.inputSchema.properties.browser_target.enum, ['windows', 'linux']);
+  assert.deepEqual(tool.inputSchema.properties.browser_backend.enum, ['chrome', 'clearcote']);
+  assert.equal(tool.inputSchema.properties.browser_profile.maxLength, 64);
   assert.equal(upstream.inputSchema.properties.browser_target, undefined);
+  assert.equal(upstream.inputSchema.properties.browser_backend, undefined);
+  assert.equal(upstream.inputSchema.properties.browser_profile, undefined);
   assert.equal(upstream.inputSchema.properties.filePath.description, 'Path to save the screenshot to.');
 });
 
-test('browser router defaults to Windows, supports explicit Linux, and forwards native results unchanged', async () => {
+test('browser router defaults to Windows, resolves Linux through the shared backend policy, and forwards native results unchanged', async () => {
   const calls = [];
   const imageResult = {
     content: [{ type: 'image', data: 'cG5n', mimeType: 'image/png' }],
     structuredContent: { source: 'native' }
   };
-  const children = new Map();
-  const childFactory = async target => {
+  const children = [];
+  const childFactory = async (target, config) => {
     const child = {
       alive: true,
       async listTools() {
         return { tools: [{ name: 'take_screenshot', inputSchema: { type: 'object', properties: {} } }] };
       },
       async callTool(name, args) {
-        calls.push({ target, name, args });
+        calls.push({ target, config, name, args });
         return imageResult;
       },
       async close() { this.alive = false; }
     };
-    children.set(target, child);
+    children.push(child);
     return child;
   };
 
-  const router = new BrowserRouter({ childFactory });
+  const router = new BrowserRouter({
+    childFactory,
+    env: { DISPLAY: ':0' },
+    linuxBackendResolve: async ({ browser, profile }) => {
+      assert.equal(browser, undefined);
+      assert.equal(profile, undefined);
+      return { browser: 'clearcote', managed: true, profileName: 'x-main' };
+    },
+    clearcoteEndpointResolve: async profileName => {
+      assert.equal(profileName, 'x-main');
+      return { browserUrl: 'http://127.0.0.1:42425' };
+    }
+  });
   const tools = await router.listTools();
   assert.deepEqual(tools[0].inputSchema.properties.browser_target.enum, ['windows', 'linux']);
+  assert.deepEqual(tools[0].inputSchema.properties.browser_backend.enum, ['chrome', 'clearcote']);
 
   const windowsResult = await router.call({ tool: 'take_screenshot', arguments: { format: 'png' } });
   assert.strictEqual(windowsResult, imageResult);
-  assert.deepEqual(calls.at(-1), { target: 'windows', name: 'take_screenshot', args: { format: 'png' } });
+  assert.equal(calls.at(-1).target, 'windows');
+  assert.equal(calls.at(-1).config, undefined);
+  assert.deepEqual(calls.at(-1).args, { format: 'png' });
 
   const linuxResult = await router.call({
     tool: 'take_screenshot',
     arguments: { format: 'png', browser_target: 'linux' }
   });
   assert.strictEqual(linuxResult, imageResult);
-  assert.deepEqual(calls.at(-1), { target: 'linux', name: 'take_screenshot', args: { format: 'png' } });
+  assert.equal(calls.at(-1).target, 'linux');
+  assert.deepEqual(calls.at(-1).config, childConfig('linux', { DISPLAY: ':0' }, [], { browserUrl: 'http://127.0.0.1:42425' }));
+  assert.deepEqual(calls.at(-1).args, { format: 'png' });
 
   await router.shutdown();
-  assert.equal(children.get('windows').alive, false);
-  assert.equal(children.get('linux').alive, false);
+  assert.ok(children.every(child => child.alive === false));
+});
+
+test('browser router supports explicit Linux Chrome profiles and rejects ambiguous selectors', async () => {
+  const calls = [];
+  const childFactory = async (target, config) => ({
+    alive: true,
+    async callTool(name, args) {
+      calls.push({ target, config, name, args });
+      return { content: [] };
+    },
+    async close() { this.alive = false; }
+  });
+  const router = new BrowserRouter({
+    childFactory,
+    env: { DISPLAY: ':0' },
+    linuxChromeProfilesRoot: '/state/chrome-profiles',
+    linuxBackendResolve: async ({ browser, profile }) => ({ browser, profileName: profile })
+  });
+
+  await router.call({
+    tool: 'list_pages',
+    arguments: {
+      browser_target: 'linux',
+      browser_backend: 'chrome',
+      browser_profile: 'agent-two'
+    }
+  });
+  assert.equal(calls.at(-1).target, 'linux');
+  assert.deepEqual(
+    calls.at(-1).config,
+    childConfig('linux', { DISPLAY: ':0' }, [], { userDataDir: '/state/chrome-profiles/agent-two' })
+  );
+  assert.deepEqual(calls.at(-1).args, {});
+
+  await assert.rejects(
+    router.call({ tool: 'list_pages', arguments: { browser_target: 'linux', browser_profile: 'agent-two' } }),
+    /browser_profile requires an explicit browser_backend/
+  );
+  await assert.rejects(
+    router.call({ tool: 'list_pages', arguments: { browser_backend: 'chrome' } }),
+    /Linux-only/
+  );
+  await router.shutdown();
 });
 
 test('shutdown wins while a dead child is being replaced', async () => {
@@ -114,7 +177,22 @@ test('child configs keep Linux and Windows execution resource-local', () => {
   const linux = childConfig('linux', env);
   assert.equal(linux.command, 'npx');
   assert.deepEqual(linux.env, env);
-  assert.ok(linux.args.includes('chrome-devtools-mcp@1.7.0'));
+  assert.ok(linux.args.includes('chrome-devtools-mcp@1.8.0'));
+
+  const attachedLinux = childConfig('linux', env, [], { browserUrl: 'http://127.0.0.1:42425' });
+  assert.deepEqual(
+    attachedLinux.args.slice(attachedLinux.args.indexOf('--browserUrl'), attachedLinux.args.indexOf('--browserUrl') + 2),
+    ['--browserUrl', 'http://127.0.0.1:42425']
+  );
+  const profiledLinux = childConfig('linux', env, [], { userDataDir: '/state/chrome-profiles/agent-two' });
+  assert.deepEqual(
+    profiledLinux.args.slice(profiledLinux.args.indexOf('--userDataDir'), profiledLinux.args.indexOf('--userDataDir') + 2),
+    ['--userDataDir', '/state/chrome-profiles/agent-two']
+  );
+  assert.throws(
+    () => childConfig('linux', env, [], { browserUrl: 'http://127.0.0.1:42425', userDataDir: '/state/chrome-profiles/agent-two' }),
+    /mutually exclusive/
+  );
 
   assert.throws(() => childConfig('windows', env), /WINDOWS_BROWSER_URL_REQUIRED/);
   const windows = childConfig('windows', env, [], { browserUrl: 'http://127.0.0.1:43111' });

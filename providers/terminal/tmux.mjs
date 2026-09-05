@@ -29,6 +29,20 @@ const ORIGINAL_DEAD_STATUS_OPTION = '@wsl_agent_original_dead_status';
 const COLLAB_CLIENT_PID_OPTION = '@wsl_agent_collab_client_pid';
 const COLLAB_CLIENT_TTY_OPTION = '@wsl_agent_collab_client_tty';
 const COLLAB_CLIENT_CREATED_OPTION = '@wsl_agent_collab_client_created';
+const SESSION_INFO_FORMAT_FIELDS = [
+  '#{session_name}',
+  '#{pid}',
+  '#{pane_pid}',
+  '#{pane_dead}',
+  '#{pane_dead_status}',
+  `#{${TRANSCRIPT_FINALIZED_OPTION}}`,
+  `#{${ORIGINAL_DEAD_PID_OPTION}}`,
+  `#{${ORIGINAL_DEAD_STATUS_OPTION}}`,
+  '#{pane_width}',
+  '#{pane_height}',
+  '#{session_attached}',
+  '#{remain-on-exit}',
+];
 
 function shellQuote(value) {
   return `'${String(value).replaceAll("'", `'"'"'`)}'`;
@@ -50,6 +64,42 @@ function parseStatus(value) {
   if (value === '' || value === undefined) return null;
   const number = Number(value);
   return Number.isInteger(number) ? number : null;
+}
+
+function sessionInfoFromFields(fields) {
+  const [
+    sessionName,
+    serverPid,
+    panePid,
+    paneDead,
+    paneDeadStatus,
+    transcriptFinalized,
+    originalDeadPid,
+    originalDeadStatus,
+    width,
+    height,
+    attachedClients,
+    remainOnExit,
+  ] = fields;
+  const finalized = parseBoolean(transcriptFinalized);
+  const preservedPid = Number(originalDeadPid);
+  const preservedStatus = parseStatus(originalDeadStatus);
+  const isDead = parseBoolean(paneDead);
+  return {
+    name: sessionName,
+    serverPid: Number(serverPid),
+    panePid: finalized && Number.isSafeInteger(preservedPid) && preservedPid > 0
+      ? preservedPid
+      : Number(panePid),
+    paneDead: isDead,
+    paneDeadStatus: isDead
+      ? (finalized && preservedStatus !== null ? preservedStatus : parseStatus(paneDeadStatus))
+      : null,
+    cols: Number(width),
+    rows: Number(height),
+    attachedClients: Number(attachedClients),
+    remainOnExit: parseBoolean(remainOnExit),
+  };
 }
 
 export function validateSessionName(name) {
@@ -164,62 +214,28 @@ export class TmuxBackend {
   }
 
   async listSessions() {
-    const names = await this.listSessionNames();
+    const format = [
+      ...SESSION_INFO_FORMAT_FIELDS,
+      '#{window_index}',
+      '#{pane_index}',
+    ].join('|');
+    const { stdout } = await this.run(['list-panes', '-a', '-F', format]);
     const sessions = [];
-    for (const name of names) sessions.push(await this.sessionInfo(name));
+    for (const line of stdout.split('\n').filter(Boolean)) {
+      const fields = line.split('|');
+      const paneIndex = fields.pop();
+      const windowIndex = fields.pop();
+      if (windowIndex === '0' && paneIndex === '0') sessions.push(sessionInfoFromFields(fields));
+    }
     return sessions;
   }
 
   async sessionInfo(name) {
     validateSessionName(name);
-    const format = [
-      '#{session_name}',
-      '#{pid}',
-      '#{pane_pid}',
-      '#{pane_dead}',
-      '#{pane_dead_status}',
-      `#{${TRANSCRIPT_FINALIZED_OPTION}}`,
-      `#{${ORIGINAL_DEAD_PID_OPTION}}`,
-      `#{${ORIGINAL_DEAD_STATUS_OPTION}}`,
-      '#{pane_width}',
-      '#{pane_height}',
-      '#{session_attached}',
-    ].join('|');
-    const { stdout } = await this.run(['display-message', '-p', '-t', `${name}:0.0`, format]);
-    const { stdout: remainStdout } = await this.run([
-      'show-options', '-w', '-t', `${name}:0`, '-v', 'remain-on-exit',
+    const { stdout } = await this.run([
+      'display-message', '-p', '-t', `${name}:0.0`, SESSION_INFO_FORMAT_FIELDS.join('|'),
     ]);
-    const [
-      sessionName,
-      serverPid,
-      panePid,
-      paneDead,
-      paneDeadStatus,
-      transcriptFinalized,
-      originalDeadPid,
-      originalDeadStatus,
-      width,
-      height,
-      attachedClients,
-    ] = stdout.trimEnd().split('|');
-    const finalized = parseBoolean(transcriptFinalized);
-    const preservedPid = Number(originalDeadPid);
-    const isDead = parseBoolean(paneDead);
-    return {
-      name: sessionName,
-      serverPid: Number(serverPid),
-      panePid: finalized && Number.isSafeInteger(preservedPid) && preservedPid > 0
-        ? preservedPid
-        : Number(panePid),
-      paneDead: isDead,
-      paneDeadStatus: isDead
-        ? (finalized ? parseStatus(originalDeadStatus) : parseStatus(paneDeadStatus))
-        : null,
-      cols: Number(width),
-      rows: Number(height),
-      attachedClients: Number(attachedClients),
-      remainOnExit: parseBoolean(remainStdout.trim()),
-    };
+    return sessionInfoFromFields(stdout.trimEnd().split('|'));
   }
 
   async listClients() {
@@ -425,9 +441,9 @@ export class TmuxBackend {
     ].join(' ');
     return [
       'capture-pane', '-t', paneId, '-b', screenBuffer, ';',
-      'set-option', '-p', '-t', paneId, TRANSCRIPT_FINALIZED_OPTION, '1', ';',
       'set-option', '-p', '-t', paneId, ORIGINAL_DEAD_PID_OPTION, panePid, ';',
       'set-option', '-p', '-t', paneId, ORIGINAL_DEAD_STATUS_OPTION, paneDeadStatus, ';',
+      'set-option', '-p', '-t', paneId, TRANSCRIPT_FINALIZED_OPTION, '1', ';',
       'respawn-pane', '-k', '-t', paneId, terminationCommand, ';',
       'pipe-pane', '-t', paneId, ';',
       'set-hook', '-p', '-u', '-t', paneId, TRANSCRIPT_FINALIZER_HOOK, ';',

@@ -13,7 +13,7 @@ function runtimeError(code, message, cause) {
   return error;
 }
 
-async function readEndpoint(userDataDir, { allowMissing = false } = {}) {
+export async function readClearcoteEndpoint(userDataDir, { allowMissing = false } = {}) {
   let text;
   try {
     text = await fs.readFile(path.join(userDataDir, 'DevToolsActivePort'), 'utf8');
@@ -42,7 +42,7 @@ async function readEndpoint(userDataDir, { allowMissing = false } = {}) {
 async function waitForEndpoint(userDataDir) {
   const deadline = Date.now() + STARTUP_TIMEOUT_MS;
   while (Date.now() < deadline) {
-    const endpoint = await readEndpoint(userDataDir, { allowMissing: true });
+    const endpoint = await readClearcoteEndpoint(userDataDir, { allowMissing: true });
     if (endpoint) return endpoint;
     await new Promise(resolve => setTimeout(resolve, 50));
   }
@@ -95,7 +95,7 @@ export class ManagedClearcoteRuntime {
       }
       await fs.mkdir(userDataDir, { recursive: true });
 
-      const live = await readEndpoint(userDataDir, { allowMissing: true });
+      const live = await readClearcoteEndpoint(userDataDir, { allowMissing: true });
       if (live) {
         throw runtimeError(
           'CLEARCOTE_PROFILE_IN_USE',

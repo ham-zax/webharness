@@ -121,13 +121,13 @@ The Local inner 1MCP publishes two browser surfaces in the same `tag:local` trus
 Local
   +-- server="browser-devtools" -> Chrome DevTools MCP facade
   |    +-- windows (default) -> dedicated persistent MCP Chrome profile
-  |    `-- linux             -> managed visible Chrome through WSLg
+  |    `-- linux             -> same backend/profile selector as browser-fast
   `-- server="browser-fast" -> compact observe/execute facade
        +-- windows (default) -> pinned native Agent Browser 0.35.0 -> same MCP Chrome profile
        `-- linux             -> per-call backend: managed Chrome or managed Clearcote
 ```
 
-`browser-devtools` keeps the complete Chrome DevTools MCP catalog for network, console, performance, Lighthouse, heap, screenshots, and detailed debugging. It adds `browser_target`, strips that field before forwarding, and returns downstream `CallToolResult` objects unchanged.
+`browser-devtools` keeps the complete Chrome DevTools MCP catalog for network, console, performance, Lighthouse, heap, screenshots, and detailed debugging. It adds `browser_target`, `browser_backend`, and `browser_profile`, strips those routing fields before forwarding, and returns downstream `CallToolResult` objects unchanged. On Linux, omitted backend/profile values resolve through `browser-fast.json`. Managed Clearcote attaches to the already running profile's loopback CDP endpoint instead of launching a second browser process.
 
 `browser-fast` is an experimental routine-interaction surface with only `observe` and `execute`. `observe` returns compact interactive refs plus stable Agent Browser/CDP target IDs. It also resolves bounded read-only browser memory from `~/.config/mcp-dev-bridge/browser-memory/`: exact-host policy, exact-host site knowledge, then reusable platform knowledge whose `match.json` matches the current host/URL. Exact site lookup scales without scanning every learned company; platform scans stay limited to the reusable platform catalog. The resolver strips only leading `www.` and does not collapse arbitrary subdomains into one key. Up to six Markdown files are returned, capped at 16 KiB per file and 48 KiB total; malformed/missing local memory becomes a warning rather than a browser failure. `execute` requires the tab ID returned by `observe`. Linux operations are serialized by resolved backend/profile/tab, so independent tabs can proceed concurrently while the same tab remains fail-closed and ordered. Windows operations serialize by profile because each profile has one native Agent Browser session; different named Windows profiles have independent queues. Each Linux tab is driven through a deterministic Agent Browser session derived from its CDP target ID. After each click, `execute` compares the target set: exactly one new target is bound before later actions and final observation, zero continues on the current target, and multiple new targets stop the sequence without guessing. Other tab switching remains an Agent Browser operation through `observe(tab=...)` or an explicit `tab_switch` action.
 

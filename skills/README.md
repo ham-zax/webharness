@@ -27,12 +27,14 @@ This directory tracks the Skills that were exposed or invoked in ChatGPT and kee
 21. `writing-plans`
 22. `writing-skills`
 23. `agent-browser`
+24. `causal-coding`
 
 ## Provenance
 
 - The 14 Superpowers skills come from the locally installed `superpowers` 6.2.0 bundle whose `brainstorming`, `using-superpowers`, and `writing-skills` entrypoints were checked against the versions exposed in this session. The complete local skill directories were copied so helper/reference files omitted by the ChatGPT Web resource view are preserved along with executable permissions.
 - `agent-work-planner` is materialized from the currently installed ChatGPT Skill, including its UI metadata, icon, agent prompt template, and coordination-package template.
 - `agent-browser` is materialized from the installed ChatGPT browser Skill with harness routing for two Local browser surfaces: routine Windows/WSLg interaction uses experimental `browser-fast` `observe`/`execute`, including bounded read-only site/platform/policy memory returned by observation; DevTools diagnostics use `browser-devtools`, and isolated/Electron automation keeps the existing `agent-browser` CLI workflow.
+- `causal-coding` mirrors the currently installed ChatGPT implementation-mutation policy bundle, including its UI metadata and icon.
 - `job-application` and `x-content` are intentionally excluded from the tracked snapshot and ignored by Git. They may exist locally for ChatGPT-side/private workflow synchronization, but canonical Git history does not carry those private bundles.
 - `mcp-harness-router` mirrors the currently installed ChatGPT router bundle and is maintained alongside harness behavior such as the installed `wsl-term` handoff path and the durable wait/RPC boundary.
 - `persistent-agent-loop` mirrors the currently installed ChatGPT bundle. Its compact `SKILL.md` directly references `references/protocol.md` so ChatGPT can load the detailed mission/checkpoint/recovery protocol only when needed. It composes with `agent-work-planner` when planning/replanning is needed, understands native timer versus event waits, preserves in-mission steering without accidental termination, and treats Kitty presentation as optional visibility over the same tmux-owned Terminal process.
@@ -48,7 +50,7 @@ Every first-level skill directory must contain:
 - `SKILL.md` with valid YAML frontmatter;
 - `agents/openai.yaml` with a display name and short description.
 
-Validate the snapshot with the installed OpenAI Skill Creator validator:
+Validate each Skill with the installed OpenAI Skill Creator validator, then verify that the checksum manifest exactly covers the current tracked Skill tree:
 
 ```bash
 VALIDATOR="$HOME/.codex/skills/.system/skill-creator/scripts/quick_validate.py"
@@ -56,9 +58,10 @@ for dir in skills/*/; do
   [ -f "$dir/SKILL.md" ] || continue
   python3 "$VALIDATOR" "$dir"
 done
+bash scripts/skill-snapshot.sh check
 ```
 
-The repository publication policy treats all `skills/*` paths as private-only.
+After an intentional tracked Skill change, regenerate the manifest deterministically with `bash scripts/skill-snapshot.sh write`, then rerun the check. The repository publication policy treats all `skills/*` paths as private-only.
 
 ## Fresh ChatGPT installation
 

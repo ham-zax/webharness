@@ -1,13 +1,22 @@
+import os from 'node:os';
+import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import { resolveLinuxBrowserBackend } from '../browser-fast/browser-backend-config.mjs';
+import { DEFAULT_CLEARCOTE_STATE_ROOT, readClearcoteEndpoint } from '../browser-fast/clearcote-runtime.mjs';
 import { ensureWindowsChrome } from './windows-chrome-runtime.mjs';
 
-export const CHROME_DEVTOOLS_MCP_VERSION = '1.7.0';
+export const CHROME_DEVTOOLS_MCP_VERSION = '1.8.0';
 export const BROWSER_TARGET_FIELD = 'browser_target';
+export const BROWSER_BACKEND_FIELD = 'browser_backend';
+export const BROWSER_PROFILE_FIELD = 'browser_profile';
+
+const STATE_BASE = process.env.XDG_STATE_HOME || path.join(os.homedir(), '.local', 'state');
+const DEFAULT_LINUX_CHROME_PROFILES_ROOT = path.join(STATE_BASE, 'mcp-dev-bridge', 'chrome-profiles');
 
 const OS_TEMP_PATH_FIELDS = new Set([
   'filePath',
@@ -38,12 +47,20 @@ function linuxBrowserEnv(env = process.env) {
   return values;
 }
 
-export function childConfig(target, env = process.env, extraArgs = [], { browserUrl } = {}) {
+export function childConfig(target, env = process.env, extraArgs = [], { browserUrl, userDataDir } = {}) {
   if (!Array.isArray(extraArgs) || extraArgs.some(value => typeof value !== 'string')) throw new TypeError('extraArgs must be a string array');
   if (target === 'linux') {
+    if (browserUrl !== undefined && userDataDir !== undefined) {
+      throw browserError('LINUX_BROWSER_CONFIG_INVALID', 'browserUrl and userDataDir are mutually exclusive');
+    }
     return {
       command: 'npx',
-      args: [...BASE_CHROME_ARGS, ...extraArgs],
+      args: [
+        ...BASE_CHROME_ARGS,
+        ...(browserUrl === undefined ? [] : ['--browserUrl', browserUrl]),
+        ...(userDataDir === undefined ? [] : ['--userDataDir', userDataDir]),
+        ...extraArgs
+      ],
       env: linuxBrowserEnv(env),
       stderr: 'inherit'
     };
@@ -72,13 +89,47 @@ export function childConfig(target, env = process.env, extraArgs = [], { browser
   throw browserError('INVALID_BROWSER_TARGET', `expected windows or linux, got ${String(target)}`);
 }
 
+function browserProfileName(value) {
+  if (value === undefined) return undefined;
+  const validName = new RegExp('^[A-Za-z0-9._-]+$');
+  if (
+    typeof value !== 'string'
+    || value.length === 0
+    || value.length > 64
+    || value === '.'
+    || value === '..'
+    || !validName.test(value)
+  ) {
+    throw browserError('INVALID_ARGUMENT', 'browser_profile must be 1-64 characters using only letters, numbers, dot, underscore, or hyphen, and cannot be . or ..');
+  }
+  return value;
+}
+
+async function resolveClearcoteEndpoint(profileName) {
+  const profilesRoot = path.resolve(DEFAULT_CLEARCOTE_STATE_ROOT, 'profiles');
+  const userDataDir = path.resolve(profilesRoot, profileName);
+  if (path.dirname(userDataDir) !== profilesRoot) {
+    throw browserError('INVALID_ARGUMENT', `invalid Clearcote profile: ${profileName}`);
+  }
+  const endpoint = await readClearcoteEndpoint(userDataDir, { allowMissing: true });
+  if (!endpoint) {
+    throw browserError(
+      'LINUX_BROWSER_NOT_RUNNING',
+      `managed Clearcote profile ${profileName} is not active; initialize it once through browser-fast, then retry browser-devtools with the same backend/profile`
+    );
+  }
+  return endpoint;
+}
+
 export function addBrowserTarget(tool) {
   const inputSchema = tool.inputSchema ?? { type: 'object' };
   if (inputSchema.type !== undefined && inputSchema.type !== 'object') {
     throw browserError('UNSUPPORTED_TOOL_SCHEMA', `${tool.name} does not use an object input schema`);
   }
-  if (Object.prototype.hasOwnProperty.call(inputSchema.properties ?? {}, BROWSER_TARGET_FIELD)) {
-    throw browserError('TOOL_SCHEMA_COLLISION', `${tool.name} already defines ${BROWSER_TARGET_FIELD}`);
+  for (const field of [BROWSER_TARGET_FIELD, BROWSER_BACKEND_FIELD, BROWSER_PROFILE_FIELD]) {
+    if (Object.prototype.hasOwnProperty.call(inputSchema.properties ?? {}, field)) {
+      throw browserError('TOOL_SCHEMA_COLLISION', `${tool.name} already defines ${field}`);
+    }
   }
   const properties = Object.fromEntries(
     Object.entries(inputSchema.properties ?? {}).map(([name, property]) => [
@@ -101,7 +152,18 @@ export function addBrowserTarget(tool) {
         [BROWSER_TARGET_FIELD]: {
           type: 'string',
           enum: ['windows', 'linux'],
-          description: 'Browser locality. Omit for the dedicated persistent Windows MCP Chrome profile; use linux for WSLg Chrome.'
+          description: 'Browser locality. Omit for the dedicated persistent Windows MCP Chrome profile; use linux for the configured Linux browser.'
+        },
+        [BROWSER_BACKEND_FIELD]: {
+          type: 'string',
+          enum: ['chrome', 'clearcote'],
+          description: 'Linux only. Omit to use browser-fast.json; set explicitly to select Chrome or Clearcote.'
+        },
+        [BROWSER_PROFILE_FIELD]: {
+          type: 'string',
+          minLength: 1,
+          maxLength: 64,
+          description: 'Linux only. Named persistent profile; browser_backend must be explicit when this field is set.'
         }
       }
     }
@@ -167,51 +229,101 @@ export class ChromeChild {
 }
 
 export class BrowserRouter {
-  constructor({ childFactory = target => ChromeChild.start({ target }) } = {}) {
+  constructor({
+    childFactory = (target, config) => ChromeChild.start({ target, config }),
+    env = process.env,
+    linuxBackendResolve = resolveLinuxBrowserBackend,
+    clearcoteEndpointResolve = resolveClearcoteEndpoint,
+    linuxChromeProfilesRoot = DEFAULT_LINUX_CHROME_PROFILES_ROOT
+  } = {}) {
     if (typeof childFactory !== 'function') throw new TypeError('childFactory must be a function');
     this.childFactory = childFactory;
+    this.env = env;
+    this.linuxBackendResolve = linuxBackendResolve;
+    this.clearcoteEndpointResolve = clearcoteEndpointResolve;
+    this.linuxChromeProfilesRoot = linuxChromeProfilesRoot;
     this.children = new Map();
+    this.childIdentities = new Map();
     this.starts = new Map();
     this.toolsPromise = null;
     this.closed = false;
   }
 
-  async child(target) {
+  async child(target, { key = target, config, identity = key } = {}) {
     if (this.closed) throw browserError('BROWSER_ROUTER_CLOSED', 'browser router is shut down');
-    const existing = this.children.get(target);
-    if (existing?.alive) return existing;
+    const existing = this.children.get(key);
+    if (existing?.alive && this.childIdentities.get(key) === identity) return existing;
     if (existing) {
-      this.children.delete(target);
+      this.children.delete(key);
+      this.childIdentities.delete(key);
       await existing.close().catch(() => {});
       if (this.closed) throw browserError('BROWSER_ROUTER_CLOSED', 'browser router is shut down');
     }
 
-    let starting = this.starts.get(target);
+    let starting = this.starts.get(key);
     if (!starting) {
       starting = Promise.resolve().then(() => {
         if (this.closed) throw browserError('BROWSER_ROUTER_CLOSED', 'browser router is shut down');
-        return this.childFactory(target);
+        return this.childFactory(target, config);
       }).then(async child => {
         if (this.closed) {
           await child.close().catch(() => {});
           throw browserError('BROWSER_ROUTER_CLOSED', 'browser router is shut down');
         }
-        this.children.set(target, child);
+        this.children.set(key, child);
+        this.childIdentities.set(key, identity);
         return child;
       }).finally(() => {
-        this.starts.delete(target);
+        this.starts.delete(key);
       });
-      this.starts.set(target, starting);
+      this.starts.set(key, starting);
     }
     return starting;
+  }
+
+  async linuxRoute(browserBackend, browserProfile) {
+    const profile = browserProfileName(browserProfile);
+    if (profile !== undefined && browserBackend === undefined) {
+      throw browserError('INVALID_ARGUMENT', 'browser_profile requires an explicit browser_backend for Linux');
+    }
+
+    const selected = await this.linuxBackendResolve({ browser: browserBackend, profile });
+    if (selected.browser === 'clearcote') {
+      const endpoint = await this.clearcoteEndpointResolve(selected.profileName);
+      return {
+        key: `linux:clearcote:${selected.profileName}`,
+        identity: endpoint.browserUrl,
+        config: childConfig('linux', this.env, [], { browserUrl: endpoint.browserUrl })
+      };
+    }
+    if (selected.browser !== 'chrome') {
+      throw browserError('UNSUPPORTED_BROWSER_BACKEND', `unsupported Linux browser backend: ${String(selected.browser)}`);
+    }
+    if (selected.profileName === undefined) {
+      return { key: 'linux:chrome:default', config: childConfig('linux', this.env) };
+    }
+
+    const profilesRoot = path.resolve(this.linuxChromeProfilesRoot);
+    const userDataDir = path.resolve(profilesRoot, selected.profileName);
+    if (path.dirname(userDataDir) !== profilesRoot) {
+      throw browserError('INVALID_ARGUMENT', `invalid Chrome profile: ${selected.profileName}`);
+    }
+    return {
+      key: `linux:chrome:${selected.profileName}`,
+      config: childConfig('linux', this.env, [], { userDataDir })
+    };
   }
 
   async listTools() {
     if (!this.toolsPromise) {
       this.toolsPromise = (async () => {
-        const child = await this.child('linux');
-        const { tools } = await child.listTools();
-        return tools.map(addBrowserTarget);
+        const child = await this.childFactory('linux');
+        try {
+          const { tools } = await child.listTools();
+          return tools.map(addBrowserTarget);
+        } finally {
+          await child.close().catch(() => {});
+        }
       })().catch(error => {
         this.toolsPromise = null;
         throw error;
@@ -226,12 +338,22 @@ export class BrowserRouter {
 
     const upstreamArgs = { ...args };
     const target = upstreamArgs[BROWSER_TARGET_FIELD] ?? 'windows';
+    const browserBackend = upstreamArgs[BROWSER_BACKEND_FIELD];
+    const browserProfile = upstreamArgs[BROWSER_PROFILE_FIELD];
     delete upstreamArgs[BROWSER_TARGET_FIELD];
+    delete upstreamArgs[BROWSER_BACKEND_FIELD];
+    delete upstreamArgs[BROWSER_PROFILE_FIELD];
     if (target !== 'windows' && target !== 'linux') {
       throw browserError('INVALID_BROWSER_TARGET', `expected windows or linux, got ${String(target)}`);
     }
+    if (target === 'windows' && (browserBackend !== undefined || browserProfile !== undefined)) {
+      throw browserError('INVALID_ARGUMENT', 'browser_backend and browser_profile are Linux-only for browser-devtools');
+    }
 
-    const child = await this.child(target);
+    const route = target === 'linux'
+      ? await this.linuxRoute(browserBackend, browserProfile)
+      : { key: 'windows' };
+    const child = await this.child(target, route);
     return child.callTool(tool, upstreamArgs);
   }
 
@@ -243,6 +365,7 @@ export class BrowserRouter {
     for (const result of pending) if (result.status === 'fulfilled') children.add(result.value);
     await Promise.allSettled([...children].map(child => child.close()));
     this.children.clear();
+    this.childIdentities.clear();
   }
 }
 
@@ -254,7 +377,7 @@ export function createBrowserFacadeServer({ router } = {}) {
     { name: 'browser', version: '0.1.0' },
     {
       capabilities: { tools: {} },
-      instructions: 'One resource-local Chrome surface. Tools default to the dedicated persistent Windows MCP Chrome profile; pass browser_target=linux for WSLg Chrome. Path arguments are OS-temp-only.'
+      instructions: 'One resource-local DevTools surface. Tools default to the dedicated persistent Windows MCP Chrome profile. Pass browser_target=linux to use the configured Linux browser; browser_backend and browser_profile select the same Linux identity used by browser-fast. Managed Clearcote is attached through its live CDP endpoint. Path arguments are OS-temp-only.'
     }
   );
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: await router.listTools() }));

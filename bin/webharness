@@ -33,6 +33,26 @@ install_self() {
   echo "installed webharness: $link -> $ROOT/bin/webharness"
 }
 
+restart_command() {
+  local runtime_dir bus_address
+  runtime_dir="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+  bus_address="${DBUS_SESSION_BUS_ADDRESS:-unix:path=$runtime_dir/bus}"
+
+  if command -v systemctl >/dev/null 2>&1 && [ -S "$runtime_dir/bus" ]; then
+    if XDG_RUNTIME_DIR="$runtime_dir" DBUS_SESSION_BUS_ADDRESS="$bus_address" \
+      systemctl --user show mcp-dev-bridge.service --property=LoadState --value 2>/dev/null \
+      | grep -qx loaded; then
+      XDG_RUNTIME_DIR="$runtime_dir" DBUS_SESSION_BUS_ADDRESS="$bus_address" \
+        systemctl --user restart --no-block mcp-dev-bridge.service
+      echo "WebHarness restart queued through mcp-dev-bridge.service"
+      return 0
+    fi
+  fi
+
+  "$ROOT/bin/stop"
+  exec "$ROOT/bin/start"
+}
+
 setup_command() {
   local args=("$@") profile="" i
   for ((i = 0; i < ${#args[@]}; i += 1)); do
@@ -93,8 +113,7 @@ case "$COMMAND" in
     ;;
   restart)
     [ "$#" -eq 0 ] || { usage >&2; exit 2; }
-    "$ROOT/bin/stop"
-    exec "$ROOT/bin/start"
+    restart_command
     ;;
   status)
     [ "$#" -eq 0 ] || { usage >&2; exit 2; }
