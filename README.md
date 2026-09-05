@@ -8,22 +8,21 @@ This repository is a capability showcase and reproducible reference, not a promi
 
 ## What the workstation exposes
 
-Agents should reason about four capability domains rather than individual backend packages:
+Agents should reason about two outer MCP surfaces rather than individual backend packages:
 
 | Capability | Use it for | Important boundary |
 |---|---|---|
-| **Dev** | files, guarded edits, native file import, aggregate Git review, structured argv execution, native Bash, durable waits, local host actions | execution and file mutation have the authority of the selected trust profile |
-| **Code** | repository structure, symbols, semantic context, callers/dependencies | routes to the nearest canonical Git root; raw CodeDB tools stay hidden |
-| **Terminal** | long-running or interactive commands and human handoff | tmux owns PTY/process lifetime; the broker owns transcript and control state |
-| **Local** | high-cardinality local capabilities plus a recovery transport for failed writable calls | exposes only `tool_list`, `tool_schema`, `tool_call`, `fallback_dispatch`, and `tool_batch`; `fallback_dispatch` can reach fallback-only Dev/Terminal mirrors without advertising them through normal Local discovery |
+| **Dev** | focused files, guarded edits, native file import, aggregate Git review, structured argv execution, native Bash, durable waits | direct high-frequency workstation primitives with the authority of the selected trust profile |
+| **Local** | Code intelligence, durable Terminal control, host actions, Browser, owner-added MCPs, and writable-call recovery | exposes only `tool_list`, `tool_schema`, `tool_call`, `fallback_dispatch`, and `tool_batch`; logical servers stay behind one compact broker surface, while only Dev is mirrored as a hidden fallback route |
 
 The full workstation composition is deliberately small at the client boundary:
 
 ```text
-Dev       read edit write import_file file_ops review_changes wait exec bash pc_sleep
-Code      code_search code_context code_symbol
-Terminal  terminal_open terminal_read terminal_send terminal_resize terminal_list terminal_yield terminal_close
+Dev       read edit write import_file file_ops review_changes wait exec bash
 Local     tool_list tool_schema tool_call fallback_dispatch tool_batch
+            |-- code              code_search / code_context / code_symbol
+            |-- terminal          durable PTY/session control
+            |-- host              pc_sleep
             |-- browser-fast      observe / execute
             `-- browser-devtools  Chrome DevTools diagnostics
 ```
@@ -43,12 +42,13 @@ Cloudflare Tunnel
 1MCP on loopback
   |
   +-- Dev
-  +-- Code
-  +-- Terminal --------> broker --------> tmux PTYs
   `-- Local
         |
         `-- inner 1MCP
-              |-- dev / terminal -------> fallback_dispatch only
+              |-- dev ------------------> fallback_dispatch only
+              |-- code -----------------> rooted CodeDB facade
+              |-- terminal -------------> broker -> tmux PTYs
+              |-- host -----------------> Windows host actions
               |-- browser-fast ---------> Agent Browser
               `-- browser-devtools -----> Chrome DevTools MCP
                          |
@@ -64,7 +64,7 @@ There is no silent default. Pick the authority you intend to give the agent.
 
 | Profile | Authority | Reference role |
 |---|---|---|
-| `personal` | WSL-user paths, structured argv execution and native Bash, Code, persistent Terminal, waits, Local/Browser, optional Windows host sleep | maintained full Personal Workstation reference |
+| `personal` | WSL-user Dev primitives plus Local logical servers for Code, persistent Terminal, Browser, host sleep, and owner-added MCPs | maintained full Personal Workstation reference |
 | `restricted` | workspace-bounded files plus an allowlisted legacy shell | conservative smaller example |
 | `trusted-dev` | workspace-bounded files plus unrestricted structured argv execution and Bash as the Linux service user | smaller trusted-development example; use only on a dedicated host |
 
@@ -108,14 +108,17 @@ Use the narrowest domain that owns the task:
 
 | Task | Route |
 |---|---|
-| inspect or mutate known files; Git/build/test; bounded command | Dev |
+| inspect or mutate known files; Git/build/test; short bounded command expected to finish comfortably inside the connector window | Dev |
 | import a ChatGPT attached/generated file into WSL | Dev -> `import_file` |
 | inspect the aggregate current Git diff after related mutations | Dev -> `review_changes` |
-| understand symbols/callers/dependencies after initial repository orientation | Code |
-| command must persist, needs a PTY, or may need human input | Terminal |
+| understand symbols/callers/dependencies after initial repository orientation | Local -> `code` |
+| command runtime is uncertain, may approach a minute, must persist, needs a PTY, or may need human input | Local -> `terminal`, then Dev `wait` |
+| explicitly confirmed Windows host sleep | Local -> `host` -> `pc_sleep` |
 | routine navigation/forms/clicks in a resource-local browser | Local -> `browser-fast` |
 | network/console/performance/screenshot/DevTools investigation | Local -> `browser-devtools` |
 | normal writable MCP operation is unavailable or unreliable | Local -> `fallback_dispatch` with the same logical server/tool/arguments |
+
+Treat direct Dev `exec`/`bash` as short-RPC execution. Route only work expected to complete comfortably inside the model-facing connector window through them; use **45 seconds as the routing target, not a protocol guarantee**. If runtime is uncertain or may approach a minute, start it through Local `server="terminal"`, observe `terminal_exit`/`terminal_output` or other readiness through Dev `wait`, and use `terminal_read` for output. The Dev provider may accept a larger internal timeout, but that does not extend the connector request lifetime.
 
 For large or unfamiliar repositories, begin with `exec(argv=["rg", ...])` and focused reads before paying the cost of a new CodeDB index unless indexed intelligence is specifically useful. Use Bash only when the discovery command itself needs shell composition.
 
@@ -179,12 +182,12 @@ webharness stop
 
 | Capability | WebHarness reference | Current gap |
 |---|---|---|
-| Semantic repository intelligence | Code routes to repository-rooted CodeDB search/context/symbol tools | indexing has a real disk/RAM cost and is not forced for every task |
-| Durable interactive processes | Terminal separates tmux process lifetime from broker/model control | no built-in cross-chat recording/journal product |
+| Semantic repository intelligence | Local `server="code"` routes to the repository-rooted CodeDB search/context/symbol facade | indexing has a real disk/RAM cost and is not forced for every task |
+| Durable interactive processes | Local `server="terminal"` preserves the Terminal split between tmux process lifetime and broker/model control | no built-in cross-chat recording/journal product |
 | Event-driven waiting | Dev `wait` persists named process/port/file/HTTP/systemd/timer conditions | a wait does not itself create a new model turn |
 | Browser interaction | `browser-fast` provides compact observe/execute with persistent browser state | Chromium/CDP is the qualified browser family |
 | Browser diagnostics | `browser-devtools` provides the full Chrome DevTools MCP surface | shares the Local authorization domain with routine Browser |
-| High-cardinality local MCPs | Local keeps five outer metatools, including recovery-only `fallback_dispatch` and same-route `tool_batch`; fallback-only Dev/Terminal mirrors stay out of normal discovery | `fallback_dispatch` is intentionally read-only-annotated but can perform the selected downstream mutation, so `tag:local` must be treated as granting that recovery authority |
+| High-cardinality local MCPs | Local keeps five outer metatools while Code, Terminal, Host, Browser, and owner MCPs stay behind logical server names; only Dev is a hidden fallback-only mirror | `fallback_dispatch` is intentionally read-only-annotated but can perform the selected downstream mutation, so `tag:local` must be treated as granting that recovery authority |
 | First-class delegated workers | not implemented in the stabilized runtime | Chat WSL-style Agents and cross-chat recordings are the primary current capability gap |
 
 The next planned additive capability is a small Agents surface—`spawn`, `message`, `status`, `finish`—backed by an Agent Broker. It is intentionally not part of this stabilization and does not require a Workspace/worktree/project-authority subsystem. See the [Agents implementation plan](docs/superpowers/plans/2026-08-29-webharness-agents-implementation.md) for that follow-on.
@@ -194,19 +197,19 @@ The next planned additive capability is a small Agents surface—`spawn`, `messa
 A single ChatGPT session can use the capability boundaries together without making one provider own the entire workflow:
 
 ```text
-Dev/Code      inspect the repository and identify the real owner
-Terminal      start a long-running service in a durable tmux PTY
-Dev wait      wait on HTTP/TCP/process readiness instead of polling
-browser-fast  exercise the visible application with compact refs/actions
-browser-devtools
-              inspect network, console, performance, or screenshots
-Dev           edit the responsible source and run bounded checks
-WebHarness    rerender/restart the MCP bridge while the tmux PTY survives
-Terminal      yield the exact PTY to a human for MFA/sudo/manual inspection
-Terminal      resume model control on the same process afterward
+Dev/Local-code      inspect the repository and identify the real owner
+Local-terminal      start a long-running service in a durable tmux PTY
+Dev wait            wait on HTTP/TCP/process readiness instead of polling
+Local/browser-fast  exercise the visible application with compact refs/actions
+Local/browser-devtools
+                    inspect network, console, performance, or screenshots
+Dev                 edit the responsible source and run bounded checks
+WebHarness          rerender/restart the MCP bridge while the tmux PTY survives
+Local-terminal      yield the exact PTY to a human for MFA/sudo/manual inspection
+Local-terminal      resume model control on the same process afterward
 ```
 
-That separation is deliberate: Dev owns files/commands/readiness, Code owns semantic repository intelligence, Terminal owns durable PTY interaction, and Local owns downstream MCP routing.
+That separation is deliberate: Dev owns the small direct workstation primitive surface; Local owns logical domain routing, while the Code and Terminal implementations keep their existing repository-intelligence and durable-PTY ownership internally.
 
 ## Reference implementation and forking
 
@@ -218,7 +221,7 @@ Forks should preserve the model-facing contracts they rely on, then deliberately
 
 - The project currently pins 1MCP 0.37.0 after qualification of the current provider composition, direct-mode rich Browser results, config reload, OAuth behavior, and the supervised-stdio compatibility patches described in the operations guide. Upgrade it deliberately rather than treating it as an unqualified interchangeable dependency.
 - 1MCP listens on loopback; Cloudflare supplies the public HTTPS route. OAuth remains required for the public MCP origin.
-- The Local broker is one authorization domain. `fallback_dispatch` additionally reaches fallback-only Dev and Terminal mirrors and is intentionally advertised with `readOnlyHint`; treat its description and selected downstream operation—not that hint—as the real side-effect boundary.
+- The Local broker is one authorization domain for Code, Terminal, Host, Browser, and owner-added MCPs. `fallback_dispatch` additionally reaches the hidden Dev mirror and is intentionally advertised with `readOnlyHint`; treat its description and selected downstream operation—not that hint—as the real side-effect boundary.
 - Browser debugging endpoints are local implementation details and are not intentionally published beyond loopback.
 - Sudo/password/MFA input belongs in a human-controlled Terminal client, not in MCP arguments or agent-visible logs.
 
@@ -229,7 +232,7 @@ See [Security](docs/security.md) for the full trust model.
 - [Documentation index](docs/README.md) — choose the right guide
 - [Getting started](docs/getting-started.md) — reproduce the reference deployment
 - [Reference environment](docs/reference-environment.md) — qualified host/runtime assumptions and forking caveats
-- [Architecture](docs/architecture.md) — Dev, Code, Terminal, Local, and Browser ownership
+- [Architecture](docs/architecture.md) — outer Dev/Local ownership and the Code, Terminal, Host, and Browser logical servers
 - [MCP compatibility](docs/compatibility.md) — model-facing contract and breaking-change rules
 - [Operations](docs/operations.md) — run, inspect, restart, recover, and cut over source
 - [Security](docs/security.md) — authority profiles and trust boundaries

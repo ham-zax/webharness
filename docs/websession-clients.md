@@ -149,7 +149,7 @@ Use exact tool names and argument schemas from the native MCP catalog; WebSessio
 For multi-part work, use only genuinely independent tasks:
 - native MCP for primary repository/tool work
 - WebSession for one independent durable operation when useful
-- Terminal for long-running processes
+- Local Terminal + Dev `wait` as the mandatory path for long-running or duration-uncertain processes; direct Dev `exec`/`bash` is short-RPC work only
 
 Never execute the same mutation through both paths or run competing edits against the same files.
 Do not assume WebSession operations themselves execute concurrently; current adapter dispatch may serialize them.

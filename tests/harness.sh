@@ -53,8 +53,8 @@ const personalEnv = fs.readFileSync(personalEnvFile, 'utf8');
 const keys = cfg => Object.keys(cfg.mcpServers ?? {}).sort();
 if (JSON.stringify(keys(restricted)) !== JSON.stringify(['dev', 'shell'])) process.exit(1);
 if (JSON.stringify(keys(trusted)) !== JSON.stringify(['dev'])) process.exit(1);
-if (JSON.stringify(keys(personal)) !== JSON.stringify(['code', 'dev', 'local', 'terminal'])) process.exit(1);
-if (JSON.stringify(keys(personalLocal)) !== JSON.stringify(['browser-devtools', 'browser-fast'])) process.exit(1);
+if (JSON.stringify(keys(personal)) !== JSON.stringify(['dev', 'local'])) process.exit(1);
+if (JSON.stringify(keys(personalLocal)) !== JSON.stringify(['browser-devtools', 'browser-fast', 'code', 'dev', 'host', 'terminal'])) process.exit(1);
 if (restricted.mcpServers?.code || trusted.mcpServers?.code) process.exit(1);
 if (restricted.mcpServers?.terminal || trusted.mcpServers?.terminal) process.exit(1);
 if (restricted.mcpServers?.local || trusted.mcpServers?.local) process.exit(1);
@@ -81,18 +81,22 @@ if (personal.mcpServers.dev.env.MCP_DEV_PATH_MODE !== 'user') process.exit(1);
 if (personal.mcpServers.dev.env.MCP_DEV_DEFAULT_CWD !== personalHome) process.exit(1);
 if (personal.mcpServers.dev.env.MCP_DEV_WORKSPACE_ROOT !== undefined) process.exit(1);
 if (personal.mcpServers.dev.env.MCP_DEV_TERMINAL_SOCKET !== runtimeDir + '/wsl-agent-terminal.sock') process.exit(1);
-if (personal.mcpServers.code.command !== 'node') process.exit(1);
-if (!personal.mcpServers.code.args.includes(root + '/providers/code-router/server.mjs')) process.exit(1);
-if (personal.mcpServers.code.env.MCP_CODE_DEFAULT_CWD !== personalHome) process.exit(1);
-if (personal.mcpServers.terminal.command !== 'node') process.exit(1);
-if (!personal.mcpServers.terminal.args.includes(root + '/providers/terminal/mcp-server.mjs')) process.exit(1);
-if (personal.mcpServers.terminal.env.MCP_TERMINAL_SOCKET !== runtimeDir + '/wsl-agent-terminal.sock') process.exit(1);
-if (personal.mcpServers.terminal.env.MCP_TERMINAL_FRONTEND !== 'kitty') process.exit(1);
-if (personal.mcpServers.terminal.env.MCP_TERMINAL_READ_MAX_BYTES !== '65536') process.exit(1);
+if (personal.mcpServers.code !== undefined || personal.mcpServers.terminal !== undefined) process.exit(1);
+if (personalLocal.mcpServers.code.command !== 'node') process.exit(1);
+if (!personalLocal.mcpServers.code.args.includes(root + '/providers/code-router/server.mjs')) process.exit(1);
+if (personalLocal.mcpServers.code.env.MCP_CODE_DEFAULT_CWD !== personalHome) process.exit(1);
+if (personalLocal.mcpServers.terminal.command !== 'node') process.exit(1);
+if (!personalLocal.mcpServers.terminal.args.includes(root + '/providers/terminal/mcp-server.mjs')) process.exit(1);
+if (personalLocal.mcpServers.terminal.env.MCP_TERMINAL_SOCKET !== runtimeDir + '/wsl-agent-terminal.sock') process.exit(1);
+if (personalLocal.mcpServers.terminal.env.MCP_TERMINAL_FRONTEND !== 'kitty') process.exit(1);
+if (personalLocal.mcpServers.terminal.env.MCP_TERMINAL_READ_MAX_BYTES !== '65536') process.exit(1);
+if (personalLocal.mcpServers.host.command !== 'node') process.exit(1);
+if (!personalLocal.mcpServers.host.args.includes(root + '/providers/pi-dev/host-server.mjs')) process.exit(1);
 if (personal.mcpServers.local.command !== 'node') process.exit(1);
 if (!personal.mcpServers.local.args.includes(root + '/providers/local-tools/server.mjs')) process.exit(1);
 if (personal.mcpServers.local.env.MCP_LOCAL_INNER_CONFIG !== personalLocalFile) process.exit(1);
 if (!personal.mcpServers.local.env.MCP_LOCAL_ONE_MCP_ENTRY.endsWith('/@1mcp/agent/build/index.js')) process.exit(1);
+if (personal.mcpServers.local.env.MCP_LOCAL_FALLBACK_ONLY_SERVERS !== 'dev') process.exit(1);
 if (JSON.stringify(personal.mcpServers.local.tags) !== JSON.stringify(['local'])) process.exit(1);
 if (personalLocal.mcpServers['browser-devtools'].command !== 'node') process.exit(1);
 if (!personalLocal.mcpServers['browser-devtools'].args.includes(root + '/providers/browser/server.mjs')) process.exit(1);
@@ -278,7 +282,7 @@ EOF
         rm -rf "$tmp"
         return 1
       }
-    node - "$tmp/personal-$value/1mcp/mcp.json" "$value" <<'NODE'
+    node - "$tmp/personal-$value/local-1mcp/mcp.json" "$value" <<'NODE'
 const fs = require('fs');
 const [configFile, expected] = process.argv.slice(2);
 const config = JSON.parse(fs.readFileSync(configFile, 'utf8'));
@@ -298,7 +302,7 @@ EOF
       rm -rf "$tmp"
       return 1
     }
-  node - "$tmp/personal-empty/1mcp/mcp.json" <<'NODE'
+  node - "$tmp/personal-empty/local-1mcp/mcp.json" <<'NODE'
 const fs = require('fs');
 const config = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 if (config.mcpServers.terminal.env.MCP_TERMINAL_FRONTEND !== 'kitty') process.exit(1);
@@ -316,7 +320,7 @@ EOF
       rm -rf "$tmp"
       return 1
     }
-  node - "$tmp/process-override/1mcp/mcp.json" <<'NODE'
+  node - "$tmp/process-override/local-1mcp/mcp.json" <<'NODE'
 const fs = require('fs');
 const config = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 if (config.mcpServers.terminal.env.MCP_TERMINAL_FRONTEND !== 'windows-terminal') process.exit(1);
@@ -385,7 +389,7 @@ const [outerFile, innerFile, ownerEnvFile, contextFile] = process.argv.slice(2);
 const outer = JSON.parse(fs.readFileSync(outerFile, 'utf8'));
 const inner = JSON.parse(fs.readFileSync(innerFile, 'utf8'));
 const dev = outer.mcpServers.dev.env;
-const terminal = outer.mcpServers.terminal.env;
+const terminal = inner.mcpServers.terminal.env;
 const browser = inner.mcpServers['browser-devtools'].env;
 const fast = inner.mcpServers['browser-fast'].env;
 if (dev.MCP_OWNER_CONTEXT_FILE !== contextFile) process.exit(1);
@@ -433,12 +437,13 @@ EOF
     --state-dir "$tmp/state" \
     --repo-root "$ROOT" >/dev/null || { rm -rf "$tmp"; return 1; }
 
-  node - "$tmp/state/1mcp/mcp.json" "$tmp/custom-cwd" <<'NODE'
+  node - "$tmp/state/1mcp/mcp.json" "$tmp/state/local-1mcp/mcp.json" "$tmp/custom-cwd" <<'NODE'
 const fs = require('fs');
-const [configFile, expected] = process.argv.slice(2);
-const config = JSON.parse(fs.readFileSync(configFile, 'utf8'));
-if (config.mcpServers.dev.env.MCP_DEV_DEFAULT_CWD !== expected) process.exit(1);
-if (config.mcpServers.code.env.MCP_CODE_DEFAULT_CWD !== expected) process.exit(1);
+const [outerFile, innerFile, expected] = process.argv.slice(2);
+const outer = JSON.parse(fs.readFileSync(outerFile, 'utf8'));
+const inner = JSON.parse(fs.readFileSync(innerFile, 'utf8'));
+if (outer.mcpServers.dev.env.MCP_DEV_DEFAULT_CWD !== expected) process.exit(1);
+if (inner.mcpServers.code.env.MCP_CODE_DEFAULT_CWD !== expected) process.exit(1);
 NODE
   rc=$?
   [ "$rc" -eq 0 ] || { rm -rf "$tmp"; return "$rc"; }

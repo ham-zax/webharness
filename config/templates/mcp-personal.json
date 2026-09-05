@@ -26,30 +26,6 @@
         "dev"
       ]
     },
-    "code": {
-      "command": "node",
-      "args": [
-        "__REPO_ROOT__/providers/code-router/server.mjs"
-      ],
-      "env": {},
-      "tags": [
-        "code"
-      ]
-    },
-    "terminal": {
-      "command": "node",
-      "args": [
-        "__REPO_ROOT__/providers/terminal/mcp-server.mjs"
-      ],
-      "env": {
-        "MCP_TERMINAL_SOCKET": "__TERMINAL_SOCKET__",
-        "MCP_TERMINAL_FRONTEND": "__TERMINAL_FRONTEND__",
-        "MCP_TERMINAL_READ_MAX_BYTES": "65536"
-      },
-      "tags": [
-        "terminal"
-      ]
-    },
     "local": {
       "command": "node",
       "args": [
@@ -58,7 +34,7 @@
       "env": {
         "MCP_LOCAL_INNER_CONFIG": "__LOCAL_INNER_CONFIG__",
         "MCP_LOCAL_ONE_MCP_ENTRY": "__ONE_MCP_ENTRY__",
-        "MCP_LOCAL_FALLBACK_ONLY_SERVERS": "dev,terminal"
+        "MCP_LOCAL_FALLBACK_ONLY_SERVERS": "dev"
       },
       "tags": [
         "local"

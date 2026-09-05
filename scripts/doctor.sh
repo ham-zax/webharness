@@ -156,12 +156,15 @@ const fs = require('fs');
 const [profile, outerFile, innerFile] = process.argv.slice(2);
 const keys = value => Object.keys(value?.mcpServers ?? {}).sort();
 const outer = JSON.parse(fs.readFileSync(outerFile, 'utf8'));
-const expectedOuter = profile === 'restricted' ? ['dev', 'shell'] : profile === 'trusted-dev' ? ['dev'] : ['code', 'dev', 'local', 'terminal'];
+const expectedOuter = profile === 'restricted' ? ['dev', 'shell'] : profile === 'trusted-dev' ? ['dev'] : ['dev', 'local'];
 if (JSON.stringify(keys(outer)) !== JSON.stringify(expectedOuter)) process.exit(1);
 if (profile === 'personal') {
   const inner = JSON.parse(fs.readFileSync(innerFile, 'utf8'));
   const innerKeys = keys(inner);
-  if (!innerKeys.includes('browser-devtools') || !innerKeys.includes('browser-fast')) process.exit(1);
+  for (const required of ['browser-devtools', 'browser-fast', 'code', 'terminal', 'host', 'dev']) {
+    if (!innerKeys.includes(required)) process.exit(1);
+  }
+  if (outer.mcpServers.local?.env?.MCP_LOCAL_FALLBACK_ONLY_SERVERS !== 'dev') process.exit(1);
 }
 NODE
   then

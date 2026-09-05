@@ -84,7 +84,7 @@ export function createTerminalMcpServer({ client, frontend } = {}) {
   const dimension = z.number().int().positive().max(1000);
 
   server.registerTool('terminal_open', {
-    description: 'Open one durable model-owned tmux PTY/process in the WebHarness namespace. Use this for persistent or interactive work that should survive MCP or broker restart. Prefer Dev exec for ordinary bounded noninteractive commands and Dev bash only when shell syntax is required. Omit command for an interactive shell. Headless is the default; set present=true only when the human should see the PTY from the start.',
+    description: 'Open one durable model-owned tmux PTY/process in the WebHarness namespace. This is the required command path when runtime is uncertain, may approach/exceed the model-facing connector request window, must persist, or needs a PTY. After opening long-running work, observe it with Dev wait using terminal_exit or terminal_output across short RPCs; use terminal_read for incremental/final output. Prefer direct Dev exec/bash only for work expected comfortably inside the short-RPC window. Omit command for an interactive shell. Headless is the default; set present=true only when the human should see the PTY from the start.',
     inputSchema: {
       name,
       command: z.string().optional(),
@@ -160,6 +160,12 @@ export function createTerminalMcpServer({ client, frontend } = {}) {
   server.registerTool('terminal_list', {
     description: 'List durable sessions in the WebHarness tmux namespace, including dead exit status, dimensions, and whether writable human control currently blocks model mutation; use this to resolve session identity and state before mutation.',
     inputSchema: {},
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
   }, async () => invoke(async () => {
     const result = await client.request('session.list', {});
     return textResult(result.sessions.map(renderSession).join('\n'));

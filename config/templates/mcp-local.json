@@ -24,6 +24,30 @@
         "DISPLAY": ":0",
         "PULSE_SERVER": "unix:/mnt/wslg/PulseServer"
       }
+    },
+    "code": {
+      "command": "node",
+      "args": [
+        "__REPO_ROOT__/providers/code-router/server.mjs"
+      ],
+      "env": {}
+    },
+    "terminal": {
+      "command": "node",
+      "args": [
+        "__REPO_ROOT__/providers/terminal/mcp-server.mjs"
+      ],
+      "env": {
+        "MCP_TERMINAL_SOCKET": "__TERMINAL_SOCKET__",
+        "MCP_TERMINAL_FRONTEND": "__TERMINAL_FRONTEND__",
+        "MCP_TERMINAL_READ_MAX_BYTES": "65536"
+      }
+    },
+    "host": {
+      "command": "node",
+      "args": [
+        "__REPO_ROOT__/providers/pi-dev/host-server.mjs"
+      ]
     }
   }
 }

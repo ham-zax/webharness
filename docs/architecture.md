@@ -9,11 +9,12 @@ Cloudflare Tunnel
   -> loopback origin
 1MCP :3050
   -> Dev
-  -> Code       (Personal Workstation)
-  -> Terminal   (Personal Workstation)
   -> Local      (Personal Workstation, tag:local)
        -> inner 1MCP
-            |-- dev / terminal (fallback_dispatch only)
+            |-- dev (fallback_dispatch only)
+            |-- code
+            |-- terminal
+            |-- host
             |-- browser-fast
             `-- browser-devtools
 Linux / WSL host
@@ -25,21 +26,19 @@ Linux / WSL host
 
 ### Dev
 
-Dev owns Files, ChatGPT-native file ingress, aggregate Git working-tree review, shell-free structured argv execution, native Bash, regular-file topology operations, durable waits, and the personal Windows-host sleep boundary.
+Dev owns Files, ChatGPT-native file ingress, aggregate Git working-tree review, shell-free structured argv execution, native Bash, regular-file topology operations, and durable waits.
 
 Personal surface:
 
 ```text
-read edit write import_file file_ops review_changes wait exec bash pc_sleep
+read edit write import_file file_ops review_changes wait exec bash
 ```
 
-`edit` owns guarded mutation of existing text across one or more files. One exact `oldText` match always wins; only zero exact matches trigger tolerance for line endings, trailing whitespace, and common Unicode punctuation or space differences, and the fallback must still be unique. Exact and tolerant edits sharing a line must be merged. Callers inspect with `read`, `rg`, Code, or ast-grep and include enough context when needed. `write` owns new text-file creation, `import_file` owns create-only ingress of one ChatGPT-native file into a WSL-user path, and `file_ops` owns move/delete for existing regular files. `review_changes` owns one bounded read-only aggregate view of a Git working tree, including untracked file content when it fits the patch budget; it creates no refs, commits, or temporary Git index state. `exec` passes one `argv[]` directly to an executable without a shell parser and is the default for ordinary commands; Bash remains the explicit path for pipes, redirects, substitutions, loops, compound commands, and other shell semantics. Syntax-shaped discovery/codemods can therefore run ast-grep through `exec` when no shell composition is needed and normally feed guarded `edit`; an existing authoritative `.patch`/`.diff` artifact may still use Bash for the guarded `git apply --check -- "$patch" && git apply -- "$patch"` compound command.
+`edit` owns guarded mutation of existing text across one or more files. One exact `oldText` match always wins; only zero exact matches trigger tolerance for line endings, trailing whitespace, and common Unicode punctuation or space differences, and the fallback must still be unique. Exact and tolerant edits sharing a line must be merged. Callers inspect with `read`, `rg`, Code, or ast-grep and include enough context when needed. `write` owns new text-file creation, `import_file` owns create-only ingress of one ChatGPT-native file into a WSL-user path, and `file_ops` owns move/delete for existing regular files. `review_changes` owns one bounded read-only aggregate view of a Git working tree, including untracked file content when it fits the patch budget; it creates no refs, commits, or temporary Git index state. `exec` passes one `argv[]` directly to an executable without a shell parser and Bash remains the explicit path for pipes, redirects, substitutions, loops, compound commands, and other shell semantics. Both are short-RPC execution paths: agents route only work expected comfortably inside the connector request window through direct Dev, using 45 seconds as the routing target. Runtime that is uncertain, may approach a minute, or must survive the call belongs in Local Terminal; Dev `wait` observes Terminal output/exit/readiness across short RPCs and `terminal_read` retrieves output. The provider's larger internal timeout does not extend the connector lifetime. Syntax-shaped discovery/codemods can therefore run ast-grep through `exec` when no shell composition is needed and normally feed guarded `edit`; an existing authoritative `.patch`/`.diff` artifact may still use Bash for the guarded `git apply --check -- "$patch" && git apply -- "$patch"` compound command.
 
 `wait` owns durable named wait state and generic local readiness checks. Terminal-specific waits use private broker transcript/session observations, but `wait` is not a Terminal MCP action.
 
-`pc_sleep` is personal-only. It requires explicit confirmation, optionally registers one replaceable Windows Task Scheduler `WakeToRun` task, returns an acknowledgement, and then asks Windows to enter sleep after a short grace period. It does not provide on-demand wake while the host is already asleep.
-
-### Code
+### Code logical server
 
 Code owns:
 
@@ -49,7 +48,7 @@ code_search code_context code_symbol
 
 The router resolves the nearest canonical Git root for the requested cwd and keeps one correctly rooted CodeDB child per active repository. Per-call project switching and the raw CodeDB catalog are hidden from the model-facing surface. First use may start a persistent CodeDB child and create or update substantial on-disk index state, so Code is not a cost-free read abstraction; on large or unfamiliar repositories with unknown CodeDB state, start with Dev `exec` + `rg` plus focused `read` unless indexing-backed repository intelligence is specifically needed. Use Bash there only when the search itself requires shell composition. This is model-routing guidance, not an enforced size threshold.
 
-### Terminal
+### Terminal logical server
 
 Terminal owns exactly seven actions:
 
@@ -75,6 +74,10 @@ Dev wait -> private broker observation -> independent wait cursor
 ```
 
 Normal Terminal reads and output waits therefore do not consume each other's cursor. The GUI path is presentation only: normal Terminal sessions remain headless by default, and a designated read-only frontend keeps model mutation/resize authority until control is explicitly yielded to the human.
+
+### Host logical server
+
+The Personal Workstation Local catalog exposes `server="host"` with `pc_sleep`. It requires explicit confirmation, optionally registers one replaceable Windows Task Scheduler `WakeToRun` task, returns an acknowledgement, and then asks Windows to enter sleep after a short grace period. It does not provide on-demand wake while the host is already asleep.
 
 ## State boundaries
 
@@ -104,15 +107,15 @@ Restart the broker without restarting tmux when only broker/provider code change
 
 ### Local tool broker
 
-Personal Workstation local capabilities are model-facing through one `local` provider under `tag:local`. Browser capabilities are logical servers behind it. The provider exposes exactly:
+Personal Workstation domain capabilities are model-facing through one `local` provider under `tag:local`. Code, Terminal, Host, Browser, and owner-added capabilities are logical servers behind it. The provider exposes exactly:
 
 ```text
 tool_list tool_schema tool_call fallback_dispatch tool_batch
 ```
 
-The Local broker owns stable logical `{server, tool}` routing and connects over stdio to an inner 1MCP running in normal direct mode. It keeps no broker catalog/schema cache. Unscoped `tool_list` is server-oriented and excludes fallback-only mirrors. `tool_list(server=...)`, `tool_schema`, ordinary `tool_call`, and `tool_batch` likewise operate only on the public Local server set. `fallback_dispatch` is the deliberate exception: it can route one already-authorized operation to any configured inner server, including fallback-only mirrors of Dev and Terminal, when the normal writable MCP call is unavailable or unreliable. Its `readOnlyHint` is intentionally a transport-compatibility annotation and does not describe the selected downstream side effects. `tool_batch` states one public route once then dispatches a bounded set of structured argument objects with bounded concurrency. Batch routing fields and argument-object shapes are preflighted before dispatch; downstream MCPs retain ownership of their own tool-schema validation. Member results preserve input order and distinguish broker/transport rejection from a fulfilled downstream result whose own `isError` may be true. Discovery remains bounded with an opaque self-contained cursor; downstream catalog churn does not change the outer five-tool surface.
+The Local broker owns stable logical `{server, tool}` routing and connects over stdio to an inner 1MCP running in normal direct mode. It keeps no broker catalog/schema cache. Unscoped `tool_list` is server-oriented and excludes fallback-only mirrors. Explicit read-only inspection may still target a known fallback-only server: `tool_list(server="dev")` lists its tools and `tool_schema(server="dev", tool=...)` loads the exact schema. Ordinary `tool_call` and `tool_batch` remain limited to the public Local server set, including `code`, `terminal`, `host`, Browser, and owner-added MCPs. `fallback_dispatch` is the deliberate execution exception: it can route one already-authorized operation to the hidden Dev mirror when the normal writable MCP call is unavailable or unreliable. Its `readOnlyHint` is intentionally a transport-compatibility annotation and does not describe the selected downstream side effects. `tool_batch` states one public route once then dispatches a bounded set of structured argument objects with bounded concurrency. Batch routing fields and argument-object shapes are preflighted before dispatch; downstream MCPs retain ownership of their own tool-schema validation. Member results preserve input order and distinguish broker/transport rejection from a fulfilled downstream result whose own `isError` may be true. Discovery remains bounded with an opaque self-contained cursor; downstream catalog churn does not change the outer five-tool surface.
 
-The private inner 1MCP contains Browser/owner-configured Local servers plus fallback-only mirrors of the outer Dev and Terminal providers. It enables only its internal reload management action for broker-owned recovery; the reserved `1mcp` namespace remains rejected and filtered from model routes. If a public configured server is absent during scoped discovery/schema/batch preflight, Local performs one coalesced targeted reload and verifies that tools reappear. A failed direct `tool_call` or `fallback_dispatch` is never automatically replayed: if Local proves the selected server disappeared, it may recover the backend but returns a retry-required error because the original action's side-effect outcome could be ambiguous. Owner-configured stdio MCPs are rendered with 1MCP `restartOnExit: true` by default, with an explicit `false` opt-out, so ordinary post-start crashes are handled by the native supervisor before broker recovery is needed.
+The private inner 1MCP contains the built-in `code`, `terminal`, `host`, `browser-fast`, and `browser-devtools` servers, owner-configured Local servers, and one fallback-only mirror of outer Dev. It enables only its internal reload management action for broker-owned recovery; the reserved `1mcp` namespace remains rejected and filtered from model routes. If a public configured server is absent during scoped discovery/schema/batch preflight, Local performs one coalesced targeted reload and verifies that tools reappear. A failed direct `tool_call` or `fallback_dispatch` is never automatically replayed: if Local proves the selected server disappeared, it may recover the backend but returns a retry-required error because the original action's side-effect outcome could be ambiguous. Owner-configured stdio MCPs are rendered with 1MCP `restartOnExit: true` by default, with an explicit `false` opt-out, so ordinary post-start crashes are handled by the native supervisor before broker recovery is needed.
 
 ### Browser
 
@@ -146,4 +149,4 @@ Windows browser ownership defaults to one runtime shared below both logical surf
 
 ## Trust/profile separation
 
-`restricted` and `trusted-dev` remain smaller explicit compositions; they do not inherit Code, Terminal, Local/Browser, `wait`, or the Personal Workstation Terminal socket. `personal` is the full reference composition and remains an explicit authority choice.
+`restricted` and `trusted-dev` remain smaller explicit compositions; they do not inherit Local or its Code/Terminal/Host/Browser logical servers, `wait`, or the Personal Workstation Terminal socket. `personal` is the full reference composition and remains an explicit authority choice.

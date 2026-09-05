@@ -20,11 +20,12 @@ if (cfg.mcpServers?.codedb) throw new Error('raw codedb provider must remain hid
 if (cfg.mcpServers?.['browser-devtools'] || cfg.mcpServers?.['browser-fast']) throw new Error('Browser providers must remain behind the Local broker');
 if (profile) {
   const actual = Object.keys(cfg.mcpServers ?? {}).sort();
-  const expected = profile === 'trusted-dev' ? ['dev'] : profile === 'restricted' ? ['dev', 'shell'] : profile === 'personal' ? ['code', 'dev', 'local', 'terminal'] : null;
+  const expected = profile === 'trusted-dev' ? ['dev'] : profile === 'restricted' ? ['dev', 'shell'] : profile === 'personal' ? ['dev', 'local'] : null;
   if (!expected || JSON.stringify(actual) !== JSON.stringify(expected)) {
     throw new Error(`unexpected final provider set for ${profile || 'unknown'}: ${actual.join(',')}`);
   }
 }
+if (profile === 'personal' && (code || terminal)) throw new Error('Code and Terminal must be published behind Local, not as outer providers');
 if (local) {
   if (profile !== 'personal') throw new Error('Local broker is private to the personal profile');
   if (local.command !== 'node') throw new Error('Local broker must run with node');
@@ -42,9 +43,32 @@ if (local) {
 
   const inner = JSON.parse(fs.readFileSync(env.MCP_LOCAL_INNER_CONFIG, 'utf8'));
   const innerNames = Object.keys(inner.mcpServers ?? {}).sort();
-  for (const required of ['browser-devtools', 'browser-fast']) {
+  for (const required of ['browser-devtools', 'browser-fast', 'code', 'terminal', 'host', 'dev']) {
     if (!innerNames.includes(required)) throw new Error(`Local inner provider set is missing required server: ${required}`);
   }
+  if (env.MCP_LOCAL_FALLBACK_ONLY_SERVERS !== 'dev') throw new Error('only Dev may be fallback-only in personal Local');
+
+  const code = inner.mcpServers.code;
+  if (code.command !== 'node') throw new Error('inner Code facade must run with node');
+  const expectedCodeServer = path.join(repoRoot, 'providers', 'code-router', 'server.mjs');
+  if (JSON.stringify(code.args ?? []) !== JSON.stringify([expectedCodeServer])) throw new Error('unexpected inner Code facade server path');
+  if (!path.isAbsolute(code.env?.MCP_CODE_DEFAULT_CWD ?? '')) throw new Error('inner MCP_CODE_DEFAULT_CWD must be absolute');
+  if (code.tags !== undefined) throw new Error('inner Code facade must not carry an outer OAuth tag');
+
+  const terminal = inner.mcpServers.terminal;
+  if (terminal.command !== 'node') throw new Error('inner Terminal provider must run with node');
+  const expectedTerminalServer = path.join(repoRoot, 'providers', 'terminal', 'mcp-server.mjs');
+  if (JSON.stringify(terminal.args ?? []) !== JSON.stringify([expectedTerminalServer])) throw new Error('unexpected inner Terminal provider server path');
+  if (!path.isAbsolute(terminal.env?.MCP_TERMINAL_SOCKET ?? '')) throw new Error('inner MCP_TERMINAL_SOCKET must be absolute');
+  if (path.basename(terminal.env.MCP_TERMINAL_SOCKET) !== 'wsl-agent-terminal.sock') throw new Error('unexpected inner Terminal broker socket name');
+  if (terminal.env.MCP_TERMINAL_READ_MAX_BYTES !== '65536') throw new Error('unexpected inner Terminal read limit');
+  if (terminal.tags !== undefined) throw new Error('inner Terminal provider must not carry an outer OAuth tag');
+
+  const host = inner.mcpServers.host;
+  if (host.command !== 'node') throw new Error('inner Host provider must run with node');
+  const expectedHostServer = path.join(repoRoot, 'providers', 'pi-dev', 'host-server.mjs');
+  if (JSON.stringify(host.args ?? []) !== JSON.stringify([expectedHostServer])) throw new Error('unexpected inner Host provider server path');
+  if (host.tags !== undefined) throw new Error('inner Host provider must not carry an outer OAuth tag');
   const browser = inner.mcpServers['browser-devtools'];
   if (browser.command !== 'node') throw new Error('inner Browser facade must run with node');
   const expectedBrowserServer = path.join(repoRoot, 'providers', 'browser', 'server.mjs');
@@ -69,36 +93,6 @@ if (local) {
   if (fastPkg.dependencies?.['@modelcontextprotocol/sdk'] !== '1.30.0') throw new Error('unexpected Browser Fast MCP SDK pin');
   if (fastPkg.dependencies?.['agent-browser'] !== '0.35.0') throw new Error('unexpected Browser Fast Agent Browser pin');
   if (fastPkg.dependencies?.zod !== '4.4.3') throw new Error('unexpected Browser Fast zod pin');
-}
-if (terminal) {
-  if (profile !== 'personal') throw new Error('Terminal provider is available only in the personal profile');
-  if (terminal.command !== 'node') throw new Error('Terminal provider must run with node');
-  const expectedServer = path.join(repoRoot, 'providers', 'terminal', 'mcp-server.mjs');
-  if (JSON.stringify(terminal.args ?? []) !== JSON.stringify([expectedServer])) throw new Error('unexpected Terminal provider server path');
-  const env = terminal.env ?? {};
-  if (!path.isAbsolute(env.MCP_TERMINAL_SOCKET ?? '')) throw new Error('MCP_TERMINAL_SOCKET must be absolute');
-  if (path.basename(env.MCP_TERMINAL_SOCKET) !== 'wsl-agent-terminal.sock') throw new Error('unexpected Terminal broker socket name');
-  if (env.MCP_TERMINAL_READ_MAX_BYTES !== '65536') throw new Error('unexpected Terminal read limit');
-  const pkg = JSON.parse(fs.readFileSync(path.join(repoRoot, 'providers', 'terminal', 'package.json'), 'utf8'));
-  if (pkg.dependencies?.['@modelcontextprotocol/sdk'] !== '1.30.0') throw new Error('unexpected Terminal MCP SDK pin');
-  if (pkg.dependencies?.zod !== '4.4.3') throw new Error('unexpected Terminal zod pin');
-  const installedSdk = JSON.parse(fs.readFileSync(path.join(repoRoot, 'providers', 'terminal', 'node_modules', '@modelcontextprotocol', 'sdk', 'package.json'), 'utf8'));
-  if (installedSdk.version !== '1.30.0') throw new Error(`unexpected installed Terminal MCP SDK version: ${installedSdk.version}`);
-  const installedZod = JSON.parse(fs.readFileSync(path.join(repoRoot, 'providers', 'terminal', 'node_modules', 'zod', 'package.json'), 'utf8'));
-  if (installedZod.version !== '4.4.3') throw new Error(`unexpected installed Terminal zod version: ${installedZod.version}`);
-}
-if (code) {
-  if (profile !== 'personal') throw new Error('Code facade is private to the personal profile');
-  if (code.command !== 'node') throw new Error('Code facade must run with node');
-  const expectedServer = path.join(repoRoot, 'providers', 'code-router', 'server.mjs');
-  if (JSON.stringify(code.args ?? []) !== JSON.stringify([expectedServer])) throw new Error('unexpected Code facade server path');
-  const env = code.env ?? {};
-  if (!path.isAbsolute(env.MCP_CODE_DEFAULT_CWD ?? '')) throw new Error('personal MCP_CODE_DEFAULT_CWD must be absolute');
-  const pkg = JSON.parse(fs.readFileSync(path.join(repoRoot, 'providers', 'code-router', 'package.json'), 'utf8'));
-  if (pkg.dependencies?.['@modelcontextprotocol/sdk'] !== '1.30.0') throw new Error('unexpected Code facade MCP SDK pin');
-  if (pkg.dependencies?.zod !== '4.4.3') throw new Error('unexpected Code facade zod pin');
-  const installedSdk = JSON.parse(fs.readFileSync(path.join(repoRoot, 'providers', 'code-router', 'node_modules', '@modelcontextprotocol', 'sdk', 'package.json'), 'utf8'));
-  if (installedSdk.version !== '1.30.0') throw new Error(`unexpected installed Code facade MCP SDK version: ${installedSdk.version}`);
 }
 if (dev) {
   const pkgFile = path.join(repoRoot, 'providers', 'pi-dev', 'node_modules', '@earendil-works', 'pi-coding-agent', 'package.json');
@@ -156,4 +150,4 @@ curl -sf -m 5 -X POST "$URL" \
   -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"smoke","version":"1.0.0"}}}'
 echo
 echo
-echo "(connectivity check only; inspect dev plus restricted-only shell for public profiles, or Dev/Code/Terminal plus the four-tool Local broker for personal composition)"
+echo "(connectivity check only; inspect dev plus restricted-only shell for smaller profiles, or direct Dev plus the five-tool Local broker with code/terminal/host/browser logical servers for personal composition)"

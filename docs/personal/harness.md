@@ -5,20 +5,19 @@ The `personal` profile is the full WebHarness reference deployment. It runs with
 ## Mental model
 
 ```text
-Dev       read edit write import_file file_ops review_changes wait exec bash pc_sleep
-Code      code_search code_context code_symbol
-Terminal  terminal_open terminal_read terminal_send terminal_resize terminal_list terminal_yield terminal_close
+Dev       read edit write import_file file_ops review_changes wait exec bash
 Local     tool_list tool_schema tool_call fallback_dispatch tool_batch
+            |-- code              code_search / code_context / code_symbol
+            |-- terminal          durable PTY/session control
+            |-- host              pc_sleep
             |-- browser-fast      observe/execute interaction; Windows default, WSLg on request
             `-- browser-devtools  full Chrome DevTools diagnostics; Windows default, WSLg on request
 ```
 
-Think in four model-facing domains:
+Think in two model-facing surfaces:
 
-- **Dev** handles focused text/file work, ChatGPT-native file ingress, aggregate Git review, bounded execution, durable waits, and explicit Windows-host sleep. Prefer `exec` with structured `argv[]` for ordinary executable invocation; use `bash` only when shell syntax is actually required.
-- **Code** provides rooted indexed repository intelligence without exposing raw CodeDB mechanics; first use may create or update heavyweight persistent index state.
-- **Terminal** owns durable PTY/process lifetime and human/model terminal ownership.
-- **Local** exposes only five stable broker tools. Use `tool_call` for an ordinary one-shot Local downstream invocation and `tool_batch` when the same public logical `{server, tool}` should receive several independent structured argument objects; do not rebuild that batching in Bash. Use `fallback_dispatch` only when an already-authorized writable MCP operation is unavailable or unreliable. The fallback can reach hidden Dev/Terminal mirrors and intentionally carries `readOnlyHint` as transport metadata even though the selected downstream operation may mutate state. Preserve the same intended server/tool/arguments; do not use fallback dispatch to broaden authority or invent a different operation. The built-in browser routes remain `browser-fast` for routine interaction and `browser-devtools` for diagnostics. Personal deployments may additionally grant owner-selected local MCPs through `MCP_LOCAL_SERVERS_FILE`; discover them by logical server name and load only the exact downstream schema needed. All such servers share the same `tag:local` authorization domain. For `browser-fast`, observe once, consume any returned `memory` that applies to the current host, then pass the returned `active_tab` to `execute` with the mechanical sequence. Policy memory is local operator policy; exact-site memory is more specific than reusable platform memory; live browser state wins when strategy memory is stale. Unknown/custom sites need no predefined ATS entry and continue through the generic observe/execute flow. `execute.tab` is required and stale/unavailable tab context fails before action dispatch. A click follows exactly one newly opened target before later actions; multiple new targets stop the sequence without guessing and require another observation. Upload uses an observed file-input ref plus a logical artifact key from `~/.config/mcp-dev-bridge/browser-artifacts.json`; never substitute an arbitrary filesystem path. Omit `arguments.browser_target` for the dedicated persistent Windows MCP Chrome profile; use `arguments.browser_target="linux"` for WSLg. The Windows MCP profile is separate from everyday Chrome and keeps its own persistent sign-ins; Windows MCP and Linux browser state remain separate.
+- **Dev** handles focused text/file work, ChatGPT-native file ingress, aggregate Git review, bounded execution, and durable waits. Prefer `exec` with structured `argv[]` for ordinary executable invocation; use `bash` only when shell syntax is actually required.
+- **Local** exposes five stable broker tools and owns the public `code`, `terminal`, `host`, Browser, and owner-added logical servers. Use `tool_call` for an ordinary one-shot downstream invocation and `tool_batch` when the same public logical `{server, tool}` should receive several independent structured argument objects; do not rebuild that batching in Bash. Use `fallback_dispatch` only when an already-authorized writable MCP operation is unavailable or unreliable. The fallback can additionally reach the hidden Dev mirror and intentionally carries `readOnlyHint` as transport metadata even though the selected downstream operation may mutate state. If the outer Dev tool catalog/schema is also unavailable, inspect the recovery route read-only with `tool_list(server="dev")` and `tool_schema(server="dev", tool=...)`; Dev remains unavailable to ordinary `tool_call`/`tool_batch`. Preserve the same intended server/tool/arguments; do not use fallback dispatch to broaden authority or invent a different operation. The built-in Code route is `server="code"`, Terminal is `server="terminal"`, Windows host actions are `server="host"`, and the browser routes remain `browser-fast` and `browser-devtools`. Personal deployments may additionally grant owner-selected local MCPs through `MCP_LOCAL_SERVERS_FILE`; discover them by logical server name and load only the exact downstream schema needed. All such servers share the same `tag:local` authorization domain. For `browser-fast`, observe once, consume any returned `memory` that applies to the current host, then pass the returned `active_tab` to `execute` with the mechanical sequence. Policy memory is local operator policy; exact-site memory is more specific than reusable platform memory; live browser state wins when strategy memory is stale. Unknown/custom sites need no predefined ATS entry and continue through the generic observe/execute flow. `execute.tab` is required and stale/unavailable tab context fails before action dispatch. A click follows exactly one newly opened target before later actions; multiple new targets stop the sequence without guessing and require another observation. Upload uses an observed file-input ref plus a logical artifact key from `~/.config/mcp-dev-bridge/browser-artifacts.json`; never substitute an arbitrary filesystem path. Omit `arguments.browser_target` for the dedicated persistent Windows MCP Chrome profile; use `arguments.browser_target="linux"` for WSLg. The Windows MCP profile is separate from everyday Chrome and keeps its own persistent sign-ins; Windows MCP and Linux browser state remain separate.
 
 ## Learning exact-site browser memory
 
@@ -73,7 +72,7 @@ MCP_OWNER_ENV_FILE=/home/user/.config/mcp-dev-bridge/owner/gui.env
 
 `pi-dev` reads `MCP_OWNER_CONTEXT_FILE` as a current-user-owned regular file, limits it to 32 KiB, and publishes non-empty content as its MCP server `instructions`. 1MCP includes those upstream instructions in the initialization instructions sent to a matching client. Use this file for WSL- or workstation-specific guidance, not project invariants or current-task instructions.
 
-`MCP_OWNER_ENV_FILE` is also current-user-owned and bounded. The renderer accepts `GALLIUM_DRIVER`, `MOZ_ENABLE_WAYLAND`, `AGENT_BROWSER_PROFILE`, and `AGENT_BROWSER_EXECUTABLE_PATH`, validates their values, and writes only the GUI subset to the sanitized `owner.env` under the private bridge state directory. Dev, the Terminal MCP provider, and the Terminal/tmux services receive the supported owner GUI environment; Linux Browser receives `GALLIUM_DRIVER` when configured, while the Agent Browser settings go only to Linux `browser-fast`. Other variables are rejected rather than imported into service environments. Context changes are read on the next `pi-dev` start; GUI env changes take effect after the personal configuration is rendered again and the relevant processes are restarted.
+`MCP_OWNER_ENV_FILE` is also current-user-owned and bounded. The renderer accepts `GALLIUM_DRIVER`, `MOZ_ENABLE_WAYLAND`, `AGENT_BROWSER_PROFILE`, and `AGENT_BROWSER_EXECUTABLE_PATH`, validates their values, and writes only the GUI subset to the sanitized `owner.env` under the private bridge state directory. Dev, the Local `terminal` server, and the Terminal/tmux services receive the supported owner GUI environment; Linux Browser receives `GALLIUM_DRIVER` when configured, while the Agent Browser settings go only to Linux `browser-fast`. Other variables are rejected rather than imported into service environments. Context changes are read on the next `pi-dev` start; GUI env changes take effect after the personal configuration is rendered again and the relevant processes are restarted.
 
 Linux `browser-fast` uses `~/.config/mcp-dev-bridge/browser-fast.json` for its default and managed Clearcote profile catalog; start from `config/browser-fast.example.json`. The Personal bootstrap converges a missing file, the known legacy maintained V1 `clearcote:9222` selector, and the prior tracked V2 Chrome+x-main template to the tracked `clearcote` / `x-main` policy, while preserving other owner-managed V1 external-CDP configurations. That convergence uses atomic temporary-file replacement without a persistent lock. Use `browser_backend="chrome"` or `browser_backend="clearcote"` per call instead of rewriting the shared selector. Omit `browser_profile` to share the existing state. For explicit isolation, send a stable profile name with the backend: Chrome creates or reuses a persistent bridge-state profile, while Clearcote requires that name in the configuration catalog. The provider owns one persistent Clearcote runtime per active profile and coalesces concurrent startup of the same profile. Within managed Clearcote, the first no-tab observation may claim an existing page; later independent no-tab observations receive fresh tabs in the same authenticated profile, with tab-specific Agent Browser sessions and tab-scoped operation queues. Same-tab work remains serialized and fail-closed, while different Linux tabs can proceed concurrently. Chrome does not require closing Clearcote. On Windows, profileless calls use the shared MCP Chrome process; explicit Browser Fast profile names use separate persistent processes and per-profile queues. Firefox is not supported by the current Chromium-CDP driver.
 
@@ -160,11 +159,11 @@ Use once after the final related file mutation when you need the aggregate curre
 
 ### `exec`
 
-Runs one bounded executable directly from a structured `argv[]` with no shell parser. Use it for ordinary Git, builds, tests, `rg`, repository inspection, and other commands that do not require pipes, redirects, substitutions, shell variables, loops, or compound shell syntax. `argv[0]` is the executable and later elements are passed literally. Use Terminal when work must persist or needs a PTY/interactive workflow. There is no hidden mutable global cwd; use `cwd` explicitly when needed.
+Runs one bounded executable directly from a structured `argv[]` with no shell parser. Treat it as **short-RPC execution only**: use it when completion is expected comfortably inside the model-facing connector window, with 45 seconds as the routing target. If runtime is uncertain, may approach a minute, or must survive the call, do not start it with `exec`; use Local `server="terminal"`/`terminal_open`, observe completion or readiness with Dev `wait`, then use `terminal_read`. Use `exec` for short Git, builds, tests, `rg`, repository inspection, and other commands that do not require shell semantics. `argv[0]` is the executable and later elements are passed literally. The provider may accept a timeout up to 300 seconds, but that does not extend the connector request lifetime. There is no hidden mutable global cwd; use `cwd` explicitly when needed.
 
 ### `bash`
 
-Runs one bounded, noninteractive native Bash program. Use it only when shell semantics such as pipes, redirects, substitutions, variables, loops, or compound commands are materially required. Do not use Bash to orchestrate repeated MCP calls when Local `tool_batch` is available. For a large or unfamiliar repository with unknown CodeDB state, `exec` + `rg` plus focused `read` is the lower-cost discovery path before invoking Code.
+Runs one bounded, noninteractive native Bash program. It has the same **short-RPC-only** lifetime rule as `exec`: use it only when completion is expected comfortably inside the connector window, with 45 seconds as the routing target. If runtime is uncertain or may approach a minute, use Local Terminal + Dev `wait` instead of increasing `timeout_seconds`; the provider-side 300-second maximum does not extend connector lifetime. Within short work, use Bash only when shell semantics such as pipes, redirects, substitutions, variables, loops, or compound commands are materially required. Do not use Bash to orchestrate repeated MCP calls when Local `tool_batch` is available. For a large or unfamiliar repository with unknown CodeDB state, `exec` + `rg` plus focused `read` is the lower-cost discovery path before invoking Code.
 
 For syntax-shaped discovery or codemods, use ast-grep through `exec` when no shell composition is needed. Inspect bounded matches and normally perform the final mutation through guarded `edit`; use ast-grep bulk rewrite only when the transformation is deterministic and every bounded match is intentionally changed.
 
@@ -176,7 +175,7 @@ git apply --check -- "$patch" && git apply -- "$patch"
 
 Use `--3way` only when the user explicitly requests merge-style recovery. Do not automatically add fuzzy patch recovery.
 
-Native Dev execution output remains the source of truth; prefer `exec` unless the command genuinely requires Bash semantics.
+Native Dev execution output remains the source of truth for short work; prefer `exec` unless the command genuinely requires Bash semantics. For long or duration-uncertain work, the mandatory Personal Workstation path is `terminal_open` -> Dev `wait` (`terminal_exit`/`terminal_output` or another readiness condition) -> `terminal_read`.
 
 ### `wait`
 
@@ -215,13 +214,13 @@ Important semantics:
 - the wait cursor is independent from normal `terminal_read` unread state;
 - explicit Terminal destruction and same-name replacement remain explicit (`WAIT_SOURCE_ENDED`, `WAIT_SOURCE_REPLACED`).
 
-### `pc_sleep`
+### Local `host/pc_sleep`
 
 Sleeps the Windows host after a 10-second grace period. The call requires `confirm: true` from a direct user request. Supply an optional timezone-qualified `wake_at` value, such as `2026-08-22T07:00:00+05:30`, to register one replaceable Windows Task Scheduler wake task before sleeping. The wake time must be at least two minutes in the future. Omitting `wake_at` clears the previous MCP wake task before sleep.
 
 This action only schedules a wake before the host sleeps; it cannot receive a new on-demand MCP call while Windows, WSL, and the bridge are already asleep.
 
-## Code
+## Local Code server
 
 ### `code_search`
 
@@ -235,11 +234,11 @@ Use when you know or can guess a definition name.
 
 Compact first-touch context for a task: definitions, focused bodies, graph neighbors, files, and snippets. First-touch does not mean always call it first on an unknown large repository.
 
-All three Code tools share the same rooted CodeDB child/index lifecycle. First use for a repository may start a persistent child and create or update substantial on-disk index state, which can consume significant disk and RAM. There is no hard repository-size preflight or threshold. For a large or unfamiliar repository with unknown CodeDB state, prefer Dev `exec` + `rg` plus focused `read` for initial discovery unless CodeDB-backed repository intelligence is specifically desired; use Bash only when the discovery command itself needs shell composition.
+Call these through Local `server="code"`. All three Code tools share the same rooted CodeDB child/index lifecycle. First use for a repository may start a persistent child and create or update substantial on-disk index state, which can consume significant disk and RAM. There is no hard repository-size preflight or threshold. For a large or unfamiliar repository with unknown CodeDB state, prefer Dev `exec` + `rg` plus focused `read` for initial discovery unless CodeDB-backed repository intelligence is specifically desired; use Bash only when the discovery command itself needs shell composition.
 
 The Code router resolves the nearest canonical Git root from `cwd`. Nested repositories win over outer repositories. Do not pass project-switching state; the rooted child owns repository identity.
 
-## Terminal
+## Local Terminal server
 
 ### Durable session workflow
 

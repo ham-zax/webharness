@@ -378,12 +378,12 @@ export async function renderConfig(options) {
     rendered.mcpServers.dev.env.MCP_DEV_SHELL_MODE = shellMode;
     rendered.mcpServers.dev.env.MCP_DEV_PATH_MODE = profileValues.MCP_DEV_PATH_MODE;
     rendered.mcpServers.dev.env.MCP_DEV_DEFAULT_CWD = personalDefaultCwd;
-    rendered.mcpServers.code.env.MCP_CODE_DEFAULT_CWD = personalDefaultCwd;
+    localRendered.mcpServers.code.env.MCP_CODE_DEFAULT_CWD = personalDefaultCwd;
     if (ownerContextFile) rendered.mcpServers.dev.env.MCP_OWNER_CONTEXT_FILE = ownerContextFile;
     for (const key of OWNER_RUNTIME_ENV_KEYS) {
       if (ownerEnv[key] === undefined) continue;
       rendered.mcpServers.dev.env[key] = ownerEnv[key];
-      rendered.mcpServers.terminal.env[key] = ownerEnv[key];
+      localRendered.mcpServers.terminal.env[key] = ownerEnv[key];
     }
     const mirrorFallbackServer = (server) => {
       const mirrored = structuredClone(server);
@@ -391,7 +391,6 @@ export async function renderConfig(options) {
       return mirrored;
     };
     localRendered.mcpServers.dev = mirrorFallbackServer(rendered.mcpServers.dev);
-    localRendered.mcpServers.terminal = mirrorFallbackServer(rendered.mcpServers.terminal);
     for (const key of OWNER_BROWSER_ENV_KEYS) {
       if (ownerEnv[key] === undefined) continue;
       localRendered.mcpServers['browser-devtools'].env[key] = ownerEnv[key];

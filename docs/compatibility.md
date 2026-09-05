@@ -7,18 +7,18 @@ WebHarness treats the model-facing MCP surface as a public contract. Provider im
 The full Personal Workstation exposes these outer provider identities:
 
 ```text
-Dev       read edit write import_file file_ops review_changes wait exec bash pc_sleep
-Code      code_search code_context code_symbol
-Terminal  terminal_open terminal_read terminal_send terminal_resize
-          terminal_list terminal_yield terminal_close
+Dev       read edit write import_file file_ops review_changes wait exec bash
 Local     tool_list tool_schema tool_call fallback_dispatch tool_batch
+            |-- code      code_search / code_context / code_symbol
+            |-- terminal  terminal_open / terminal_read / terminal_send / ...
+            `-- host      pc_sleep
 ```
 
-The current outer provider IDs are `dev`, `code`, `terminal`, and `local`. `restricted` and `trusted-dev` intentionally expose smaller compositions.
+The current outer provider IDs are `dev` and `local`. `restricted` and `trusted-dev` intentionally expose smaller compositions without Local.
 
-Local is one authorization domain. Its five broker tools address downstream MCPs by logical `{server, tool}` identity. The maintained Personal Workstation composes public Local servers for `browser-fast` and `browser-devtools`, plus fallback-only mirrors of the outer Dev and Terminal providers.
+Local is one authorization domain. Its five broker tools address downstream MCPs by logical `{server, tool}` identity. The maintained Personal Workstation composes public Local servers for `code`, `terminal`, `host`, `browser-fast`, `browser-devtools`, and owner-added MCPs, plus one fallback-only mirror of outer Dev.
 
-`tool_list`, `tool_schema`, `tool_call`, and `tool_batch` exclude the fallback-only mirrors. Ordinary one-shot Local work uses `tool_call`. `fallback_dispatch` is reserved for an already-authorized operation whose normal writable MCP call is unavailable or unreliable; it can reach the fallback-only Dev/Terminal mirrors as well as public Local servers and forwards the downstream `CallToolResult` unchanged. Its `readOnlyHint` is intentionally retained for fallback transport compatibility and is not a promise that the selected downstream action is side-effect free. `tool_batch` applies several structured argument objects to one public `{server, tool}` route with bounded concurrency, and its member envelope adds attribution/status while each fulfilled downstream result remains intact.
+Unscoped `tool_list` excludes the fallback-only Dev mirror. Explicit read-only recovery inspection may still use `tool_list(server="dev")` and `tool_schema(server="dev", tool=...)`. Ordinary `tool_call` and `tool_batch` reject Dev. `fallback_dispatch` is reserved for an already-authorized operation whose normal writable MCP call is unavailable or unreliable; it can reach the hidden Dev mirror as well as public Local servers and forwards the downstream `CallToolResult` unchanged. Its `readOnlyHint` is intentionally retained for fallback transport compatibility and is not a promise that the selected downstream action is side-effect free. `tool_batch` applies several structured argument objects to one public `{server, tool}` route with bounded concurrency, and its member envelope adds attribution/status while each fulfilled downstream result remains intact.
 
 ## Compatibility rules
 
@@ -53,4 +53,4 @@ WebHarness controls tools and local runtimes through MCP, but it does not own Ch
 
 Agents are the next planned additive capability, not part of the stabilized reference runtime. The intended model-facing surface is one small `agents` capability with `spawn`, `message`, `status`, and `finish` operations backed by an Agent Broker. The first backend may adapt ChatGPT worker conversations; later API or Codex runtimes should remain replaceable beneath the same broker contract.
 
-This limitation does not require redesigning Dev, Code, Terminal, Local, Browser, or Browser DevTools. Workspace objects, worktree management, and project-authority abstractions are explicitly outside the current product direction.
+This limitation does not require redesigning the outer Dev/Local split or the Code, Terminal, Host, and Browser logical servers behind Local. Workspace objects, worktree management, and project-authority abstractions are explicitly outside the current product direction.

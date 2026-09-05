@@ -203,9 +203,9 @@ When Causal Coding and/or MCP Harness Router also apply, keep the boundaries exp
 
 - **Causal Coding controls mutation scope and stopping**: owner selection, smallest complete change, testing authorization, verification cadence, and when to stop.
 - **Superpowers Web Adapter controls only compatible workflow adaptation**: brainstorming, planning, debugging structure, worktree/isolation integration, review fallbacks, and branch-finishing compatibility inside the Causal Coding boundary.
-- **MCP Harness Router controls local primitive selection only**: for example `read` versus `exec`, `exec` versus `bash` versus Terminal, `edit` versus `write`/`file_ops`, CodeDB versus `rg`, Local `tool_call` versus `tool_batch`, Local Browser routing, or `wait` versus polling.
+- **MCP Harness Router controls local primitive selection only**: for example `read` versus short-RPC `exec`/`bash`, mandatory Local Terminal + Dev `wait` for long or duration-uncertain commands, `edit` versus `write`/`file_ops`, Local Code versus `rg`, Local `tool_call` versus `tool_batch`, Local Browser routing, or `wait` versus polling.
 - Do not let MCP Harness Router prescribe Git workflow, worktree policy, planning, testing, review, or implementation methodology.
-- Do not invoke MCP Harness Router merely because a software-development task exists. Use it when choosing among available local Dev, Code, Terminal, or wait primitives is materially relevant.
+- Do not invoke MCP Harness Router merely because a software-development task exists. Use it when choosing between direct Dev primitives, Local Code/Terminal/Host/Browser routes, or Dev `wait` is materially relevant.
 - If the router's preferred primitive is unavailable, preserve the Superpowers workflow and choose the best actually exposed local primitive rather than inventing a tool.
 
 In short: Causal Coding sets the mutation boundary; the standalone Superpowers-derived Skills supply compatible workflow structure; MCP Harness Router chooses the local primitive for each concrete operation.

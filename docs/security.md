@@ -9,7 +9,7 @@ Use when conservative workspace-bounded authority is required.
 - Files are confined to the configured workspace.
 - Dev does not expose unrestricted `exec` or Bash.
 - A separate legacy shell provider enforces an allowlist policy.
-- Code and Terminal are not present in this profile.
+- Local is not present, so Code, Terminal, Host, and Browser logical servers are absent.
 
 ## `trusted-dev`
 
@@ -18,7 +18,7 @@ Use only on a dedicated development host where unrestricted shell authority is i
 - Files remain workspace-bounded.
 - Dev exposes shell-free structured argv execution and native Bash with the permissions of the Linux service user.
 - Both `exec` and Bash may reach files, processes, network resources, developer tools, and credentials accessible to that account even when the Files tools are workspace-bounded. `exec` removes shell parsing; it is not a privilege boundary.
-- Code and Terminal are not present in this profile.
+- Local is not present, so Code, Terminal, Host, and Browser logical servers are absent.
 
 ## `personal` — Personal Workstation
 
@@ -28,14 +28,15 @@ Full reference-workstation authority.
 - `import_file` can create one new WSL-user-accessible file from a ChatGPT-native file reference; it never overwrites an existing destination.
 - `review_changes` can inspect Git working trees reachable by the WSL user and returns a bounded aggregate patch without creating Git refs or commits.
 - `exec` and Bash have the authority of the WSL user.
-- Code can inspect Git repositories reachable by that user.
-- Terminal can create and control persistent tmux-backed PTYs.
+- Local `server="code"` can inspect Git repositories reachable by that user.
+- Local `server="terminal"` can create and control persistent tmux-backed PTYs.
+- Local `server="host"` can put the Windows host to sleep after its explicit confirmation guard.
 - Durable waits can observe local process/port/file/HTTP/systemd and WebHarness Terminal state.
 - Local Browser access can control the dedicated persistent Windows MCP Chrome profile or the configured WSLg browser identity (Chrome or Clearcote) after explicit `tag:local` authorization; everyday Windows Chrome remains outside MCP control.
 
-This profile is intentionally powerful. Treat it like giving a coding agent an interactive shell as your WSL user plus, when `tag:local` is granted, access to the local capability domain. Because `fallback_dispatch` can reach fallback-only mirrors of Dev and Terminal, that Local grant also carries recovery-path authority equivalent to the selected mirrored operation.
+This profile is intentionally powerful. Treat it like giving a coding agent an interactive shell as your WSL user plus, when `tag:local` is granted, access to Code, Terminal, Host, Browser, and owner-added logical servers. Because `fallback_dispatch` can reach the hidden Dev mirror, that Local grant also carries recovery-path authority equivalent to the selected Dev operation.
 
-The outer `local` provider is the `tag:local` authorization boundary. Ordinary `tool_call(server, tool, arguments)` and same-route `tool_batch(server, tool, calls)` operate only on public Local downstream servers. `fallback_dispatch(server, tool, arguments)` is intentionally broader: it can also reach fallback-only mirrors of the outer Dev and Terminal providers so an already-authorized writable operation can still be attempted when its normal model-facing call is unavailable or unreliable. The fallback tool is intentionally advertised with `readOnlyHint` for transport compatibility, but that hint is not an authorization or side-effect guarantee; the selected downstream operation retains its real authority and may edit, create, delete, execute, control a PTY, sleep the host, or otherwise mutate state. Batch concurrency changes orchestration, not authorization. The `browser-devtools` and `browser-fast` logical servers intentionally share this local browser trust domain, and owner-configured `MCP_LOCAL_SERVERS_FILE` entries join that same authority domain. The owner file is accepted only for the Personal profile, must be a bounded current-user-owned regular file, cannot replace built-in Local servers, and may launch only an existing absolute executable with literal args/env and an optional existing absolute working directory. Owner stdio servers are supervised by 1MCP on unexpected exit unless explicitly opted out. Local privately enables only 1MCP's reload action for targeted backend recovery; the reserved `1mcp` namespace is filtered from discovery and rejected as a model route, so this lifecycle authority does not become another model-facing Local metatool or a general management surface. Adding a server is therefore an explicit capability grant; a genuinely different trust domain needs a separate broker/scope or direct exposure.
+The outer `local` provider is the `tag:local` authorization boundary. Ordinary `tool_call(server, tool, arguments)` and same-route `tool_batch(server, tool, calls)` operate on public Local downstream servers including `code`, `terminal`, `host`, Browser, and owner-added MCPs. `fallback_dispatch(server, tool, arguments)` is intentionally broader only in one direction: it can also reach the fallback-only mirror of outer Dev so an already-authorized writable Dev operation can still be attempted when its normal model-facing call is unavailable or unreliable. The fallback tool is intentionally advertised with `readOnlyHint` for transport compatibility, but that hint is not an authorization or side-effect guarantee; the selected downstream operation retains its real authority and may edit, create, delete, execute, control a PTY, sleep the host, or otherwise mutate state. Batch concurrency changes orchestration, not authorization. The `browser-devtools` and `browser-fast` logical servers intentionally share this local browser trust domain, and owner-configured `MCP_LOCAL_SERVERS_FILE` entries join that same authority domain. The owner file is accepted only for the Personal profile, must be a bounded current-user-owned regular file, cannot replace built-in Local servers, and may launch only an existing absolute executable with literal args/env and an optional existing absolute working directory. Owner stdio servers are supervised by 1MCP on unexpected exit unless explicitly opted out. Local privately enables only 1MCP's reload action for targeted backend recovery; the reserved `1mcp` namespace is filtered from discovery and rejected as a model route, so this lifecycle authority does not become another model-facing Local metatool or a general management surface. Adding a server is therefore an explicit capability grant; a genuinely different trust domain needs a separate broker/scope or direct exposure.
 
 Personal Dev `import_file` is an ingress boundary, not a general downloader. Its `file` argument is declared as a ChatGPT native file parameter, the provider accepts only the expected host-supplied file-reference shape, requires HTTPS on explicitly trusted OpenAI file hosts (including validated redirects), streams into an exclusive private partial, enforces `MCP_DEV_IMPORT_MAX_BYTES`, fsyncs and size-checks the completed bytes, then publishes with a no-overwrite hard link under the same cooperative mutation coordinator used by other Dev writes. Signed source URLs are not returned in normal tool output. The destination parent must already exist. Import does not grant Browser upload authority and does not modify the Browser artifact manifest.
 
@@ -49,7 +50,7 @@ Extensions do not receive additional Browser authority. `bin/extension` is an op
 
 ## CodeDB resource guidance
 
-The Personal Workstation Code tools are description-guided, not resource-enforced. A first Code call for a repository may start a persistent rooted CodeDB child and create or update substantial on-disk index state. On large repositories this can consume significant disk and RAM. The model-facing descriptions therefore direct large or unfamiliar repository discovery toward bounded Dev `exec` with `rg` (or Bash when shell syntax is needed) plus focused `read` before CodeDB-backed intelligence when CodeDB state/cost is unknown.
+The Personal Workstation Local `code` tools are description-guided, not resource-enforced. A first Code call for a repository may start a persistent rooted CodeDB child and create or update substantial on-disk index state. On large repositories this can consume significant disk and RAM. The model-facing descriptions therefore direct large or unfamiliar repository discovery toward bounded Dev `exec` with `rg` (or Bash when shell syntax is needed) plus focused `read` before CodeDB-backed intelligence when CodeDB state/cost is unknown.
 
 There is no repository-size preflight, threshold, cgroup, or approval database in this design. Because Personal Workstation `exec` and Bash intentionally have the WSL user's authority, description text cannot form a privilege boundary against deliberate raw CLI use; it is routing guidance intended to prevent accidental expensive work.
 
@@ -94,7 +95,7 @@ Human keystrokes are never copied into a separate broker-side input log. Sudo/pa
 
 Pinned 1MCP 0.37.0 permits only loopback OAuth callback origins in its consent-page CSP. The reference installer applies fail-closed compatibility patches that permit the exact registered HTTPS callback origin, preserve negotiated capabilities across supervised stdio restarts, and keep restart-stable log rotation. The OAuth patch does not permit arbitrary HTTPS form destinations. Requalify these patches when changing the pinned 1MCP version.
 
-Local capability authority is a separate outer grant from Dev/Code/Terminal, but `fallback_dispatch` deliberately bridges into fallback-only Dev and Terminal mirrors after `tag:local` authorization. Normal Local discovery/schema/call/batch still expose only public Local servers such as `browser-devtools` and `browser-fast`; the mirrored Dev/Terminal routes exist only for fallback dispatch.
+Local capability authority is a separate outer grant from Dev. Unscoped Local discovery plus ordinary call/batch expose public logical servers such as `code`, `terminal`, `host`, `browser-devtools`, and `browser-fast`. Exact read-only inspection may name the hidden Dev recovery server through `tool_list(server="dev")` or `tool_schema(server="dev", tool=...)`; this does not make Dev callable through ordinary Local routes. `fallback_dispatch` is the only Local execution path that bridges into that Dev mirror after `tag:local` authorization.
 
 ## Sensitive state
 

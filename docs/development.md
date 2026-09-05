@@ -62,7 +62,7 @@ git diff --check
 
 This is the repository-required portable gate and is the CI boundary. It must not depend on live Cloudflare credentials, ChatGPT OAuth, actual linger changes, Windows Chrome automation, or WSLg GUI launches.
 
-If a single MCP Bash request risks exceeding the connector request window, run the long suite inside a durable Terminal session and use `wait`/`terminal_read` for completion evidence.
+When running this gate through MCP, **do not** use one direct Dev `exec`/`bash` call if the suite may approach the connector request window. Direct execution is short-RPC work only; use 45 seconds as the routing target. Long or duration-uncertain verification must run inside a durable Local Terminal session, with Dev `wait` (`terminal_exit`/`terminal_output` or other readiness) and Local `terminal_read` providing completion evidence. Increasing Dev `timeout_seconds` does not extend the connector lifetime.
 
 ## Maintained WSL reference qualification
 
@@ -74,7 +74,7 @@ webharness doctor --profile personal
 webharness status
 ```
 
-Then complete the harmless Dev/Code/Terminal/Local, Terminal-restart-survival, Local browser discovery, and public OAuth/endpoint checks in [Acceptance](acceptance.md). These are reference-machine qualification steps, not portable CI.
+Then complete the harmless Dev plus Local Code/Terminal/Browser, Terminal-restart-survival, and public OAuth/endpoint checks in [Acceptance](acceptance.md). These are reference-machine qualification steps, not portable CI.
 
 ## Change boundaries
 
@@ -82,7 +82,7 @@ Then complete the harmless Dev/Code/Terminal/Local, Terminal-restart-survival, L
 - Do not expose the raw CodeDB tool catalog.
 - Do not make tmux lifetime depend on the broker or 1MCP.
 - Keep `wait` durable and separate from the normal Terminal model-read cursor.
-- Keep shell-free `exec(argv[])` as the ordinary bounded execution path; use native Bash when shell semantics are materially required.
+- Keep shell-free `exec(argv[])` and native Bash as short-RPC execution paths only; use Bash when shell semantics are materially required, and route long or duration-uncertain commands through Local Terminal + Dev `wait`.
 - Preserve provider-internal same-canonical-path mutation serialization.
 
 ## Documentation

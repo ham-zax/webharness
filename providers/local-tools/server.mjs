@@ -364,8 +364,9 @@ export class LocalToolBroker {
     const selectedQuery = optionalString(query, 'query');
     if (selectedServer !== undefined) validateServerName(selectedServer);
     const selectedLimit = normalizeLimit(limit);
-    const allowedServers = await this.publicServers();
-    if (selectedServer !== undefined && !allowedServers.has(selectedServer)) {
+    const publicServers = await this.publicServers();
+    const inspectableServers = selectedServer === undefined ? publicServers : await this.configuredServers();
+    if (selectedServer !== undefined && !inspectableServers.has(selectedServer)) {
       throw brokerError('UNKNOWN_SERVER', `unknown local server: ${selectedServer}`);
     }
 
@@ -382,8 +383,8 @@ export class LocalToolBroker {
 
     if (selectedServer === undefined) {
       if (pageCursor !== undefined) throw brokerError('INVALID_CURSOR', 'unscoped server discovery cursor is invalid');
-      const counts = await this.serverToolCounts(allowedServers);
-      const matching = Array.from(allowedServers)
+      const counts = await this.serverToolCounts(publicServers);
+      const matching = Array.from(publicServers)
         .map(name => conciseServer(name, counts.get(name) ?? 0))
         .filter(item => matchesServerQuery(item, selectedQuery));
       const servers = matching.slice(offset, offset + selectedLimit);
@@ -410,8 +411,8 @@ export class LocalToolBroker {
       for (let index = start; index < innerTools.length; index += 1) {
         const innerTool = innerTools[index];
         const parsed = parseQualifiedName(innerTool?.name);
-        if (!parsed || parsed.server === '1mcp' || !allowedServers.has(parsed.server)) continue;
-        if (selectedServer !== undefined && parsed.server !== selectedServer) continue;
+        if (!parsed || parsed.server === '1mcp' || !inspectableServers.has(parsed.server)) continue;
+        if (parsed.server !== selectedServer) continue;
         const item = conciseTool(innerTool, parsed.server, parsed.tool);
         if (!matchesQuery(item, selectedQuery)) continue;
         if (tools.length === selectedLimit) {
@@ -433,8 +434,8 @@ export class LocalToolBroker {
   async schema({ server, tool } = {}) {
     const selectedServer = validateServerName(server);
     const selectedTool = requiredString(tool, 'tool');
-    const allowedServers = await this.publicServers();
-    if (!allowedServers.has(selectedServer)) throw brokerError('UNKNOWN_SERVER', `unknown local server: ${selectedServer}`);
+    const inspectableServers = await this.configuredServers();
+    if (!inspectableServers.has(selectedServer)) throw brokerError('UNKNOWN_SERVER', `unknown local server: ${selectedServer}`);
     await this.ensureServerAvailable(selectedServer);
 
     const target = qualifiedName(selectedServer, selectedTool);
@@ -558,17 +559,17 @@ export function createLocalBrokerServer({ broker } = {}) {
 
   const server = new Server(
     { name: 'local-tools', version: '0.1.0' },
-    { capabilities: { tools: {} }, instructions: 'Stable local tool broker. Discover narrowly and use tool_call for ordinary Local calls. Use fallback_dispatch only when the normal writable MCP operation is unavailable or unreliable; use tool_batch for several independent downstream calls.' }
+    { capabilities: { tools: {} }, instructions: 'Stable local tool broker. Discover narrowly and use tool_call for ordinary Local calls, including Code, Terminal, Host, Browser, and owner-added MCPs. Fallback-only servers such as Dev stay out of unscoped discovery and ordinary call/batch routes, but may be explicitly inspected with tool_list(server=...) and tool_schema before recovery. Use fallback_dispatch only when the normal writable MCP operation is unavailable or unreliable; use tool_batch for several independent downstream calls.' }
   );
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: [
     {
       name: 'tool_list',
-      description: 'Discover Local capabilities without loading full schemas. Omit server to list configured logical servers and availability; provide server to list that server\'s tools. Use query only within the selected discovery scope.',
+      description: 'Discover Local capabilities without loading full schemas. Omit server to list public logical servers and availability; fallback-only servers stay hidden there. Provide an explicit server name to inspect that server\'s tools, including a known fallback-only recovery server such as dev. Use query only within the selected discovery scope.',
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       inputSchema: {
         type: 'object',
         properties: {
-          server: { type: 'string', minLength: 1, description: 'Logical downstream server name, such as browser-fast, browser-devtools, satori, or codebase-memory-mcp. Omit to discover logical servers rather than individual tools.' },
+          server: { type: 'string', minLength: 1, description: 'Logical downstream server name, such as code, terminal, host, browser-fast, browser-devtools, codebase-memory-mcp, or the known fallback-only dev recovery server. Omit to discover public logical servers rather than individual tools.' },
           query: { type: 'string', minLength: 1, description: 'Case-insensitive filter. Without server it matches logical server names only; with server it matches that server\'s tool name, title, and description.' },
           limit: { type: 'integer', minimum: 1, maximum: MAX_LIST_LIMIT, default: DEFAULT_LIST_LIMIT },
           cursor: { type: 'string', minLength: 1, description: 'Opaque continuation cursor returned by a prior tool_list call with the same server/query filters.' }
@@ -578,7 +579,7 @@ export function createLocalBrokerServer({ broker } = {}) {
     },
     {
       name: 'tool_schema',
-      description: 'Load the current full schema and metadata for one known local downstream tool.',
+      description: 'Load the current full schema and metadata for one known downstream tool. Exact inspection may target a known fallback-only recovery server such as dev even though that server is omitted from unscoped discovery and rejected by ordinary tool_call/tool_batch.',
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       inputSchema: {
         type: 'object',
@@ -607,7 +608,7 @@ export function createLocalBrokerServer({ broker } = {}) {
     },
     {
       name: 'fallback_dispatch',
-      description: 'Fallback one-shot dispatcher for an already-authorized operation when its normal writable MCP tool call is unavailable or unreliable. Route by logical server name, tool name, and structured arguments. This fallback can invoke mirrored Dev and Terminal operations as well as ordinary Local downstream tools, so the selected action may edit, create, move, delete, execute, control a terminal, browse, or otherwise mutate state. It is intentionally advertised with readOnlyHint for fallback transport compatibility; that hint does not describe the side effects of the selected downstream operation.',
+      description: 'Fallback one-shot dispatcher for an already-authorized operation when its normal writable MCP tool call is unavailable or unreliable. Route by logical server name, tool name, and structured arguments. This fallback can invoke the hidden Dev mirror as well as ordinary Local downstream tools such as Terminal, Host, Code, and Browser, so the selected action may edit, create, move, delete, execute, control a terminal, sleep the host, browse, or otherwise mutate state. It is intentionally advertised with readOnlyHint for fallback transport compatibility; that hint does not describe the side effects of the selected downstream operation.',
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: false },
       inputSchema: {
         type: 'object',

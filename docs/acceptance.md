@@ -29,9 +29,10 @@ Required evidence:
 Use the live MCP connection and exercise each public capability boundary without destructive or consequential work:
 
 - **Dev:** read a known repository file or run a bounded `pwd`/Git inspection.
-- **Code:** resolve a known symbol or obtain bounded repository context from the canonical public checkout.
-- **Terminal:** open a named shell session, print a harmless marker, and read it back.
-- **Local:** list/discover downstream tools with a bounded query.
+- **Local discovery:** confirm the public logical catalog includes `code`, `terminal`, `host`, `browser-fast`, and `browser-devtools`, while `dev` remains hidden from ordinary discovery.
+- **Local Code:** resolve a known symbol or obtain bounded repository context from the canonical public checkout through `server="code"`.
+- **Local Terminal:** open a named shell session through `server="terminal"`, print a harmless marker, and read it back.
+- **Local Host:** load the `host/pc_sleep` schema only; do not invoke sleep during harmless qualification.
 
 Record the observed results in the release/commit notes or operator log; do not write credentials into the repository.
 
@@ -49,14 +50,17 @@ This proves the ownership invariant: tmux owns PTY lifetime; MCP/1MCP do not.
 
 ## 5. Local browser discovery
 
-Through Local, confirm the live catalog contains both logical browser servers:
+Through Local, confirm the live catalog contains the built-in public logical servers:
 
 ```text
+code
+terminal
+host
 browser-fast
 browser-devtools
 ```
 
-Load only one harmless schema from each. A GUI launch or website mutation is not required for this discovery check. When browser execution itself changed, separately exercise the target that changed under the operator's normal browser policy.
+Load one harmless schema from Code, Terminal, and each Browser server; load the Host schema without invoking it. A GUI launch or website mutation is not required for this discovery check. When browser execution itself changed, separately exercise the target that changed under the operator's normal browser policy.
 
 ## 6. Public MCP/OAuth connectivity
 
@@ -64,7 +68,7 @@ From the maintained ChatGPT/MCP client:
 
 - connect to the configured public MCP endpoint through Cloudflare;
 - complete or reuse the expected OAuth grant;
-- refresh the catalog and confirm the intended outer provider/tool surface is available;
+- refresh the catalog and confirm only the intended outer Dev/Local provider surface is available;
 - make one harmless authenticated tool call.
 
 Do not copy authorization codes, tokens, cookies, or tunnel credentials into acceptance notes.

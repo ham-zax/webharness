@@ -10,7 +10,7 @@ Use the guide that matches what you are doing:
 | Check the qualified host/runtime assumptions | [Reference Environment](reference-environment.md) |
 | Understand profiles, generated state, and rendering | [Configuration](configuration.md) |
 | Start, stop, inspect, restart, or move a deployment | [Operations](operations.md) |
-| Understand Dev, Code, Terminal, Local, and Browser ownership | [Architecture](architecture.md) |
+| Understand the outer Dev/Local split and Local Code, Terminal, Host, and Browser ownership | [Architecture](architecture.md) |
 | Understand the model-facing compatibility contract | [MCP Compatibility](compatibility.md) |
 | Choose a trust profile or review authority | [Security](security.md) |
 | Change the repository and run verification | [Development](development.md) |

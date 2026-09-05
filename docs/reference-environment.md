@@ -13,7 +13,7 @@ Run `webharness doctor --profile personal` before setup. Doctor validates the de
 
 ## Personal Workstation assumptions
 
-The `personal` profile is the full reference deployment. Its setup path qualifies a Linux CLI toolbox and installs pinned provider/runtime dependencies used by Dev, Code, Terminal, Local, Browser, and Browser DevTools. `scripts/check-personal-toolbox.sh` records the current command/version assumptions.
+The `personal` profile is the full reference deployment. Its setup path qualifies a Linux CLI toolbox and installs pinned provider/runtime dependencies used by outer Dev/Local and Local's Code, Terminal, Host, Browser, and Browser DevTools servers. `scripts/check-personal-toolbox.sh` records the current command/version assumptions.
 
 The reference bootstrap currently owns a globally installed pinned 1MCP runtime and applies two source-level compatibility patches to that package. This is an implementation constraint, not a recommended packaging model for every fork. Do not run the reference bootstrap on a machine where another deployment must independently control the same global 1MCP installation without first changing that ownership model.
 

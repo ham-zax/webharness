@@ -415,7 +415,7 @@ def pkce_pair():
 def build_authorization(resource_meta, auth_meta, client_id, redirect_uri):
     supported = resource_meta.get("scopes_supported") or auth_meta.get("scopes_supported") or []
     # Adapt requested scopes to the actual task. Do not request more than needed.
-    requested_scopes = [s for s in ("tag:code", "tag:dev", "tag:terminal") if s in supported]
+    requested_scopes = [s for s in ("tag:dev", "tag:local") if s in supported]
     verifier, challenge = pkce_pair()
     state = secrets.token_urlsafe(32)
     resource = resource_meta.get("resource") or MCP_URL

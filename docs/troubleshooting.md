@@ -6,13 +6,13 @@ Start with `webharness doctor` for configuration/reference-environment issues an
 
 That is usually a connector/RPC request-duration limit, not a WSL process limit.
 
-For long tests, builds, servers, or watches:
+Treat direct Dev `exec`/`bash` as short-RPC work only. Use 45 seconds as the routing target; if runtime is uncertain or may approach a minute, the mandatory Personal Workstation path is:
 
-1. start the work in a durable Terminal session;
-2. use `wait` for a marker, process exit, port, file, HTTP, or systemd condition;
-3. use `terminal_read` for incremental output.
+1. start the work through Local `server="terminal"` with `terminal_open` in a durable Terminal session;
+2. use Dev `wait` for `terminal_exit`, `terminal_output`, a port, file, HTTP, or another readiness condition;
+3. call Local `server="terminal"`, tool `terminal_read`, for incremental or final output.
 
-Do not put several long suites into one giant MCP Bash request and interpret a transport timeout as a test failure.
+The Dev provider can accept a larger internal `timeout_seconds`, but that does not extend the model-facing connector lifetime. Do not put a long suite into one direct MCP `exec`/`bash` request and interpret a transport timeout as a command failure.
 
 ## `webharness status` reports local health failure
 
@@ -63,7 +63,7 @@ The first durable baseline could not be committed within the positive call hold.
 
 ## Code results lag immediately after an edit
 
-The rooted CodeDB watcher is eventually consistent. Use Files/Bash for immediate post-edit verification, then use Code once the watcher catches up. Do not switch to a different `project=` argument; repository routing is determined by `cwd`.
+The rooted CodeDB watcher behind Local `server="code"` is eventually consistent. Use Dev `read`/`exec`/Bash for immediate post-edit verification, then use the Local Code server once the watcher catches up. Do not switch to a different `project=` argument; repository routing is determined by `cwd`.
 
 ## ChatGPT shows an old action catalog
 

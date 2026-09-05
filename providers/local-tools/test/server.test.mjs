@@ -75,7 +75,7 @@ function fakeInner({ pages, callResult = { content: [{ type: 'text', text: 'ok' 
   };
 }
 
-test('model-facing broker exposes list, schema, call, and batch', async t => {
+test('model-facing broker exposes discovery, call, fallback, and batch', async t => {
   const image = { content: [{ type: 'image', data: 'cG5n', mimeType: 'image/png' }] };
   const broker = {
     async list() { return { tools: [], hasMore: false }; },
@@ -94,11 +94,14 @@ test('model-facing broker exposes list, schema, call, and batch', async t => {
   await client.connect(clientTransport);
 
   const { tools } = await client.listTools();
-  assert.deepEqual(tools.map(tool => tool.name).sort(), ['tool_batch', 'tool_call', 'tool_list', 'tool_schema']);
+  assert.deepEqual(tools.map(tool => tool.name).sort(), ['fallback_dispatch', 'tool_batch', 'tool_call', 'tool_list', 'tool_schema']);
   const call = tools.find(tool => tool.name === 'tool_call');
+  const fallback = tools.find(tool => tool.name === 'fallback_dispatch');
   const batch = tools.find(tool => tool.name === 'tool_batch');
   assert.equal(call.annotations.readOnlyHint, false);
   assert.equal(call.annotations.openWorldHint, true);
+  assert.equal(fallback.annotations.readOnlyHint, true);
+  assert.equal(fallback.annotations.destructiveHint, false);
   assert.equal(batch.annotations.destructiveHint, true);
   assert.equal(batch.annotations.openWorldHint, true);
 

@@ -144,10 +144,14 @@ const local = JSON.parse(fs.readFileSync(localFile, 'utf8'));
 const keys = cfg => Object.keys(cfg.mcpServers ?? {}).sort();
 if (JSON.stringify(keys(restricted)) !== JSON.stringify(['dev', 'shell'])) process.exit(1);
 if (JSON.stringify(keys(trusted)) !== JSON.stringify(['dev'])) process.exit(1);
-if (JSON.stringify(keys(personal)) !== JSON.stringify(['code', 'dev', 'local', 'terminal'])) process.exit(1);
-if (JSON.stringify(keys(local)) !== JSON.stringify(['browser-devtools', 'browser-fast'])) process.exit(1);
+if (JSON.stringify(keys(personal)) !== JSON.stringify(['dev', 'local'])) process.exit(1);
+if (JSON.stringify(keys(local)) !== JSON.stringify(['browser-devtools', 'browser-fast', 'code', 'dev', 'host', 'terminal'])) process.exit(1);
 if (!local.mcpServers['browser-devtools'].args.includes(root + '/providers/browser/server.mjs')) process.exit(1);
 if (!local.mcpServers['browser-fast'].args.includes(root + '/providers/browser-fast/server.mjs')) process.exit(1);
+if (!local.mcpServers.code.args.includes(root + '/providers/code-router/server.mjs')) process.exit(1);
+if (!local.mcpServers.terminal.args.includes(root + '/providers/terminal/mcp-server.mjs')) process.exit(1);
+if (!local.mcpServers.host.args.includes(root + '/providers/pi-dev/host-server.mjs')) process.exit(1);
+if (personal.mcpServers.local.env.MCP_LOCAL_FALLBACK_ONLY_SERVERS !== 'dev') process.exit(1);
 NODE2
   local rc=$?
   rm -rf "$tmp"

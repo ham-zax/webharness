@@ -244,13 +244,15 @@ test('personal user mode exposes file_ops alongside edit with user-path descript
   const { env } = await userFixture();
   await withClient(env, async client => {
     const listed = await client.listTools();
-    assert.deepEqual(listed.tools.map(x => x.name).sort(), ['bash', 'edit', 'exec', 'file_ops', 'import_file', 'pc_sleep', 'read', 'review_changes', 'wait', 'write']);
+    assert.deepEqual(listed.tools.map(x => x.name).sort(), ['bash', 'edit', 'exec', 'file_ops', 'import_file', 'read', 'review_changes', 'wait', 'write']);
     const read = listed.tools.find(x => x.name === 'read');
     assert.match(read.description, /UTF-8|text/i);
     assert.match(read.description, /1-based/i);
     assert.match(read.description, /truncat|bounded/i);
     assert.match(read.description, /cat|sed/i);
     assert.match(read.inputSchema.properties.path.description, /relative.*default.*absolute/i);
+    assert.equal(read.annotations.readOnlyHint, true);
+    assert.equal(read.annotations.destructiveHint, false);
     const exec = listed.tools.find(x => x.name === 'exec');
     assert.match(exec.description, /structured argv/i);
     assert.match(exec.description, /passed literally|literal arguments/i);
@@ -283,12 +285,6 @@ test('personal user mode exposes file_ops alongside edit with user-path descript
     assert.match(wait.description, /timeout_seconds.*default 300/i);
     assert.match(wait.description, /hold_seconds.*default 10/i);
     assert.match(wait.description, /polling|sleep/i);
-    const pcSleep = listed.tools.find(x => x.name === 'pc_sleep');
-    assert.match(pcSleep.description, /Windows host.*sleep|sleep.*Windows host/i);
-    assert.deepEqual(Object.keys(pcSleep.inputSchema.properties).sort(), ['confirm', 'wake_at']);
-    assert.deepEqual(pcSleep.inputSchema.required, ['confirm']);
-    assert.equal(pcSleep.annotations.destructiveHint, true);
-    assert.equal(pcSleep.annotations.idempotentHint, false);
     const fileOps = listed.tools.find(x => x.name === 'file_ops');
     assert.deepEqual(Object.keys(fileOps.inputSchema.properties).sort(), ['cwd', 'operations']);
     assert.match(fileOps.description, /move.*delete|delete.*move/i);
