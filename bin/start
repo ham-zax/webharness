@@ -54,7 +54,7 @@ echo "== starting WebHarness =="
 echo "1MCP OAuth origin: http://127.0.0.1:3050/mcp"
 echo "public MCP URL:    $TUNNEL_URL/mcp"
 
-bridge_reconcile_1mcp "$TUNNEL_URL"
+bridge_reconcile_1mcp_ready "$TUNNEL_URL"
 bridge_start_cloudflared
 printf '%s\n' "$TUNNEL_URL" > "$BRIDGE_TUNNEL_URL_FILE"
 

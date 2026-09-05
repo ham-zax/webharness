@@ -381,11 +381,27 @@ bridge_start_1mcp() {
 bridge_reconcile_1mcp() {
   local external="$1"
   mapfile -t MCP_PIDS < <(bridge_find_1mcp_pids)
-  if [ "${#MCP_PIDS[@]}" -eq 1 ] && bridge_local_health && bridge_1mcp_lease_held && \
+  # Runtime ownership is the lifecycle authority. Readiness can legitimately
+  # drop while 1MCP is still alive (for example while a backend is restarting),
+  # so steady-state supervision must not turn a readiness dip into an origin restart.
+  if [ "${#MCP_PIDS[@]}" -eq 1 ] && bridge_1mcp_lease_held && \
      bridge_1mcp_matches "${MCP_PIDS[0]}" "$external"; then
     printf '%s\n' "${MCP_PIDS[0]}" > "$BRIDGE_ONE_MCP_PID_FILE"
     return 0
   fi
+  bridge_stop_1mcp
+  bridge_start_1mcp "$external"
+}
+
+bridge_reconcile_1mcp_ready() {
+  local external="$1"
+  bridge_reconcile_1mcp "$external" || return 1
+  if bridge_local_health; then
+    return 0
+  fi
+
+  # Explicit startup still requires readiness. A pre-existing owned runtime
+  # that cannot become ready is replaced here, not by the steady-state watchdog.
   bridge_stop_1mcp
   bridge_start_1mcp "$external"
 }
