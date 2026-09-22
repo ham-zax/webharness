@@ -65,6 +65,18 @@ For routine interaction, use the fast surface:
 - Keep `stop_on_error=true` unless continuing after a failed action is explicitly safe. The executor never retries. Read `completed`, `failed`, `unknown`, and `not_run` before deciding whether another call is safe, and never replay an `unknown` consequential action automatically.
 - Re-observe after stale/unavailable tab context, ambiguity, failure, or any transition that needs fresh refs. Observation explicitly rebinds its chosen/current tab before snapshotting, so it is the recovery boundary after strict `--pin-tab` loses its prior target. Do not snapshot between routine mechanical steps merely to confirm each success.
 
+### Tab hygiene
+
+Treat tabs as bounded task resources rather than an append-only history.
+
+- Default to one working tab plus at most two temporary context tabs for one task. Before `tab_new`, prefer navigating or reusing an existing suitable tab.
+- Use `tab_list` when tab ownership is unclear, before opening another tab in an already-busy profile, or when the profile has accumulated roughly four or more tabs during the current workflow.
+- Close temporary tabs opened by the current task as soon as they are no longer needed. At task completion, normally leave one reusable working tab and any context tab that still has concrete continuation value.
+- Collapse duplicate tabs only when their ownership and redundancy are clear from the current workflow. On a shared profile, never bulk-close unknown tabs merely to reduce the count; another agent may own them.
+- Prefer reusing the current same-site tab for sequential navigation. Open a second tab only when parallel context materially reduces risk or preserves state needed for the next action, such as keeping a source thread visible while composing elsewhere.
+- If a click opens a temporary tab and the workflow returns to the originating tab, close the temporary tab after its information or action is complete instead of leaving it behind.
+- Tab cleanup is non-consequential housekeeping only when ownership is clear. Never let cleanup create uncertainty around a consequential write; verify the write first, then close the now-unneeded tab.
+
 ## Concurrent agents and profile isolation
 
 - Omitted `browser_profile` preserves the existing shared default. Do not automatically create a profile merely because another agent is active.

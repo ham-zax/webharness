@@ -59,6 +59,14 @@ function optionalBoolean(value, location) {
   return value;
 }
 
+function optionalStringArray(value, location) {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.some(item => typeof item !== 'string' || item.length === 0)) {
+    throw configError('BROWSER_FAST_CONFIG_INVALID', `${location} must be an array of non-empty strings`);
+  }
+  return value;
+}
+
 function resolveChrome(profileName) {
   return {
     browser: 'chrome',
@@ -88,7 +96,7 @@ function resolveManagedClearcote(config, requestedProfile) {
   if (!isRecord(raw)) throw configError('BROWSER_FAST_CONFIG_INVALID', `clearcote profile is not defined: ${profileName}`);
   rejectUnknownKeys(
     raw,
-    new Set(['fingerprint', 'platform', 'brand', 'headless', 'humanize', 'lightStealth', 'timezone', 'acceptLanguage']),
+    new Set(['fingerprint', 'platform', 'brand', 'headless', 'humanize', 'lightStealth', 'timezone', 'acceptLanguage', 'extensions']),
     `browser-fast config clearcote.profiles.${profileName}`
   );
 
@@ -105,7 +113,8 @@ function resolveManagedClearcote(config, requestedProfile) {
     humanize: optionalBoolean(raw.humanize, `clearcote profile ${profileName}.humanize`) ?? true,
     ...(raw.lightStealth === undefined ? {} : { lightStealth: optionalBoolean(raw.lightStealth, `clearcote profile ${profileName}.lightStealth`) }),
     ...(raw.timezone === undefined ? {} : { timezone: optionalString(raw.timezone, `clearcote profile ${profileName}.timezone`) }),
-    ...(raw.acceptLanguage === undefined ? {} : { acceptLanguage: optionalString(raw.acceptLanguage, `clearcote profile ${profileName}.acceptLanguage`) })
+    ...(raw.acceptLanguage === undefined ? {} : { acceptLanguage: optionalString(raw.acceptLanguage, `clearcote profile ${profileName}.acceptLanguage`) }),
+    ...(raw.extensions === undefined ? {} : { extensions: optionalStringArray(raw.extensions, `clearcote profile ${profileName}.extensions`) })
   };
 
   return {
