@@ -1,6 +1,7 @@
 const START_KEYS = new Set(['url', 'goal', 'scenario']);
-const SCENARIO_KEYS = new Set(['browser_target', 'browser_backend', 'browser_profile', 'success']);
-const SUCCESS_KEYS = new Set(['url_contains', 'title_contains', 'text_contains', 'required_operations']);
+const SCENARIO_KEYS = new Set(['browser_target', 'browser_backend', 'browser_profile', 'collection', 'success']);
+const SUCCESS_KEYS = new Set(['url_contains', 'title_contains', 'text_contains', 'required_operations', 'collection_complete', 'scroll_exhausted']);
+const COLLECTION_KEYS = new Set(['start_prefix', 'end_exact', 'min_unique', 'stable_observations', 'max_items']);
 const RUN_KEYS = new Set(['run_id']);
 const PROFILE_PATTERN = /^[A-Za-z0-9._-]+$/;
 
@@ -46,6 +47,47 @@ function stringList(value, name) {
   return value.map((item, index) => nonEmptyString(item, `${name}[${index}]`));
 }
 
+function boundedInteger(value, name, { min, max }) {
+  if (!Number.isInteger(value) || value < min || value > max) {
+    throw invalid(`${name} must be an integer from ${min} to ${max}`);
+  }
+  return value;
+}
+
+function trueOnly(value, name) {
+  if (value !== true) throw invalid(`${name} must be true when provided`);
+  return true;
+}
+
+function validateCollection(value) {
+  const collection = requireObject(value, 'scenario.collection');
+  rejectUnknownKeys(collection, COLLECTION_KEYS, 'scenario.collection');
+  const startPrefix = nonEmptyString(collection.start_prefix, 'scenario.collection.start_prefix');
+  const endExact = nonEmptyString(collection.end_exact, 'scenario.collection.end_exact');
+  if (startPrefix.length > 200 || endExact.length > 200) {
+    throw invalid('scenario.collection markers must be at most 200 characters');
+  }
+  const maxItems = collection.max_items === undefined
+    ? 200
+    : boundedInteger(collection.max_items, 'scenario.collection.max_items', { min: 1, max: 200 });
+  const minUnique = collection.min_unique === undefined
+    ? 1
+    : boundedInteger(collection.min_unique, 'scenario.collection.min_unique', { min: 1, max: 200 });
+  if (minUnique > maxItems) {
+    throw invalid('scenario.collection.min_unique cannot exceed scenario.collection.max_items');
+  }
+  const stableObservations = collection.stable_observations === undefined
+    ? 3
+    : boundedInteger(collection.stable_observations, 'scenario.collection.stable_observations', { min: 1, max: 10 });
+  return {
+    start_prefix: startPrefix,
+    end_exact: endExact,
+    min_unique: minUnique,
+    stable_observations: stableObservations,
+    max_items: maxItems
+  };
+}
+
 function validateProfile(value) {
   if (value === undefined) return undefined;
   const profile = nonEmptyString(value, 'browser_profile');
@@ -73,6 +115,12 @@ function validateSuccess(value) {
       }
     }
     result.required_operations = operations;
+  }
+  if ('collection_complete' in success) {
+    result.collection_complete = trueOnly(success.collection_complete, 'scenario.success.collection_complete');
+  }
+  if ('scroll_exhausted' in success) {
+    result.scroll_exhausted = trueOnly(success.scroll_exhausted, 'scenario.success.scroll_exhausted');
   }
   return result;
 }
@@ -110,6 +158,18 @@ export function validateStartArguments(value) {
   if (browserTarget === 'linux' && browserProfile !== undefined && browserBackend === undefined) {
     throw invalid('browser_profile requires an explicit browser_backend for Linux');
   }
+  const collection = scenario.collection === undefined ? undefined : validateCollection(scenario.collection);
+  const success = validateSuccess(scenario.success);
+  if (success.collection_complete && !collection) {
+    throw invalid('scenario.success.collection_complete requires scenario.collection');
+  }
+  if (
+    collection
+    && !['url_contains', 'title_contains', 'text_contains'].some(key => success[key] !== undefined)
+  ) {
+    throw invalid('scenario.collection requires at least one of url_contains, title_contains, or text_contains');
+  }
+  if (collection) success.collection_complete = true;
 
   return {
     url: url.href,
@@ -118,7 +178,8 @@ export function validateStartArguments(value) {
       browser_target: browserTarget,
       browser_backend: browserBackend,
       browser_profile: browserProfile,
-      success: validateSuccess(scenario.success)
+      ...(collection ? { collection } : {}),
+      success
     }
   };
 }
@@ -181,7 +242,7 @@ function sanitizeHistory(entry) {
   const result = pick(entry, [
     'step', 'action', 'kind', 'choice', 'operation', 'target', 'probability', 'confidence',
     'latency_ms', 'text', 'text_helper', 'text_latency_ms', 'page_changed', 'url',
-    'executed_ms', 'elapsed_ms'
+    'executed_ms', 'elapsed_ms', 'source'
   ]);
   if (!result) return undefined;
   const safeUsage = usage(entry.usage);
@@ -230,6 +291,16 @@ export function verifySuccess(snapshot, success) {
       passed &&= itemPassed;
       checks.required_operations[operation] = { expected_kind: expectedKind, passed: itemPassed };
     }
+  }
+  if ('collection_complete' in success) {
+    const itemPassed = snapshot?.collection?.complete === true;
+    passed &&= itemPassed;
+    checks.collection_complete = { passed: itemPassed };
+  }
+  if ('scroll_exhausted' in success) {
+    const itemPassed = page?.scroll?.exhausted === true;
+    passed &&= itemPassed;
+    checks.scroll_exhausted = { passed: itemPassed };
   }
   return { passed, checks };
 }

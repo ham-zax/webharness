@@ -33,7 +33,6 @@ export class JevWorkerClient {
     this.nextId = 0;
     this.pending = null;
     this.stdoutBuffer = '';
-    this.stdoutBytes = 0;
     this.stderrBytes = 0;
     this.closed = false;
     this.fatalError = null;
@@ -48,19 +47,21 @@ export class JevWorkerClient {
 
   onStdout(chunk) {
     if (this.closed) return;
-    this.stdoutBytes += chunk.length;
-    if (this.stdoutBytes > this.maxOutputBytes) {
-      this.fail(clientError('JEV_WORKER_OUTPUT_LIMIT', 'worker stdout exceeded the output limit'));
-      return;
-    }
     this.stdoutBuffer += chunk.toString('utf8');
     let newline;
     while ((newline = this.stdoutBuffer.indexOf('\n')) !== -1) {
       const line = this.stdoutBuffer.slice(0, newline);
       this.stdoutBuffer = this.stdoutBuffer.slice(newline + 1);
       if (!line) continue;
+      if (Buffer.byteLength(line, 'utf8') > this.maxOutputBytes) {
+        this.fail(clientError('JEV_WORKER_OUTPUT_LIMIT', 'one worker response exceeded the output limit'));
+        return;
+      }
       this.onLine(line);
       if (this.closed) return;
+    }
+    if (Buffer.byteLength(this.stdoutBuffer, 'utf8') > this.maxOutputBytes) {
+      this.fail(clientError('JEV_WORKER_OUTPUT_LIMIT', 'one worker response exceeded the output limit'));
     }
   }
 
@@ -141,13 +142,34 @@ export class JevWorkerClient {
     });
   }
 
+  async waitForExit(timeoutMs) {
+    if (this.child.exitCode !== null || this.child.signalCode !== null) return true;
+    return await new Promise(resolve => {
+      let settled = false;
+      const finish = value => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        this.child.off('exit', onExit);
+        resolve(value);
+      };
+      const onExit = () => finish(true);
+      const timer = setTimeout(() => finish(false), timeoutMs);
+      this.child.once('exit', onExit);
+    });
+  }
+
   async close() {
     if (this.pending) this.takePending().reject(clientError('JEV_WORKER_CLOSED', 'worker closed with a request outstanding'));
     if (!this.closed) {
       this.closed = true;
       try { this.child.stdin.end(); } catch {}
-      try { this.child.kill('SIGTERM'); } catch {}
     }
+    if (await this.waitForExit(750)) return;
+    try { this.child.kill('SIGTERM'); } catch {}
+    if (await this.waitForExit(1000)) return;
+    try { this.child.kill('SIGKILL'); } catch {}
+    await this.waitForExit(1000);
   }
 }
 

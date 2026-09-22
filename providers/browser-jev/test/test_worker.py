@@ -1,14 +1,13 @@
 import io
 import json
-import os
 import sys
-import threading
 from pathlib import Path
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import worker as worker_module  # noqa: E402
 from worker import WorkerRuntime, serve  # noqa: E402
 
 
@@ -58,7 +57,6 @@ def runtime_fixture(*, name="jev-test123", factory=None):
     runtime = WorkerRuntime(
         agent_factory=make_agent,
         daemon_stopper=stop_daemon,
-        daemon_pid_resolver=lambda _name: None,
         environ={"BU_NAME": name, "BU_CDP_URL": "http://127.0.0.1:9222"},
     )
     return runtime, agents, daemon_calls
@@ -84,6 +82,72 @@ def test_tick_calls_exactly_one_agent_tick():
     assert agents[0].calls == ["snapshot", ("command", "tick")]
 
 
+def test_collect_forwards_prefer_wait_to_deterministic_collection_step():
+    class CollectionAgent(FakeAgent):
+        def collection_step(
+            self,
+            *,
+            prefer_wait=False,
+            start_prefix,
+            end_exact,
+            max_records,
+        ):
+            self.calls.append((
+                "collection_step",
+                prefer_wait,
+                start_prefix,
+                end_exact,
+                max_records,
+            ))
+            return self.current
+
+    runtime, agents, _ = runtime_fixture(factory=CollectionAgent)
+    runtime.start({"url": "https://example.com", "goal": "Collect it"})
+    runtime.collect({
+        "prefer_wait": True,
+        "start_prefix": "@",
+        "end_exact": "Reply",
+        "max_records": 50,
+    })
+    assert agents[0].calls == [
+        "snapshot",
+        ("collection_step", True, "@", "Reply", 50),
+    ]
+
+
+def test_daemon_cleanup_preserves_records_when_owned_target_never_disappears(monkeypatch):
+    monkeypatch.setenv("BU_CDP_URL", "http://127.0.0.1:9222")
+    monkeypatch.setattr(worker_module, "UPSTREAM_DAEMON_EXIT_GRACE_SECONDS", 0.0)
+    monkeypatch.setattr(worker_module.browser_harness_ipc, "identify", lambda *_args, **_kwargs: 123)
+    monkeypatch.setattr(worker_module.os, "pidfd_open", lambda _pid: 9)
+    monkeypatch.setattr(worker_module.os, "close", lambda _fd: None)
+    monkeypatch.setattr(
+        worker_module,
+        "_daemon_request",
+        lambda _name, body, **_kwargs: (
+            {"targetId": "helper-target"}
+            if body == {"meta": "current_tab"}
+            else {"ok": True}
+        ),
+    )
+    monkeypatch.setattr(worker_module, "_target_present", lambda *_args: True)
+    monkeypatch.setattr(worker_module, "_pidfd_exited", lambda *_args, **_kwargs: False)
+    signals = []
+    monkeypatch.setattr(
+        worker_module.signal,
+        "pidfd_send_signal",
+        lambda *_args, **_kwargs: signals.append(True),
+    )
+    cleaned = []
+    monkeypatch.setattr(worker_module, "_cleanup_daemon_records", lambda name: cleaned.append(name))
+
+    with pytest.raises(RuntimeError, match="did not remove its owned target"):
+        worker_module.stop_namespaced_daemon("jev-stuck", require_clean=True)
+
+    assert signals == []
+    assert cleaned == []
+
+
 def test_stop_closes_agent_before_strict_namespaced_daemon_cleanup():
     calls = []
 
@@ -95,7 +159,6 @@ def test_stop_closes_agent_before_strict_namespaced_daemon_cleanup():
     runtime = WorkerRuntime(
         agent_factory=OrderedAgent,
         daemon_stopper=lambda name, *, require_clean: calls.append(("restart_daemon", name, require_clean)),
-        daemon_pid_resolver=lambda _name: None,
         environ={"BU_NAME": "jev-test123", "BU_CDP_URL": "http://127.0.0.1:9222"},
     )
     runtime.start({"url": "https://example.com", "goal": "Confirm it"})
@@ -103,38 +166,6 @@ def test_stop_closes_agent_before_strict_namespaced_daemon_cleanup():
     assert calls == ["agent.close", ("restart_daemon", "jev-test123", True)]
     runtime.close()
     assert calls == ["agent.close", ("restart_daemon", "jev-test123", True)]
-
-
-def test_stop_reaps_the_namespaced_daemon_child_while_strict_cleanup_waits():
-    calls = []
-    release_stopper = threading.Event()
-    reap_calls = 0
-
-    def stop_daemon(name, *, require_clean):
-        calls.append(("restart_daemon", name, require_clean))
-        assert release_stopper.wait(timeout=1)
-
-    def reap_child(pid, flags):
-        nonlocal reap_calls
-        assert pid == 4321
-        assert flags == os.WNOHANG
-        reap_calls += 1
-        if reap_calls == 1:
-            return 0, 0
-        release_stopper.set()
-        return pid, 0
-
-    runtime = WorkerRuntime(
-        agent_factory=FakeAgent,
-        daemon_stopper=stop_daemon,
-        daemon_pid_resolver=lambda _name: 4321,
-        child_reaper=reap_child,
-        environ={"BU_NAME": "jev-test123", "BU_CDP_URL": "http://127.0.0.1:9222"},
-    )
-    runtime.start({"url": "https://example.com", "goal": "Confirm it"})
-    assert runtime.stop({}) == {"status": "stopped"}
-    assert calls == [("restart_daemon", "jev-test123", True)]
-    assert reap_calls == 2
 
 
 def test_cleanup_still_stops_daemon_when_agent_close_fails():
@@ -184,7 +215,6 @@ def test_protocol_errors_do_not_expose_environment_values():
     runtime = WorkerRuntime(
         agent_factory=LeakyAgent,
         daemon_stopper=lambda *_args, **_kwargs: None,
-        daemon_pid_resolver=lambda _name: None,
         environ={
             "BU_NAME": "jev-test123",
             "BU_CDP_URL": "http://127.0.0.1:9222",
@@ -213,4 +243,3 @@ def test_request_validation_rejects_unknown_keys_and_wrong_arguments():
     ]:
         with pytest.raises(ValueError):
             runtime.handle(request)
-

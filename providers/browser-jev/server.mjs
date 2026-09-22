@@ -37,6 +37,19 @@ const STRING_CHECK = {
   items: { type: 'string', minLength: 1 }
 };
 
+const COLLECTION_SCHEMA = {
+  type: 'object',
+  properties: {
+    start_prefix: { type: 'string', minLength: 1, maxLength: 200, description: 'Start a text record when a visible line begins with this prefix.' },
+    end_exact: { type: 'string', minLength: 1, maxLength: 200, description: 'Finish a text record when this exact visible line is reached.' },
+    min_unique: { type: 'integer', minimum: 1, maximum: 200, description: 'Minimum unique records required before collection can complete.' },
+    stable_observations: { type: 'integer', minimum: 1, maximum: 10, description: 'Settled no-new-record WAIT observations required after no-new traversal steps before collection is considered stable.' },
+    max_items: { type: 'integer', minimum: 1, maximum: 200, description: 'Maximum unique records retained and returned.' }
+  },
+  required: ['start_prefix', 'end_exact'],
+  additionalProperties: false
+};
+
 const SUCCESS_SCHEMA = {
   type: 'object',
   minProperties: 1,
@@ -48,7 +61,9 @@ const SUCCESS_SCHEMA = {
       type: 'array',
       minItems: 1,
       items: { type: 'string', enum: ['CLICK', 'TYPE_TEXT', 'SELECT', 'WAIT'] }
-    }
+    },
+    collection_complete: { type: 'boolean', const: true, description: 'Require the configured text-record collection to reach its deterministic completion rule.' },
+    scroll_exhausted: { type: 'boolean', const: true, description: 'Require the current document to have no further downward scroll action.' }
   },
   additionalProperties: false
 };
@@ -71,6 +86,7 @@ const START_INPUT_SCHEMA = {
         browser_target: { type: 'string', enum: ['windows', 'linux'], description: 'Omit for Windows Chrome; use linux for managed Linux Chrome or Clearcote.' },
         browser_backend: { type: 'string', enum: ['chrome', 'clearcote'], description: 'Linux browser backend. Windows accepts only chrome.' },
         browser_profile: { type: 'string', minLength: 1, maxLength: 64, pattern: '^[A-Za-z0-9._-]+$', description: 'Optional managed browser profile name.' },
+        collection: { ...COLLECTION_SCHEMA, description: 'Optional bounded cross-observation text-record collection. Requires at least one url_contains, title_contains, or text_contains success check to identify the intended document; collection_complete is then enforced automatically.' },
         success: SUCCESS_SCHEMA
       },
       required: ['success'],
@@ -84,7 +100,7 @@ const START_INPUT_SCHEMA = {
 const TOOLS = [
   {
     name: 'jev_run',
-    description: 'Run one Jev browser-agent task autonomously to a terminal state inside this single MCP call, enforce every declared deterministic success check, clean the run-owned target/helper, and return the final sanitized state.',
+    description: 'Run one Jev browser-agent task autonomously inside this single MCP call until deterministic success checks pass or the bounded agent blocks/fails. Optional collection accumulates unique visible text records across virtualized/infinite-scroll observations. The run-owned target/helper is cleaned before the final sanitized state is returned.',
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
     inputSchema: START_INPUT_SCHEMA
   },
@@ -129,14 +145,16 @@ export function createBrowserJevServer({ manager } = {}) {
     { name: 'browser-jev', version: '0.1.0' },
     {
       capabilities: { tools: {} },
-      instructions: 'Jev browser-agent runs on WebHarness-managed browsers. Use jev_run for one-call autonomous execution with deterministic success checks and automatic cleanup; use start/tick/state/stop for interactive control.'
+      instructions: 'Jev browser-agent runs on WebHarness-managed browsers. Use jev_run for one-call autonomous execution with deterministic success checks, optional cross-observation text-record collection, and automatic cleanup; use start/tick/state/stop for interactive control.'
     }
   );
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }));
-  server.setRequestHandler(CallToolRequestSchema, async request => {
+  server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
     try {
       const args = request.params.arguments ?? {};
-      if (request.params.name === 'jev_run') return jsonResult(await manager.runToTerminal(args));
+      if (request.params.name === 'jev_run') {
+        return jsonResult(await manager.runToTerminal(args, { signal: extra?.signal }));
+      }
       if (request.params.name === 'jev_start') return jsonResult(await manager.start(args));
       if (request.params.name === 'jev_tick') return jsonResult(await manager.tick(validateRunId(args)));
       if (request.params.name === 'jev_state') return jsonResult(manager.state(validateRunId(args)));

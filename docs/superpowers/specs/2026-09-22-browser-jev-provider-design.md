@@ -21,18 +21,44 @@ The provider exposes exactly five tools:
 ### `jev_run`
 
 Accepts the same `url`, `goal`, and `scenario` contract as `jev_start`.
-It starts one run and advances the existing Jev worker loop internally until
-the provider reaches `done`, `blocked`, or `failed`, without returning to
-the MCP client between cycles. The same deterministic success verification is
-applied after every tick. The provider always closes the run-owned target,
-namespaced Browser Harness daemon, and worker before returning. Its final
-sanitized state retains the completed run ID for diagnostics, but that ID is
-no longer live and cannot be used with `jev_state`, `jev_tick`, or
-`jev_stop`.
+It starts one run and advances the existing Jev worker loop internally without
+returning to the MCP client between cycles. Deterministic success verification
+is applied after every observation, and the autonomous run ends immediately
+when those checks pass rather than requiring a final model `DONE`. If Jev
+selects `DONE` before deterministic success, the worker resets that terminal
+choice for the autonomous path and continues within the normal Jev model/action
+budgets. The provider always closes the run-owned target, namespaced Browser
+Harness daemon, and worker before returning. Its final sanitized state retains
+the completed run ID for diagnostics, but that ID is no longer live and cannot
+be used with `jev_state`, `jev_tick`, or `jev_stop`.
+
+An optional `scenario.collection` accumulates rendered-visible text records
+across intermediate observations so evidence survives virtualized/infinite-scroll
+DOM replacement. A collection request must include at least one URL, title,
+or visible-text success check that identifies the intended document.
+Accumulation begins only while those identity checks pass and resets when that
+document identity changes. It accepts only a start-line prefix, an exact end-line marker, and
+bounded count/stability limits. No selectors, regular expressions, or
+executable extraction logic are accepted. Collection is deduplicated and
+bounded to at most 200 returned records. Supplying `scenario.collection`
+automatically enables deterministic `collection_complete` verification. It
+requires the configured minimum plus the configured number of provider-owned
+settling WAIT observations with no new record. Each no-new scroll schedules one
+such settling WAIT but does not itself count as a stable observation. Whole-document scroll exhaustion
+is reported separately and is not sufficient for collection completion because
+a lazy-loaded page can expose a transient bottom. `success.scroll_exhausted: true`
+is available separately when reaching the document bottom itself is the required
+postcondition.
 
 This is the preferred throughput path when the caller wants Jev to complete a
-goal autonomously. The stateful tools remain the control path when a caller
-needs to inspect or steer between individual decisions.
+goal autonomously. Once collection records have appeared and the ordinary
+URL/title/text/history checks identify the intended page, the provider may use
+its observed `scroll_down`/`wait` controls deterministically for mechanical
+collection traversal instead of spending a TypeSafe decision on every scroll.
+The stateful tools remain the control path when a caller needs to inspect or
+steer between individual decisions. If the MCP request is cancelled, the
+autonomous loop observes that cancellation between bounded worker cycles and
+runs the same owned-resource cleanup before ending.
 
 ### `jev_start`
 
@@ -40,7 +66,7 @@ Inputs:
 
 - `url`: required non-empty HTTP or HTTPS URL;
 - `goal`: required non-empty natural-language goal;
-- `scenario`: required object containing browser routing and success checks.
+- `scenario`: required object containing browser routing, optional bounded collection, and success checks.
 
 Scenario routing fields:
 
@@ -49,18 +75,29 @@ Scenario routing fields:
 - `browser_profile`: optional profile name using the same validation and
   resolution rules as browser-fast.
 
+Scenario collection fields:
+
+- `start_prefix`: required non-empty visible-line prefix, at most 200 characters;
+- `end_exact`: required non-empty exact visible line, at most 200 characters;
+- `min_unique`: optional integer 1-200, default 1;
+- `stable_observations`: optional integer 1-10, default 3;
+- `max_items`: optional integer 1-200, default 200 and never below `min_unique`.
+
 Scenario success fields:
 
 - `url_contains`: optional non-empty array of non-empty strings;
 - `title_contains`: optional non-empty array of non-empty strings;
 - `text_contains`: optional non-empty array of non-empty strings;
 - `required_operations`: optional non-empty array whose values are exactly
-  `CLICK`, `TYPE_TEXT`, `SELECT`, or `WAIT`.
+  `CLICK`, `TYPE_TEXT`, `SELECT`, or `WAIT`;
+- `collection_complete`: optional explicit literal `true`, valid only with a collection; supplying `scenario.collection` enforces the same check automatically;
+- `scroll_exhausted`: optional literal `true` requiring no current downward
+  scroll action.
 
 At least one success field must be present and non-empty. Every supplied
-check must pass. Checks are deterministic substring or history scans; the
-provider accepts no regex, selectors, JavaScript, callbacks, or executable
-verification logic.
+check must pass. Checks are deterministic substring, history, collection, or
+scroll-state scans; the provider accepts no regex, DOM selectors, JavaScript,
+callbacks, or executable verification logic.
 
 The tool resolves the selected browser endpoint at call time, starts one
 namespaced worker, creates one Jev run, and returns the opaque run ID plus
@@ -84,8 +121,8 @@ a model call or browser mutation.
 
 Accepts only `run_id`. It closes the Jev-owned target, cleanly stops the
 run's namespaced Browser Harness daemon, terminates the worker, removes the
-run from the live registry, and returns a stopped acknowledgement. It never
-closes the shared Clearcote or Chrome process.
+run's ownership lease and live-registry entry, and returns a stopped
+acknowledgement. It never closes the shared Clearcote or Chrome process.
 
 ## Returned State
 
@@ -125,9 +162,9 @@ model, browser, or snapshot implementation.
 
 `providers/browser-jev/server.mjs` owns:
 
-- the four-tool MCP schema and request routing;
+- the five-tool MCP schema and request routing;
 - argument and scenario validation;
-- run IDs and the in-memory run registry;
+- run IDs, the in-memory run registry, and bounded cross-observation collection state;
 - backend endpoint resolution;
 - profile-scoped operation queues;
 - worker lifecycle and bounded JSON-lines transport;
@@ -139,20 +176,58 @@ duplicating configuration parsing or browser lifecycle policy.
 
 ### Python worker
 
-`providers/browser-jev/worker.py` owns one Jev `Agent` per process. It accepts
-bounded JSON-lines commands for start, tick, state, and stop. It imports Jev
-from the locked environment and does not fork the Jev loop.
+`providers/browser-jev/worker.py` owns one provider-managed Jev `Agent` per
+process. It accepts bounded JSON-lines commands for start, tick, internal
+collection traversal, state, and stop. It imports the pinned Jev loop from the locked environment and layers a
+small provider-local runtime adapter over it rather than forking the planner or
+executor. The local snapshot script hashes the full observed action semantics for
+freshness, then retains only the first 250 model-visible actions and guards for
+those selectable actions, so dense pages cannot inflate worker responses with
+unbounded freshness metadata. Very sparse initial pages get a bounded hydration
+window before the first model decision. Model-selected collection scrolls
+receive a bounded post-scroll quiet-period re-observation so virtualized/lazy
+records can materialize before the next decision. Once collection is active on
+the verified target page, an internal deterministic collection command uses
+only the already observed downward-scroll or wait control, performs a combined
+freshness-check/action/observation boundary, and records that history entry as
+provider-owned collection work. If the model returns `BLOCKED` while
+deterministic collection work remains, the adapter briefly re-observes and
+resumes only when meaningful browser capabilities appear. If the upstream
+three-action no-progress guard blocks specifically on unchanged scrolling, the
+adapter gets a bounded lazy-load re-observation; collection runs may continue
+while a downward scroll action remains so deterministic collection stability,
+rather than model terminal belief, decides completion. The worker projects Agent state
+onto a bounded wire snapshot and never sends upstream cumulative model request
+or raw-answer history to Node.
 
 The worker calls `Agent.close()` during explicit stop, stdin EOF, and normal
-shutdown. It then calls:
+shutdown. It then performs strict cleanup of the run's namespaced Browser
+Harness daemon. Cleanup verifies the live daemon identity, obtains a Linux
+`pidfd`, requires the daemon's clean `shutdown` acknowledgement, and waits
+until the daemon-owned browser target is absent. Only after that browser
+cleanup is proven may the worker send `SIGTERM` through the `pidfd` to end a
+lingering daemon process; if the fast verification path is unavailable, it
+falls back to Browser Harness's strict `restart_daemon(name,
+require_clean=True)` behavior. This preserves the upstream PID-reuse and
+clean-browser guarantees without paying its fixed 15-second post-cleanup
+process grace on the normal WSL path. Failure to prove target absence or
+process exit preserves the endpoint/PID ownership records and returns a cleanup
+error instead of signaling early or reporting success.
 
-```python
-browser_harness.admin.restart_daemon(name, require_clean=True)
-```
-
-The Browser Harness function name is historical: it performs a clean stop
-and endpoint cleanup without restarting. The worker uses a per-run name of
-the form `jev-<run-id>` and never uses the `default` daemon.
+Before returning from start, the worker also records a mode-0600 ownership
+lease beneath the current user's XDG state directory. The lease contains only
+the managed profile key, loopback endpoint, worker PID plus process-start
+identity, daemon namespace, and owned target IDs. The content browsing context
+is marked with the opaque run namespace in per-tab `sessionStorage`; the
+namespaced daemon's `about:blank` helper is marked with the same namespace in
+its URL fragment because opaque `about:blank` storage is unavailable. Clean
+shutdown removes the lease. A future worker for the same profile may reclaim a
+lease only when the recorded worker process identity is dead. It first uses the
+run markers (which survive target-ID changes caused by browser session restore)
+and independently confirms recorded target IDs on the same live endpoint. An
+empty marker scan is inconclusive rather than proof of cleanup. Active or
+unverifiable owners are never reclaimed. The worker uses a per-run name of the
+form `jev-<run-id>` and never uses the `default` daemon.
 
 ### Backend resolver
 
@@ -186,9 +261,10 @@ launches the same managed session only when it is absent.
 
 `jev_start` creates a cryptographically random run ID, derives a valid
 `BU_NAME=jev-<run-id>`, resolves a fresh endpoint, and starts a worker with
-that endpoint in `BU_CDP_URL`. The endpoint is not returned, written to disk,
-or cached for future runs. It remains only in the active worker environment
-for that run.
+that endpoint in `BU_CDP_URL`. The endpoint is never returned through MCP or
+placed in generated public state. While a run is live, the worker records the
+loopback endpoint only in its private mode-0600 ownership lease together with
+non-secret target/process ownership metadata; clean stop removes that lease.
 
 Jev's unmodified `Browser` creates a background target with
 `Target.createTarget(background=True)` and enables focus emulation. The
@@ -234,8 +310,15 @@ state is committed.
 
 ## Decision and Verification Semantics
 
-The provider uses Jev's existing TypeSafe operation plus operation-specific
-target-head decision. Only the target belonging to the selected operation is
+Before asking TypeSafe, the provider resolves unmet `url_contains` checks in
+ordinary code when exactly one observed link destination satisfies them. It
+normalizes relative hrefs, gives dynamic pages a short bounded chance to expose
+the deterministic target, and executes the click through Jev's existing
+observed-node/freshness checks. When no unique deterministic destination is
+available, the provider falls back to Jev's TypeSafe operation plus
+operation-specific target-head decision. Fallback link criteria preserve the
+already-observed href alongside the semantic label so otherwise-similar options
+remain distinguishable. Only the target belonging to the selected operation is
 consumed. The provider never accepts or produces browser selectors or model-
 generated executable code.
 
@@ -305,15 +388,16 @@ provider consumes its exported behavior without modifying or reverting it.
 
 ## Verification
 
-Automated tests use fakes and never call paid APIs. Test-driven coverage
-includes:
+When test work is explicitly authorized, automated tests use fakes and never call paid APIs. Relevant coverage includes:
 
 - exactly five advertised tools and strict schemas, including `jev_run` sharing the start contract;
 - successful start/tick/state/stop protocol;
-- required non-empty deterministic success checks;
+- required non-empty deterministic success checks and bounded collection validation;
 - fixed required-operation enum and Jev-kind mapping;
-- `DONE` accepted only after all checks pass;
-- failed `DONE` verification becomes terminal blocked;
+- stateful `DONE` accepted only after all checks pass;
+- autonomous premature `DONE` resumed until deterministic success or another bounded terminal condition;
+- collection deduplication/stability and scroll-exhaustion verification;
+- per-response worker stdout limiting rather than lifetime-cumulative stdout limiting;
 - terminal states reject ticks before worker calls;
 - exact Agent Browser batch command `["get", "cdp-url"]`;
 - Linux Chrome session supplied by backend resolution rather than hardcoding;

@@ -85,9 +85,10 @@ test('start creates a namespaced worker and returns only sanitized state', async
     TYPESAFE_API_KEY: 'server-secret',
     BU_CDP_URL: 'http://127.0.0.1:9222',
     BU_NAME: 'jev-abc123',
+    BROWSER_JEV_PROFILE_KEY: 'linux:clearcote:x-main',
     PYTHONUNBUFFERED: '1'
   });
-  assert.deepEqual(worker.requests, [{ command: 'start', arguments: { url: 'https://example.com/', goal: 'Confirm the page and stop' } }]);
+  assert.deepEqual(worker.requests, [{ command: 'start', arguments: { url: 'https://example.com/', goal: 'Confirm the page and stop', wait_for_scroll: false } }]);
 });
 
 test('DONE becomes done only when every deterministic check passes', async () => {
@@ -125,6 +126,12 @@ test('runToTerminal advances internally to terminal state and cleans the owned r
       }
       return snapshot({
         status: 'done',
+        page: {
+          url: 'https://example.com/catalogue/sharp-objects_997/index.html',
+          title: 'Sharp Objects',
+          text: 'Sharp Objects',
+          scroll: { y: 0, height: 780 }
+        },
         history: [
           { kind: 'click', action: 'Mystery', operation: 'CLICK' },
           { kind: 'click', action: 'Sharp Objects', operation: 'CLICK' }
@@ -135,19 +142,76 @@ test('runToTerminal advances internally to terminal state and cleans the owned r
     stop: { status: 'stopped' }
   });
   const { manager } = managerFixture({ worker });
-  const result = await manager.runToTerminal(startArgs());
+  const result = await manager.runToTerminal(startArgs({
+    success: { url_contains: ['sharp-objects_997'] }
+  }));
   assert.equal(result.status, 'done');
   assert.equal(result.verification.passed, true);
-  assert.deepEqual(worker.requests.map(item => item.command), ['start', 'tick', 'tick', 'stop']);
+  assert.deepEqual(worker.requests.map(item => item.command), ['start', 'navigate', 'tick', 'navigate', 'tick', 'stop']);
   assert.equal(worker.closeCount, 1);
   assert.equal(manager.runs.size, 0);
+});
+
+test('collection traversal alternates scroll and settle waits before stable completion', async () => {
+  let collectCount = 0;
+  const record = '@alice\n1 day ago\nhello\nReply';
+  const collectionPage = history => ({
+    url: 'https://example.com/watch',
+    title: 'Example Domain',
+    text: record,
+    scroll: { y: 600, height: 2400 },
+    actions: [
+      { id: 'scroll_down', kind: 'scroll', label: 'Scroll down', delta: 600 },
+      { id: 'wait', kind: 'wait', label: 'Wait for the page to update' }
+    ],
+    history
+  });
+  const worker = new FakeWorker({
+    start: snapshot({ page: collectionPage([]) }),
+    collect: args => {
+      collectCount += 1;
+      const preferWait = collectCount % 2 === 0;
+      assert.deepEqual(args, {
+        prefer_wait: preferWait,
+        start_prefix: '@',
+        end_exact: 'Reply',
+        max_records: 10
+      });
+      const history = Array.from({ length: collectCount }, (_, index) => (
+        index % 2 === 0
+          ? { kind: 'scroll', action: 'Scroll down', operation: 'SCROLL_DOWN', source: 'collection' }
+          : { kind: 'wait', action: 'Wait', operation: 'WAIT', source: 'collection' }
+      ));
+      return snapshot({ page: collectionPage(history), history });
+    },
+    stop: { status: 'stopped' }
+  });
+  const { manager } = managerFixture({ worker });
+  const result = await manager.runToTerminal(startArgs({
+    collection: {
+      start_prefix: '@',
+      end_exact: 'Reply',
+      min_unique: 1,
+      stable_observations: 2,
+      max_items: 10
+    }
+  }));
+  assert.equal(result.status, 'done');
+  assert.equal(result.collection.unique_count, 1);
+  assert.equal(result.collection.stable_observations, 2);
+  assert.equal(result.collection.complete, true);
+  assert.deepEqual(worker.requests.map(item => item.command), [
+    'start', 'collect', 'collect', 'collect', 'collect', 'stop'
+  ]);
 });
 
 test('runToTerminal cleans the owned run when a tick fails', async () => {
   const failure = Object.assign(new Error('lost response'), { code: 'JEV_WORKER_EXITED' });
   const worker = new FakeWorker({ tick: failure, stop: { status: 'stopped' } });
   const { manager } = managerFixture({ worker });
-  await assert.rejects(manager.runToTerminal(startArgs()), /lost response/);
+  await assert.rejects(manager.runToTerminal(startArgs({
+    success: { title_contains: ['Not Yet'] }
+  })), /lost response/);
   assert.deepEqual(worker.requests.map(item => item.command), ['start', 'tick', 'stop']);
   assert.equal(worker.closeCount, 1);
   assert.equal(manager.runs.size, 0);
