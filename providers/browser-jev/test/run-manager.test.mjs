@@ -112,6 +112,47 @@ test('DONE becomes done only when every deterministic check passes', async () =>
   await assert.rejects(second.tick(run.run_id), /terminal/);
 });
 
+test('runToTerminal advances internally to terminal state and cleans the owned run', async () => {
+  let tickCount = 0;
+  const worker = new FakeWorker({
+    tick: () => {
+      tickCount += 1;
+      if (tickCount === 1) {
+        return snapshot({
+          history: [{ kind: 'click', action: 'Mystery', operation: 'CLICK' }],
+          elapsed_ms: 900
+        });
+      }
+      return snapshot({
+        status: 'done',
+        history: [
+          { kind: 'click', action: 'Mystery', operation: 'CLICK' },
+          { kind: 'click', action: 'Sharp Objects', operation: 'CLICK' }
+        ],
+        elapsed_ms: 1500
+      });
+    },
+    stop: { status: 'stopped' }
+  });
+  const { manager } = managerFixture({ worker });
+  const result = await manager.runToTerminal(startArgs());
+  assert.equal(result.status, 'done');
+  assert.equal(result.verification.passed, true);
+  assert.deepEqual(worker.requests.map(item => item.command), ['start', 'tick', 'tick', 'stop']);
+  assert.equal(worker.closeCount, 1);
+  assert.equal(manager.runs.size, 0);
+});
+
+test('runToTerminal cleans the owned run when a tick fails', async () => {
+  const failure = Object.assign(new Error('lost response'), { code: 'JEV_WORKER_EXITED' });
+  const worker = new FakeWorker({ tick: failure, stop: { status: 'stopped' } });
+  const { manager } = managerFixture({ worker });
+  await assert.rejects(manager.runToTerminal(startArgs()), /lost response/);
+  assert.deepEqual(worker.requests.map(item => item.command), ['start', 'tick', 'stop']);
+  assert.equal(worker.closeCount, 1);
+  assert.equal(manager.runs.size, 0);
+});
+
 test('a lost response marks failed and never replays a mutation', async () => {
   const failure = Object.assign(new Error('lost response'), { code: 'JEV_WORKER_EXITED' });
   const worker = new FakeWorker({ tick: failure });

@@ -7,9 +7,11 @@ import json
 import os
 import re
 import sys
+import threading
 from collections.abc import Callable, Mapping
 from typing import Any, TextIO
 
+from browser_harness import _ipc as browser_harness_ipc
 from browser_harness.admin import restart_daemon
 from jev_ultrafast import Agent
 
@@ -30,10 +32,14 @@ class WorkerRuntime:
         *,
         agent_factory: Callable[..., Any] = Agent,
         daemon_stopper: Callable[..., Any] = restart_daemon,
+        daemon_pid_resolver: Callable[[str], int | None] = lambda name: browser_harness_ipc.identify(name, timeout=1.0),
+        child_reaper: Callable[[int, int], tuple[int, int]] = os.waitpid,
         environ: Mapping[str, str] = os.environ,
     ) -> None:
         self.agent_factory = agent_factory
         self.daemon_stopper = daemon_stopper
+        self.daemon_pid_resolver = daemon_pid_resolver
+        self.child_reaper = child_reaper
         self.environ = environ
         self.daemon_name = environ.get("BU_NAME", "")
         if not DAEMON_NAME.fullmatch(self.daemon_name) or self.daemon_name == "default":
@@ -86,16 +92,50 @@ class WorkerRuntime:
         self.close()
         return {"status": "stopped"}
 
+    def _stop_daemon_and_reap(self, daemon_pid: int | None) -> None:
+        if daemon_pid is None:
+            self.daemon_stopper(self.daemon_name, require_clean=True)
+            return
+
+        failure: list[BaseException] = []
+
+        def stop_daemon() -> None:
+            try:
+                self.daemon_stopper(self.daemon_name, require_clean=True)
+            except BaseException as error:
+                failure.append(error)
+
+        stopper = threading.Thread(
+            target=stop_daemon,
+            name=f"browser-jev-stop-{self.daemon_name}",
+            daemon=True,
+        )
+        stopper.start()
+        while stopper.is_alive():
+            try:
+                reaped_pid, _ = self.child_reaper(daemon_pid, os.WNOHANG)
+            except ChildProcessError:
+                break
+            except InterruptedError:
+                continue
+            if reaped_pid == daemon_pid:
+                break
+            stopper.join(0.05)
+        stopper.join()
+        if failure:
+            raise failure[0]
+
     def close(self) -> None:
         if self.cleaned:
             return
         self.cleaned = True
         agent, self.agent = self.agent, None
+        daemon_pid = self.daemon_pid_resolver(self.daemon_name)
         try:
             if agent is not None:
                 agent.close()
         finally:
-            self.daemon_stopper(self.daemon_name, require_clean=True)
+            self._stop_daemon_and_reap(daemon_pid)
 
     def handle(self, request: Any) -> tuple[str, Any]:
         body = self._object(request, "request")

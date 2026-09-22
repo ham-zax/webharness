@@ -60,31 +60,39 @@ const RUN_SCHEMA = {
   additionalProperties: false
 };
 
+const START_INPUT_SCHEMA = {
+  type: 'object',
+  properties: {
+    url: { type: 'string', minLength: 1, description: 'Initial HTTP or HTTPS page.' },
+    goal: { type: 'string', minLength: 1, description: 'Natural-language goal for this run.' },
+    scenario: {
+      type: 'object',
+      properties: {
+        browser_target: { type: 'string', enum: ['windows', 'linux'], description: 'Omit for Windows Chrome; use linux for managed Linux Chrome or Clearcote.' },
+        browser_backend: { type: 'string', enum: ['chrome', 'clearcote'], description: 'Linux browser backend. Windows accepts only chrome.' },
+        browser_profile: { type: 'string', minLength: 1, maxLength: 64, pattern: '^[A-Za-z0-9._-]+$', description: 'Optional managed browser profile name.' },
+        success: SUCCESS_SCHEMA
+      },
+      required: ['success'],
+      additionalProperties: false
+    }
+  },
+  required: ['url', 'goal', 'scenario'],
+  additionalProperties: false
+};
+
 const TOOLS = [
+  {
+    name: 'jev_run',
+    description: 'Run one Jev browser-agent task autonomously to a terminal state inside this single MCP call, enforce every declared deterministic success check, clean the run-owned target/helper, and return the final sanitized state.',
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+    inputSchema: START_INPUT_SCHEMA
+  },
   {
     name: 'jev_start',
     description: 'Start one Jev browser-agent run in its own background target and return the first observed state. Completion is accepted only when every declared success check passes.',
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
-    inputSchema: {
-      type: 'object',
-      properties: {
-        url: { type: 'string', minLength: 1, description: 'Initial HTTP or HTTPS page.' },
-        goal: { type: 'string', minLength: 1, description: 'Natural-language goal for this run.' },
-        scenario: {
-          type: 'object',
-          properties: {
-            browser_target: { type: 'string', enum: ['windows', 'linux'], description: 'Omit for Windows Chrome; use linux for managed Linux Chrome or Clearcote.' },
-            browser_backend: { type: 'string', enum: ['chrome', 'clearcote'], description: 'Linux browser backend. Windows accepts only chrome.' },
-            browser_profile: { type: 'string', minLength: 1, maxLength: 64, pattern: '^[A-Za-z0-9._-]+$', description: 'Optional managed browser profile name.' },
-            success: SUCCESS_SCHEMA
-          },
-          required: ['success'],
-          additionalProperties: false
-        }
-      },
-      required: ['url', 'goal', 'scenario'],
-      additionalProperties: false
-    }
+    inputSchema: START_INPUT_SCHEMA
   },
   {
     name: 'jev_tick',
@@ -109,24 +117,26 @@ const TOOLS = [
 export function createBrowserJevServer({ manager } = {}) {
   if (
     !manager
+    || typeof manager.runToTerminal !== 'function'
     || typeof manager.start !== 'function'
     || typeof manager.tick !== 'function'
     || typeof manager.state !== 'function'
     || typeof manager.stop !== 'function'
   ) {
-    throw new TypeError('manager with start(), tick(), state(), and stop() is required');
+    throw new TypeError('manager with runToTerminal(), start(), tick(), state(), and stop() is required');
   }
   const server = new Server(
     { name: 'browser-jev', version: '0.1.0' },
     {
       capabilities: { tools: {} },
-      instructions: 'Stateful Jev browser-agent runs on WebHarness-managed browsers. Start with deterministic success checks, advance one cycle at a time, inspect cached state, and stop every run when finished.'
+      instructions: 'Jev browser-agent runs on WebHarness-managed browsers. Use jev_run for one-call autonomous execution with deterministic success checks and automatic cleanup; use start/tick/state/stop for interactive control.'
     }
   );
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }));
   server.setRequestHandler(CallToolRequestSchema, async request => {
     try {
       const args = request.params.arguments ?? {};
+      if (request.params.name === 'jev_run') return jsonResult(await manager.runToTerminal(args));
       if (request.params.name === 'jev_start') return jsonResult(await manager.start(args));
       if (request.params.name === 'jev_tick') return jsonResult(await manager.tick(validateRunId(args)));
       if (request.params.name === 'jev_state') return jsonResult(manager.state(validateRunId(args)));

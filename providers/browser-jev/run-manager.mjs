@@ -136,6 +136,31 @@ export class BrowserJevRunManager {
     });
   }
 
+  async runToTerminal(input) {
+    let runId;
+    let finalState;
+    let primaryError;
+    try {
+      finalState = await this.start(input);
+      runId = finalState.run_id;
+      while (!TERMINAL_STATUSES.has(finalState.status)) {
+        finalState = await this.tick(runId);
+      }
+      return finalState;
+    } catch (error) {
+      primaryError = error;
+      throw error;
+    } finally {
+      if (runId && this.runs.has(runId)) {
+        try {
+          await this.stop(runId);
+        } catch (cleanupError) {
+          if (!primaryError) throw cleanupError;
+        }
+      }
+    }
+  }
+
   async tick(runId) {
     const run = this.run(runId);
     if (TERMINAL_STATUSES.has(run.status)) {

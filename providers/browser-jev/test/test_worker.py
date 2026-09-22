@@ -2,6 +2,7 @@ import io
 import json
 import os
 import sys
+import threading
 from pathlib import Path
 
 import pytest
@@ -57,6 +58,7 @@ def runtime_fixture(*, name="jev-test123", factory=None):
     runtime = WorkerRuntime(
         agent_factory=make_agent,
         daemon_stopper=stop_daemon,
+        daemon_pid_resolver=lambda _name: None,
         environ={"BU_NAME": name, "BU_CDP_URL": "http://127.0.0.1:9222"},
     )
     return runtime, agents, daemon_calls
@@ -93,6 +95,7 @@ def test_stop_closes_agent_before_strict_namespaced_daemon_cleanup():
     runtime = WorkerRuntime(
         agent_factory=OrderedAgent,
         daemon_stopper=lambda name, *, require_clean: calls.append(("restart_daemon", name, require_clean)),
+        daemon_pid_resolver=lambda _name: None,
         environ={"BU_NAME": "jev-test123", "BU_CDP_URL": "http://127.0.0.1:9222"},
     )
     runtime.start({"url": "https://example.com", "goal": "Confirm it"})
@@ -100,6 +103,38 @@ def test_stop_closes_agent_before_strict_namespaced_daemon_cleanup():
     assert calls == ["agent.close", ("restart_daemon", "jev-test123", True)]
     runtime.close()
     assert calls == ["agent.close", ("restart_daemon", "jev-test123", True)]
+
+
+def test_stop_reaps_the_namespaced_daemon_child_while_strict_cleanup_waits():
+    calls = []
+    release_stopper = threading.Event()
+    reap_calls = 0
+
+    def stop_daemon(name, *, require_clean):
+        calls.append(("restart_daemon", name, require_clean))
+        assert release_stopper.wait(timeout=1)
+
+    def reap_child(pid, flags):
+        nonlocal reap_calls
+        assert pid == 4321
+        assert flags == os.WNOHANG
+        reap_calls += 1
+        if reap_calls == 1:
+            return 0, 0
+        release_stopper.set()
+        return pid, 0
+
+    runtime = WorkerRuntime(
+        agent_factory=FakeAgent,
+        daemon_stopper=stop_daemon,
+        daemon_pid_resolver=lambda _name: 4321,
+        child_reaper=reap_child,
+        environ={"BU_NAME": "jev-test123", "BU_CDP_URL": "http://127.0.0.1:9222"},
+    )
+    runtime.start({"url": "https://example.com", "goal": "Confirm it"})
+    assert runtime.stop({}) == {"status": "stopped"}
+    assert calls == [("restart_daemon", "jev-test123", True)]
+    assert reap_calls == 2
 
 
 def test_cleanup_still_stops_daemon_when_agent_close_fails():
@@ -149,6 +184,7 @@ def test_protocol_errors_do_not_expose_environment_values():
     runtime = WorkerRuntime(
         agent_factory=LeakyAgent,
         daemon_stopper=lambda *_args, **_kwargs: None,
+        daemon_pid_resolver=lambda _name: None,
         environ={
             "BU_NAME": "jev-test123",
             "BU_CDP_URL": "http://127.0.0.1:9222",

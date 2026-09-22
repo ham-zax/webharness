@@ -3,8 +3,8 @@
 ## Purpose
 
 Add a `browser-jev` MCP provider beside `browser-fast`. It exposes the
-Jev Ultrafast agent loop as four stateful tools while using the browser
-identities already managed by WebHarness:
+Jev Ultrafast agent loop as one autonomous tool plus four stateful control
+tools while using the browser identities already managed by WebHarness:
 
 - managed Linux Clearcote profiles, including `x-main`;
 - managed Linux Chrome sessions;
@@ -16,7 +16,23 @@ background CDP target.
 
 ## Public Tool Contract
 
-The provider exposes exactly four tools:
+The provider exposes exactly five tools:
+
+### `jev_run`
+
+Accepts the same `url`, `goal`, and `scenario` contract as `jev_start`.
+It starts one run and advances the existing Jev worker loop internally until
+the provider reaches `done`, `blocked`, or `failed`, without returning to
+the MCP client between cycles. The same deterministic success verification is
+applied after every tick. The provider always closes the run-owned target,
+namespaced Browser Harness daemon, and worker before returning. Its final
+sanitized state retains the completed run ID for diagnostics, but that ID is
+no longer live and cannot be used with `jev_state`, `jev_tick`, or
+`jev_stop`.
+
+This is the preferred throughput path when the caller wants Jev to complete a
+goal autonomously. The stateful tools remain the control path when a caller
+needs to inspect or steer between individual decisions.
 
 ### `jev_start`
 
@@ -292,7 +308,7 @@ provider consumes its exported behavior without modifying or reverting it.
 Automated tests use fakes and never call paid APIs. Test-driven coverage
 includes:
 
-- exactly four advertised tools and strict schemas;
+- exactly five advertised tools and strict schemas, including `jev_run` sharing the start contract;
 - successful start/tick/state/stop protocol;
 - required non-empty deterministic success checks;
 - fixed required-operation enum and Jev-kind mapping;
