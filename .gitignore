@@ -6,6 +6,7 @@ config/sessions/
 config/*.pid
 __pycache__/
 *.pyc
+.venv/
 
 .worktrees/
 node_modules/

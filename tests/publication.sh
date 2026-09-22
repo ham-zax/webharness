@@ -40,6 +40,7 @@ test_public_structure() {
   [ -f "$ROOT/providers/local-tools/server.mjs" ] && \
   [ -f "$ROOT/providers/browser/server.mjs" ] && \
   [ -f "$ROOT/providers/browser-fast/server.mjs" ] && \
+  [ -f "$ROOT/providers/browser-jev/server.mjs" ] && \
   [ -f "$ROOT/scripts/render-config.mjs" ] && \
   [ -f "$ROOT/scripts/bootstrap-personal.sh" ] && \
   [ -f "$ROOT/scripts/manage-extension.mjs" ] && \
@@ -145,9 +146,10 @@ const keys = cfg => Object.keys(cfg.mcpServers ?? {}).sort();
 if (JSON.stringify(keys(restricted)) !== JSON.stringify(['dev', 'shell'])) process.exit(1);
 if (JSON.stringify(keys(trusted)) !== JSON.stringify(['dev'])) process.exit(1);
 if (JSON.stringify(keys(personal)) !== JSON.stringify(['dev', 'local'])) process.exit(1);
-if (JSON.stringify(keys(local)) !== JSON.stringify(['browser-devtools', 'browser-fast', 'code', 'dev', 'host', 'terminal'])) process.exit(1);
+if (JSON.stringify(keys(local)) !== JSON.stringify(['browser-devtools', 'browser-fast', 'browser-jev', 'code', 'dev', 'host', 'terminal'])) process.exit(1);
 if (!local.mcpServers['browser-devtools'].args.includes(root + '/providers/browser/server.mjs')) process.exit(1);
 if (!local.mcpServers['browser-fast'].args.includes(root + '/providers/browser-fast/server.mjs')) process.exit(1);
+if (!local.mcpServers['browser-jev'].args.includes(root + '/providers/browser-jev/server.mjs')) process.exit(1);
 if (!local.mcpServers.code.args.includes(root + '/providers/code-router/server.mjs')) process.exit(1);
 if (!local.mcpServers.terminal.args.includes(root + '/providers/terminal/mcp-server.mjs')) process.exit(1);
 if (!local.mcpServers.host.args.includes(root + '/providers/pi-dev/host-server.mjs')) process.exit(1);
@@ -178,6 +180,10 @@ EOF
 test_pi_install_and_smoke_contract() {
   grep -Fq 'npm --prefix "$DIR/providers/pi-dev" ci --omit=dev' "$ROOT/scripts/setup.sh" || return 1
   grep -Fq 'unexpected Pi version' "$ROOT/scripts/setup.sh" || return 1
+  grep -Fq 'npm --prefix "$ROOT/providers/browser-jev" ci --omit=dev' "$ROOT/scripts/bootstrap-personal.sh" || return 1
+  grep -Fq 'uv sync --frozen --project "$ROOT/providers/browser-jev"' "$ROOT/scripts/bootstrap-personal.sh" || return 1
+  grep -Fq "'browser-jev'" "$ROOT/scripts/smoke-local.sh" || return 1
+  grep -Fq 'providers/browser-jev/test/server.test.mjs' "$ROOT/scripts/smoke-local.sh" || return 1
   grep -Fq 'MCP_DEV_WORKSPACE_ROOT' "$ROOT/scripts/smoke-local.sh" || return 1
   grep -Fq 'MCP_DEV_STATE_DIR' "$ROOT/scripts/smoke-local.sh" || return 1
   grep -Fq 'MCP_DEV_MAX_OUTPUT_BYTES' "$ROOT/scripts/smoke-local.sh" || return 1

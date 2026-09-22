@@ -54,7 +54,7 @@ const keys = cfg => Object.keys(cfg.mcpServers ?? {}).sort();
 if (JSON.stringify(keys(restricted)) !== JSON.stringify(['dev', 'shell'])) process.exit(1);
 if (JSON.stringify(keys(trusted)) !== JSON.stringify(['dev'])) process.exit(1);
 if (JSON.stringify(keys(personal)) !== JSON.stringify(['dev', 'local'])) process.exit(1);
-if (JSON.stringify(keys(personalLocal)) !== JSON.stringify(['browser-devtools', 'browser-fast', 'code', 'dev', 'host', 'terminal'])) process.exit(1);
+if (JSON.stringify(keys(personalLocal)) !== JSON.stringify(['browser-devtools', 'browser-fast', 'browser-jev', 'code', 'dev', 'host', 'terminal'])) process.exit(1);
 if (restricted.mcpServers?.code || trusted.mcpServers?.code) process.exit(1);
 if (restricted.mcpServers?.terminal || trusted.mcpServers?.terminal) process.exit(1);
 if (restricted.mcpServers?.local || trusted.mcpServers?.local) process.exit(1);
@@ -112,6 +112,13 @@ if (personalLocal.mcpServers['browser-fast'].env.WAYLAND_DISPLAY !== 'wayland-0'
 if (personalLocal.mcpServers['browser-fast'].env.DISPLAY !== ':0') process.exit(1);
 if (personalLocal.mcpServers['browser-fast'].env.PULSE_SERVER !== 'unix:/mnt/wslg/PulseServer') process.exit(1);
 if (personalLocal.mcpServers['browser-fast'].tags !== undefined) process.exit(1);
+if (personalLocal.mcpServers['browser-jev'].command !== 'node') process.exit(1);
+if (!personalLocal.mcpServers['browser-jev'].args.includes(root + '/providers/browser-jev/server.mjs')) process.exit(1);
+if (personalLocal.mcpServers['browser-jev'].env.XDG_RUNTIME_DIR !== runtimeDir) process.exit(1);
+if (personalLocal.mcpServers['browser-jev'].env.WAYLAND_DISPLAY !== 'wayland-0') process.exit(1);
+if (personalLocal.mcpServers['browser-jev'].env.DISPLAY !== ':0') process.exit(1);
+if (personalLocal.mcpServers['browser-jev'].env.PULSE_SERVER !== 'unix:/mnt/wslg/PulseServer') process.exit(1);
+if (personalLocal.mcpServers['browser-jev'].tags !== undefined) process.exit(1);
 if (!personalEnv.includes("MCP_BRIDGE_PROFILE='personal'")) process.exit(1);
 NODE2
   local rc=$?
@@ -392,10 +399,12 @@ const dev = outer.mcpServers.dev.env;
 const terminal = inner.mcpServers.terminal.env;
 const browser = inner.mcpServers['browser-devtools'].env;
 const fast = inner.mcpServers['browser-fast'].env;
+const jev = inner.mcpServers['browser-jev'].env;
 if (dev.MCP_OWNER_CONTEXT_FILE !== contextFile) process.exit(1);
 for (const env of [dev, terminal]) {
   if (env.GALLIUM_DRIVER !== 'd3d12' || env.MOZ_ENABLE_WAYLAND !== '1') process.exit(1);
 }
+
 if (browser.GALLIUM_DRIVER !== 'd3d12') process.exit(1);
 if (browser.MOZ_ENABLE_WAYLAND !== undefined) process.exit(1);
 if (browser.AGENT_BROWSER_PROFILE !== undefined || browser.AGENT_BROWSER_EXECUTABLE_PATH !== undefined) process.exit(1);
@@ -403,6 +412,10 @@ if (fast.GALLIUM_DRIVER !== 'd3d12') process.exit(1);
 if (fast.MOZ_ENABLE_WAYLAND !== undefined) process.exit(1);
 if (fast.AGENT_BROWSER_PROFILE !== 'Default') process.exit(1);
 if (fast.AGENT_BROWSER_EXECUTABLE_PATH !== contextFile.replace(/context\.md$/, 'fake-chrome')) process.exit(1);
+if (jev.GALLIUM_DRIVER !== 'd3d12') process.exit(1);
+if (jev.MOZ_ENABLE_WAYLAND !== undefined) process.exit(1);
+if (jev.AGENT_BROWSER_PROFILE !== 'Default') process.exit(1);
+if (jev.AGENT_BROWSER_EXECUTABLE_PATH !== contextFile.replace(/context\.md$/, 'fake-chrome')) process.exit(1);
 if (fs.readFileSync(ownerEnvFile, 'utf8') !== 'GALLIUM_DRIVER=d3d12\nMOZ_ENABLE_WAYLAND=1\n') process.exit(1);
 if ((fs.statSync(ownerEnvFile).mode & 0o777) !== 0o600) process.exit(1);
 NODE
@@ -419,6 +432,87 @@ EOF
   rc=$?
   rm -rf "$tmp"
   [ "$rc" -ne 0 ] && grep -Fq 'MCP_OWNER_ENV_FILE permits only: GALLIUM_DRIVER, MOZ_ENABLE_WAYLAND, AGENT_BROWSER_PROFILE, AGENT_BROWSER_EXECUTABLE_PATH' <<<"$output"
+}
+
+test_browser_jev_credential_path_rendering() {
+  local tmp jev_env output rc case_name candidate expected
+  tmp="$(mktemp -d)" || return 1
+  mkdir -p "$tmp/home" "$tmp/runtime"
+  jev_env="$tmp/home/browser-jev.env"
+  printf '%s\n' \
+    'TYPESAFE_API_KEY=typesafe-secret' \
+    'TYPESAFE_MODEL=jev-model' \
+    'TEXT_MODEL_API_KEY=text-secret' \
+    'TEXT_MODEL_BASE_URL=https://models.example.test/v1' \
+    'TEXT_MODEL=small-model' \
+    'TEXT_MODEL_REASONING=none' > "$jev_env"
+  chmod 0600 "$jev_env"
+  printf '%s\n' \
+    'MCP_PUBLIC_URL=https://mcp.example.test' \
+    "MCP_BROWSER_JEV_ENV_FILE=$jev_env" > "$tmp/deployment.env"
+
+  HOME="$tmp/home" XDG_RUNTIME_DIR="$tmp/runtime" node "$ROOT/scripts/render-config.mjs" \
+    --profile personal --env-file "$tmp/deployment.env" --state-dir "$tmp/state" --repo-root "$ROOT" >/dev/null \
+    || { rm -rf "$tmp"; return 1; }
+  node - "$tmp/state/local-1mcp/mcp.json" "$jev_env" <<'NODE' || { rm -rf "$tmp"; return 1; }
+const fs = require('fs');
+const [configFile, jevEnvFile] = process.argv.slice(2);
+const local = JSON.parse(fs.readFileSync(configFile, 'utf8'));
+const jev = local.mcpServers['browser-jev'];
+if (jev.env.MCP_BROWSER_JEV_ENV_FILE !== jevEnvFile) process.exit(1);
+for (const secret of ['TYPESAFE_API_KEY', 'TEXT_MODEL_API_KEY', 'typesafe-secret', 'text-secret']) {
+  if (JSON.stringify(local).includes(secret)) process.exit(1);
+  if (jev.env[secret] !== undefined) process.exit(1);
+}
+if ((fs.statSync(configFile).mode & 0o777) !== 0o600) process.exit(1);
+NODE
+
+  for case_name in relative directory oversized malformed unknown missing; do
+    candidate="$tmp/home/$case_name.env"
+    expected=''
+    case "$case_name" in
+      relative)
+        candidate='relative.env'
+        expected='absolute path'
+        ;;
+      directory)
+        candidate="$tmp/home"
+        expected='regular file'
+        ;;
+      oversized)
+        dd if=/dev/zero of="$candidate" bs=65537 count=1 status=none
+        chmod 0600 "$candidate"
+        expected='65536-byte limit'
+        ;;
+      malformed)
+        printf '%s\n' 'not an assignment' > "$candidate"
+        chmod 0600 "$candidate"
+        expected='invalid env line'
+        ;;
+      unknown)
+        printf '%s\n' 'TYPESAFE_API_KEY=x' 'PATH=/tmp' > "$candidate"
+        chmod 0600 "$candidate"
+        expected='permits only'
+        ;;
+      missing)
+        printf '%s\n' 'TEXT_MODEL_API_KEY=x' > "$candidate"
+        chmod 0600 "$candidate"
+        expected='TYPESAFE_API_KEY'
+        ;;
+    esac
+    printf '%s\n' \
+      'MCP_PUBLIC_URL=https://mcp.example.test' \
+      "MCP_BROWSER_JEV_ENV_FILE=$candidate" > "$tmp/invalid-deployment.env"
+    output="$(HOME="$tmp/home" XDG_RUNTIME_DIR="$tmp/runtime" node "$ROOT/scripts/render-config.mjs" \
+      --profile personal --env-file "$tmp/invalid-deployment.env" --state-dir "$tmp/invalid-$case_name" \
+      --repo-root "$ROOT" 2>&1)"
+    rc=$?
+    if [ "$rc" -eq 0 ] || ! grep -Fq "$expected" <<<"$output"; then
+      rm -rf "$tmp"
+      return 1
+    fi
+  done
+  rm -rf "$tmp"
 }
 
 test_personal_default_cwd_override() {
@@ -659,6 +753,7 @@ run_test 'Dev spool deployment override rejects invalid values' test_dev_spool_l
 run_test '1MCP rotating log deployment policy rejects invalid values' test_one_mcp_log_policy_validation
 run_test 'personal Terminal frontend selector defaults, overrides, and validates in profile scope' test_terminal_frontend_selector
 run_test 'personal owner overlay sanitizes and propagates GUI policy' test_owner_overlay_rendering
+run_test 'browser-jev credential files are validated and forwarded only by path' test_browser_jev_credential_path_rendering
 run_test 'personal default cwd supports an absolute deployment override' test_personal_default_cwd_override
 run_test 'personal runtime files carry no machine-specific home path' test_personal_runtime_files_have_no_machine_home
 run_test 'personal smoke validation accepts the Personal Workstation provider contract' test_personal_smoke_validation

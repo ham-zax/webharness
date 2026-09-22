@@ -37,6 +37,7 @@ node --check "$ROOT"/scripts/*.mjs \
   "$ROOT"/providers/code-router/*.mjs \
   "$ROOT"/providers/browser/*.mjs \
   "$ROOT"/providers/browser-fast/*.mjs \
+  "$ROOT"/providers/browser-jev/*.mjs \
   "$ROOT"/providers/local-tools/*.mjs
 
 echo "=== Checking git diff for whitespace errors ==="

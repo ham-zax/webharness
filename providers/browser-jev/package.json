@@ -1,0 +1,11 @@
+{
+  "name": "mcp-dev-bridge-browser-jev",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "engines": { "node": ">=24.0.0" },
+  "scripts": {
+    "test": "node --test test/*.test.mjs && uv run --frozen pytest test/test_worker.py -q"
+  },
+  "dependencies": { "@modelcontextprotocol/sdk": "1.30.0" }
+}

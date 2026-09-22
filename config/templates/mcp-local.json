@@ -25,6 +25,19 @@
         "PULSE_SERVER": "unix:/mnt/wslg/PulseServer"
       }
     },
+    "browser-jev": {
+      "command": "node",
+      "args": [
+        "__REPO_ROOT__/providers/browser-jev/server.mjs"
+      ],
+      "env": {
+        "XDG_RUNTIME_DIR": "__RUNTIME_DIR__",
+        "WAYLAND_DISPLAY": "wayland-0",
+        "DISPLAY": ":0",
+        "PULSE_SERVER": "unix:/mnt/wslg/PulseServer",
+        "MCP_BROWSER_JEV_ENV_FILE": "__BROWSER_JEV_ENV_FILE__"
+      }
+    },
     "code": {
       "command": "node",
       "args": [

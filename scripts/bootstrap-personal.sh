@@ -76,6 +76,8 @@ if [ "${PERSONAL_BOOTSTRAP_SKIP_INSTALL:-0}" != "1" ]; then
   npm --prefix "$ROOT/providers/terminal" ci --omit=dev
   npm --prefix "$ROOT/providers/browser" ci --omit=dev
   npm --prefix "$ROOT/providers/browser-fast" ci --omit=dev
+  npm --prefix "$ROOT/providers/browser-jev" ci --omit=dev
+  uv sync --frozen --project "$ROOT/providers/browser-jev"
   npm --prefix "$ROOT/providers/local-tools" ci --omit=dev
 
   echo "== installing pinned Personal Workstation native runtimes =="

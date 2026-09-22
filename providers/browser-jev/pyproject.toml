@@ -1,0 +1,10 @@
+[project]
+name = "mcp-dev-bridge-browser-jev-worker"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+  "jev-ultrafast @ git+https://github.com/browser-use/jev-ultrafast.git@1231850a0bf1a0c0341fe408ef1668dbbfdfac46",
+]
+
+[dependency-groups]
+dev = ["pytest>=8.4,<9"]

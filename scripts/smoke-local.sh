@@ -17,7 +17,7 @@ const terminal = cfg.mcpServers?.terminal;
 const local = cfg.mcpServers?.local;
 if (cfg.mcpServers?.filesystem) throw new Error('filesystem provider must be absent after Pi cutover');
 if (cfg.mcpServers?.codedb) throw new Error('raw codedb provider must remain hidden behind the Code facade');
-if (cfg.mcpServers?.['browser-devtools'] || cfg.mcpServers?.['browser-fast']) throw new Error('Browser providers must remain behind the Local broker');
+if (cfg.mcpServers?.['browser-devtools'] || cfg.mcpServers?.['browser-fast'] || cfg.mcpServers?.['browser-jev']) throw new Error('Browser providers must remain behind the Local broker');
 if (profile) {
   const actual = Object.keys(cfg.mcpServers ?? {}).sort();
   const expected = profile === 'trusted-dev' ? ['dev'] : profile === 'restricted' ? ['dev', 'shell'] : profile === 'personal' ? ['dev', 'local'] : null;
@@ -43,7 +43,7 @@ if (local) {
 
   const inner = JSON.parse(fs.readFileSync(env.MCP_LOCAL_INNER_CONFIG, 'utf8'));
   const innerNames = Object.keys(inner.mcpServers ?? {}).sort();
-  for (const required of ['browser-devtools', 'browser-fast', 'code', 'terminal', 'host', 'dev']) {
+  for (const required of ['browser-devtools', 'browser-fast', 'browser-jev', 'code', 'terminal', 'host', 'dev']) {
     if (!innerNames.includes(required)) throw new Error(`Local inner provider set is missing required server: ${required}`);
   }
   if (env.MCP_LOCAL_FALLBACK_ONLY_SERVERS !== 'dev') throw new Error('only Dev may be fallback-only in personal Local');
@@ -93,6 +93,20 @@ if (local) {
   if (fastPkg.dependencies?.['@modelcontextprotocol/sdk'] !== '1.30.0') throw new Error('unexpected Browser Fast MCP SDK pin');
   if (fastPkg.dependencies?.['agent-browser'] !== '0.35.0') throw new Error('unexpected Browser Fast Agent Browser pin');
   if (fastPkg.dependencies?.zod !== '4.4.3') throw new Error('unexpected Browser Fast zod pin');
+
+  const jev = inner.mcpServers['browser-jev'];
+  if (jev.command !== 'node') throw new Error('inner Browser Jev provider must run with node');
+  const expectedJevServer = path.join(repoRoot, 'providers', 'browser-jev', 'server.mjs');
+  if (JSON.stringify(jev.args ?? []) !== JSON.stringify([expectedJevServer])) throw new Error('unexpected inner Browser Jev server path');
+  const jevEnv = jev.env ?? {};
+  if (!path.isAbsolute(jevEnv.XDG_RUNTIME_DIR ?? '')) throw new Error('Browser Jev XDG_RUNTIME_DIR must be absolute');
+  if (jevEnv.WAYLAND_DISPLAY !== 'wayland-0' || jevEnv.DISPLAY !== ':0' || jevEnv.PULSE_SERVER !== 'unix:/mnt/wslg/PulseServer') throw new Error('unexpected Browser Jev WSLg environment');
+  if (jevEnv.MCP_BROWSER_JEV_ENV_FILE && !path.isAbsolute(jevEnv.MCP_BROWSER_JEV_ENV_FILE)) throw new Error('Browser Jev model environment file must be absolute when set');
+  if (jev.tags !== undefined) throw new Error('inner Browser Jev provider must not carry an outer OAuth tag');
+  const jevPkg = JSON.parse(fs.readFileSync(path.join(repoRoot, 'providers', 'browser-jev', 'package.json'), 'utf8'));
+  if (jevPkg.dependencies?.['@modelcontextprotocol/sdk'] !== '1.30.0') throw new Error('unexpected Browser Jev MCP SDK pin');
+  const installedJevSdk = JSON.parse(fs.readFileSync(path.join(repoRoot, 'providers', 'browser-jev', 'node_modules', '@modelcontextprotocol', 'sdk', 'package.json'), 'utf8'));
+  if (installedJevSdk.version !== '1.30.0') throw new Error(`unexpected installed Browser Jev MCP SDK version: ${installedJevSdk.version}`);
 }
 if (dev) {
   const pkgFile = path.join(repoRoot, 'providers', 'pi-dev', 'node_modules', '@earendil-works', 'pi-coding-agent', 'package.json');
@@ -121,6 +135,8 @@ if (dev) {
 }
 NODE
 fi
+
+node --test "$DIR/providers/browser-jev/test/server.test.mjs" >/dev/null
 
 APP_CONFIG="$BRIDGE_CONFIG_DIR/config.toml"
 if [ ! -f "$APP_CONFIG" ]; then
