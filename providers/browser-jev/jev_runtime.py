@@ -370,10 +370,28 @@ class ManagedAgent(UpstreamAgent):
             if not matches:
                 return self.snapshot(), False
 
-        action = matches[0]
         if state.get("started_at") is None:
             state["started_at"] = time.perf_counter()
-        self.browser.act(action, page)
+
+        action = None
+        source_page = page
+        for attempt in range(3):
+            matches = visible_matches(source_page, target_href)
+            for candidate in matches:
+                try:
+                    self.browser.act(candidate, source_page)
+                    action = candidate
+                    break
+                except upstream_browser.StalePage:
+                    continue
+            if action is not None:
+                break
+            if attempt == 2:
+                return self.snapshot(), False
+            source_page = self.browser.observe(screenshot=self.screenshots)
+            state["page"] = source_page
+            time.sleep(DETERMINISTIC_NAVIGATION_POLL_SECONDS)
+
         observed = self.browser.observe(screenshot=self.screenshots)
         state["page"] = observed
         elapsed = round((time.perf_counter() - state["started_at"]) * 1000)
@@ -387,7 +405,7 @@ class ManagedAgent(UpstreamAgent):
             "operation": "CLICK",
             "target": str(action.get("node", action["id"])),
             "source": "navigation",
-            "page_changed": observed["fingerprint"] != page["fingerprint"],
+            "page_changed": observed["fingerprint"] != source_page["fingerprint"],
             "url": observed["url"],
             "executed_ms": elapsed,
             "elapsed_ms": elapsed,

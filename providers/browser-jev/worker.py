@@ -33,7 +33,7 @@ DAEMON_NAME = re.compile(r"^jev-[A-Za-z0-9][A-Za-z0-9_-]*$")
 FAST_DAEMON_CLEANUP_GRACE_SECONDS = 1.0
 UPSTREAM_DAEMON_EXIT_GRACE_SECONDS = 15.0
 DAEMON_POLL_SECONDS = 0.02
-LEASE_VERSION = 2
+LEASE_VERSION = 3
 LEASE_STORAGE_KEY = "__mcp_dev_bridge_browser_jev_owner_v1"
 HELPER_MARKER_PREFIX = "about:blank#__mcp_dev_bridge_browser_jev_owner_v1="
 WIRE_HISTORY_KEYS = {
@@ -152,12 +152,18 @@ def _process_start_ticks(pid: int) -> str | None:
         return None
 
 
+def _recorded_process_alive(pid: Any, start_ticks: Any) -> bool:
+    if not isinstance(pid, int) or isinstance(pid, bool) or not isinstance(start_ticks, str):
+        return False
+    return _process_start_ticks(pid) == start_ticks
+
+
 def _lease_owner_alive(lease: dict[str, Any]) -> bool:
     pid = lease.get("owner_pid")
     start_ticks = lease.get("owner_start_ticks")
     if not isinstance(pid, int) or isinstance(pid, bool) or not isinstance(start_ticks, str):
         return True
-    return _process_start_ticks(pid) == start_ticks
+    return _recorded_process_alive(pid, start_ticks)
 
 
 def _close_browser_target(endpoint: str, target_id: str) -> bool:
@@ -466,6 +472,12 @@ class WorkerRuntime:
     def _write_lease(self) -> None:
         roles = self._owned_target_roles()
         targets = list(dict.fromkeys(roles.values()))
+        daemon_pid = browser_harness_ipc.identify(self.daemon_name, timeout=0.5)
+        daemon_start_ticks = (
+            _process_start_ticks(daemon_pid)
+            if isinstance(daemon_pid, int) and not isinstance(daemon_pid, bool)
+            else None
+        )
         content_target = roles.get("content")
         helper_target = roles.get("helper")
         content_marked = (
@@ -491,6 +503,8 @@ class WorkerRuntime:
             "owner_pid": os.getpid(),
             "owner_start_ticks": self.owner_start_ticks,
             "daemon_name": self.daemon_name,
+            "daemon_pid": daemon_pid,
+            "daemon_start_ticks": daemon_start_ticks,
             "endpoint": self.endpoint,
             "profile_key": self.profile_key,
             "marker": self.daemon_name,
@@ -527,7 +541,7 @@ class WorkerRuntime:
             if path == self.lease_path:
                 continue
             lease = self._read_lease(path)
-            if not lease or lease.get("version") not in {1, LEASE_VERSION}:
+            if not lease or lease.get("version") not in {1, 2, LEASE_VERSION}:
                 continue
             if _lease_owner_alive(lease):
                 continue
@@ -548,11 +562,8 @@ class WorkerRuntime:
                         browser_harness_ipc.identify(daemon_name, timeout=0.2) is not None
                         or browser_harness_ipc.ping(daemon_name, timeout=0.2)
                     )
-                    if daemon_alive:
-                        if lease_endpoint == self.endpoint:
-                            self.daemon_stopper(daemon_name, require_clean=True)
-                        else:
-                            restart_daemon(daemon_name, require_clean=True)
+                    if daemon_alive and lease_endpoint == self.endpoint:
+                        self.daemon_stopper(daemon_name, require_clean=True)
                 except Exception as error:
                     print(
                         f"browser-jev stale daemon cleanup failed for {daemon_name}: {error.__class__.__name__}",
@@ -591,15 +602,38 @@ class WorkerRuntime:
                 else marker_closed
             )
 
-            daemon_still_alive = False
+            daemon_pid = lease.get("daemon_pid")
+            daemon_start_ticks = lease.get("daemon_start_ticks")
+            recorded_daemon_alive = _recorded_process_alive(daemon_pid, daemon_start_ticks)
+
+            daemon_still_alive = recorded_daemon_alive
             if isinstance(daemon_name, str) and DAEMON_NAME.fullmatch(daemon_name):
                 try:
-                    daemon_still_alive = (
+                    daemon_still_alive = daemon_still_alive or (
                         browser_harness_ipc.identify(daemon_name, timeout=0.1) is not None
                         or browser_harness_ipc.ping(daemon_name, timeout=0.1)
                     )
                 except Exception:
                     daemon_still_alive = True
+
+            if all_closed and recorded_daemon_alive:
+                if hasattr(os, "pidfd_open") and hasattr(signal, "pidfd_send_signal"):
+                    try:
+                        pidfd = os.pidfd_open(daemon_pid)
+                    except OSError:
+                        pass
+                    else:
+                        try:
+                            signal.pidfd_send_signal(pidfd, signal.SIGTERM)
+                            if _pidfd_exited(pidfd, 1.0):
+                                daemon_still_alive = False
+                                if isinstance(daemon_name, str) and DAEMON_NAME.fullmatch(daemon_name):
+                                    _cleanup_daemon_records(daemon_name)
+                        except ProcessLookupError:
+                            daemon_still_alive = False
+                        finally:
+                            os.close(pidfd)
+
             if all_closed and not daemon_still_alive:
                 try:
                     path.unlink()

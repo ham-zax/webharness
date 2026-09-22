@@ -217,14 +217,18 @@ error instead of signaling early or reporting success.
 Before returning from start, the worker also records a mode-0600 ownership
 lease beneath the current user's XDG state directory. The lease contains only
 the managed profile key, loopback endpoint, worker PID plus process-start
-identity, daemon namespace, and owned target IDs. The content browsing context
+identity, helper-daemon PID plus process-start identity, daemon namespace, and
+owned target IDs. The content browsing context
 is marked with the opaque run namespace in per-tab `sessionStorage`; the
 namespaced daemon's `about:blank` helper is marked with the same namespace in
 its URL fragment because opaque `about:blank` storage is unavailable. Clean
 shutdown removes the lease. A future worker for the same profile may reclaim a
 lease only when the recorded worker process identity is dead. It first uses the
 run markers (which survive target-ID changes caused by browser session restore)
-and independently confirms recorded target IDs on the same live endpoint. An
+and independently confirms recorded target IDs on the same live endpoint. If
+IPC metadata has already disappeared but the lease still pins the helper daemon
+PID/start identity, Browser-Jev may signal that exact process only after the
+owned targets are proven gone. An
 empty marker scan is inconclusive rather than proof of cleanup. Active or
 unverifiable owners are never reclaimed. The worker uses a per-run name of the
 form `jev-<run-id>` and never uses the `default` daemon.

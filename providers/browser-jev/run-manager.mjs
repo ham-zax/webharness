@@ -92,6 +92,19 @@ function collectionNavigationSuccess(state, success) {
     && verifySuccess(state, navigationSuccess).passed === true;
 }
 
+function shouldSettleInitialCollection(args) {
+  if (!args.scenario.collection) return false;
+  const requiredUrlParts = args.scenario.success.url_contains;
+  if (
+    Array.isArray(requiredUrlParts)
+    && requiredUrlParts.length > 0
+    && !requiredUrlParts.every(part => args.url.includes(part))
+  ) {
+    return false;
+  }
+  return true;
+}
+
 function rawDocumentIdentity(rawSnapshot) {
   const documentId = rawSnapshot?.page?.document_id;
   if (
@@ -193,7 +206,7 @@ function publicCollection(collection) {
 }
 
 function collectionTraversalReady(run) {
-  if (!run.collection?.started || run.collection.complete || !run.state) return false;
+  if (!run.collection || run.collection.complete || !run.state) return false;
   return collectionNavigationSuccess(run.state, run.success);
 }
 
@@ -376,7 +389,7 @@ export class BrowserJevRunManager {
         const first = await worker.request('start', {
           url: args.url,
           goal: args.goal,
-          wait_for_scroll: Boolean(args.scenario.collection)
+          wait_for_scroll: shouldSettleInitialCollection(args)
         });
         run.state = this.present(run, first);
         run.status = run.state.status;
