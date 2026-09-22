@@ -13,7 +13,7 @@ Run `webharness doctor --profile personal` before setup. Doctor validates the de
 
 ## Personal Workstation assumptions
 
-The `personal` profile is the full reference deployment. Its setup path qualifies a Linux CLI toolbox and installs pinned provider/runtime dependencies used by outer Dev/Local and Local's Code, Terminal, Host, Browser, and Browser DevTools servers. `scripts/check-personal-toolbox.sh` records the current command/version assumptions.
+The `personal` profile is the full reference deployment. Its setup path qualifies a Linux CLI toolbox and installs pinned provider/runtime dependencies used by outer Dev/Local and Local's Code, Terminal, Host, Browser Fast, Browser Jev, and Browser DevTools servers. `scripts/check-personal-toolbox.sh` records the current command/version assumptions.
 
 The reference bootstrap currently owns a globally installed pinned 1MCP runtime and applies two source-level compatibility patches to that package. This is an implementation constraint, not a recommended packaging model for every fork. Do not run the reference bootstrap on a machine where another deployment must independently control the same global 1MCP installation without first changing that ownership model.
 
@@ -29,9 +29,9 @@ On Windows, WebHarness launches or reuses a dedicated visible Chrome profile at:
 %LOCALAPPDATA%\mcp-dev-bridge\chrome-profile
 ```
 
-An explicit Browser Fast `browser_profile` uses a separate persistent directory at `%LOCALAPPDATA%\mcp-dev-bridge\chrome-profiles\<name>`. Chrome chooses an ephemeral loopback DevTools port through `DevToolsActivePort`. `browser-fast` uses Agent Browser for routine interaction; `browser-devtools` connects the Chrome DevTools MCP facade only to the shared default profile. Everyday Chrome is not attached or copied.
+An explicit Browser Fast or Browser Jev `browser_profile` uses a separate persistent directory at `%LOCALAPPDATA%\mcp-dev-bridge\chrome-profiles\<name>`. Chrome chooses an ephemeral loopback DevTools port through `DevToolsActivePort`. `browser-fast` uses Agent Browser for routine interaction; `browser-jev` creates an owned background target for its agent loop; `browser-devtools` connects the Chrome DevTools MCP facade only to the shared default profile. Everyday Chrome is not attached or copied.
 
-On Linux/WSLg, `browser-fast` and `browser-devtools` resolve the same backend/profile policy from `~/.config/mcp-dev-bridge/browser-fast.json`. The maintained Personal Workstation defaults to managed Clearcote `x-main`; `browser-devtools` attaches to that running profile's loopback CDP endpoint instead of launching a second browser. Explicit Chrome profile names persist beneath `~/.local/state/mcp-dev-bridge/chrome-profiles/` unless `XDG_STATE_HOME` changes the state root; explicit Clearcote names select configured persistent profiles. Use `browser_backend="chrome"` when a standalone Linux Chrome DevTools profile is intentionally required.
+On Linux/WSLg, `browser-fast`, `browser-jev`, and `browser-devtools` resolve the same backend/profile policy from `~/.config/mcp-dev-bridge/browser-fast.json`. The maintained Personal Workstation defaults to managed Clearcote `x-main`; browser-jev and browser-devtools attach to that running profile's ephemeral loopback CDP endpoint instead of launching a second browser. Browser-jev deliberately fails when the selected Clearcote profile is inactive, so initialize it through browser-fast. Explicit Chrome profile names persist beneath `~/.local/state/mcp-dev-bridge/chrome-profiles/` unless `XDG_STATE_HOME` changes the state root; explicit Clearcote names select configured persistent profiles. Use `browser_backend="chrome"` when a standalone Linux Chrome profile is intentionally required.
 
 ## What is not qualified
 

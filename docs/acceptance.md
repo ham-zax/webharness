@@ -29,7 +29,7 @@ Required evidence:
 Use the live MCP connection and exercise each public capability boundary without destructive or consequential work:
 
 - **Dev:** read a known repository file or run a bounded `pwd`/Git inspection.
-- **Local discovery:** confirm the public logical catalog includes `code`, `terminal`, `host`, `browser-fast`, and `browser-devtools`, while `dev` remains hidden from ordinary discovery.
+- **Local discovery:** confirm the public logical catalog includes `code`, `terminal`, `host`, `browser-fast`, `browser-jev`, and `browser-devtools`, while `dev` remains hidden from ordinary discovery.
 - **Local Code:** resolve a known symbol or obtain bounded repository context from the canonical public checkout through `server="code"`.
 - **Local Terminal:** open a named shell session through `server="terminal"`, print a harmless marker, and read it back.
 - **Local Host:** load the `host/pc_sleep` schema only; do not invoke sleep during harmless qualification.
@@ -57,10 +57,18 @@ code
 terminal
 host
 browser-fast
+browser-jev
 browser-devtools
 ```
 
 Load one harmless schema from Code, Terminal, and each Browser server; load the Host schema without invoking it. A GUI launch or website mutation is not required for this discovery check. When browser execution itself changed, separately exercise the target that changed under the operator's normal browser policy.
+
+For a browser-jev runtime change, qualify both paths against an already-live managed browser profile:
+
+1. Start at `https://example.com` with a confirm-and-stop goal and a non-empty visible success check; tick until the provider reports verified `done`, then stop the run.
+2. Start on Wikipedia with a search-and-open goal, require the destination article plus `required_operations: ["TYPE_TEXT"]`, tick until verified `done`, and stop the run.
+
+The second scenario proves the small text-model path was executed because browser-jev maps `TYPE_TEXT` to the recorded Jev history kind `fill`. Record only statuses, elapsed time, destination, and verification evidence. Do not record keys, worker environments, raw model responses, screenshots, or debugging endpoints. Confirm afterward that no `jev-<run-id>` Browser Harness daemon or worker process remains.
 
 ## 6. Public MCP/OAuth connectivity
 

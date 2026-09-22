@@ -10,6 +10,7 @@ providers/code-router/ Code facade + rooted CodeDB router
 providers/terminal/  Terminal MCP, broker, tmux/transcript logic
 providers/browser/   Chrome DevTools facade + resource-local child routing
 providers/browser-fast/ compact observe/execute facade over Agent Browser on Windows + Linux
+providers/browser-jev/ stateful Jev loop over managed browser backends
 providers/local-tools/ stable Local tool broker over inner 1MCP
 providers/legacy-shell/ restricted-profile legacy shell
 extensions/          engineering-checkout domain packs; the public reference ships generic extension machinery but excludes these machine/domain-specific packs
@@ -31,6 +32,8 @@ npm --prefix providers/terminal ci --omit=dev
 npm --prefix providers/code-router ci --omit=dev
 npm --prefix providers/browser ci --omit=dev
 npm --prefix providers/browser-fast ci --omit=dev
+npm --prefix providers/browser-jev ci --omit=dev
+uv sync --frozen --project providers/browser-jev
 npm --prefix providers/local-tools ci --omit=dev
 ```
 
@@ -53,10 +56,11 @@ bash tests/lifecycle.sh
 (cd providers/code-router && npm test)
 (cd providers/browser && npm test)
 (cd providers/browser-fast && npm test)
+(cd providers/browser-jev && npm test)
 (cd providers/local-tools && npm test)
 node scripts/check-doc-links.mjs
 bash -n bin/* lib/bridge/*.sh scripts/*.sh tests/*.sh
-node --check scripts/*.mjs providers/pi-dev/*.mjs providers/terminal/*.mjs providers/code-router/*.mjs providers/browser/*.mjs providers/browser-fast/*.mjs providers/local-tools/*.mjs
+node --check scripts/*.mjs providers/pi-dev/*.mjs providers/terminal/*.mjs providers/code-router/*.mjs providers/browser/*.mjs providers/browser-fast/*.mjs providers/browser-jev/*.mjs providers/local-tools/*.mjs
 git diff --check
 ```
 

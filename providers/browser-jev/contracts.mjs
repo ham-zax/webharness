@@ -68,7 +68,7 @@ function validateSuccess(value) {
   if ('required_operations' in success) {
     const operations = stringList(success.required_operations, 'scenario.success.required_operations');
     for (const operation of operations) {
-      if (!(operation in OPERATION_KINDS)) {
+      if (!Object.hasOwn(OPERATION_KINDS, operation)) {
         throw invalid(`scenario.success.required_operations must contain only ${Object.keys(OPERATION_KINDS).join(', ')}`);
       }
     }
@@ -155,7 +155,7 @@ function sanitizeElement(element) {
   const result = pick(element, ['id', 'index', 'kind', 'label', 'role', 'value', 'checked', 'selected', 'expanded']);
   if (!result) return undefined;
   if (Array.isArray(element.operations)) {
-    result.operations = element.operations.filter(operation => operation in OPERATION_KINDS);
+    result.operations = element.operations.filter(operation => Object.hasOwn(OPERATION_KINDS, operation));
   }
   if (Array.isArray(element.options)) {
     result.options = element.options.map(option => pick(option, ['index', 'label', 'value'])).filter(Boolean);
@@ -233,4 +233,3 @@ export function verifySuccess(snapshot, success) {
   }
   return { passed, checks };
 }
-

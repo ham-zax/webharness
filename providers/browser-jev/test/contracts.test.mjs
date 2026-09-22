@@ -64,7 +64,8 @@ test('requires at least one non-empty success check and rejects unknown success 
     { text_contains: [''] },
     { title_contains: 'Example' },
     { selector: '#done' },
-    { required_operations: ['SCROLL'] }
+    { required_operations: ['SCROLL'] },
+    { required_operations: ['toString'] }
   ]) {
     const args = validArgs();
     args.scenario.success = success;
@@ -176,4 +177,3 @@ test('verification requires every requested string and operation', () => {
   assert.equal(result.checks.required_operations.TYPE_TEXT.passed, true);
   assert.equal(result.checks.required_operations.CLICK.passed, true);
 });
-
