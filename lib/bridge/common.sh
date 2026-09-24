@@ -55,6 +55,7 @@ fi
 BRIDGE_WORKSPACE_ROOT="${BRIDGE_WORKSPACE_ROOT:-${MCP_WORKSPACE_ROOT:-}}"
 TUNNEL_URL="${TUNNEL_URL:-${MCP_PUBLIC_URL:-}}"
 TUNNEL_NAME="${TUNNEL_NAME:-${MCP_TUNNEL_NAME:-}}"
+BRIDGE_ONE_MCP_PORT="${MCP_ONE_MCP_PORT:-3050}"
 
 BRIDGE_ENABLED_FILE="$BRIDGE_RUN_DIR/cloudflare-oauth.enabled"
 BRIDGE_LOCK_FILE="$BRIDGE_RUN_DIR/lifecycle.lock"
@@ -234,12 +235,12 @@ bridge_server_pid() {
 bridge_listener_pid() {
   command -v ss >/dev/null 2>&1 || return 1
   local output
-  output="$(ss -ltnp '( sport = :3050 )' 2>/dev/null || true)"
+  output="$(ss -ltnp "( sport = :$BRIDGE_ONE_MCP_PORT )" 2>/dev/null || true)"
   sed -n 's/.*pid=\([0-9][0-9]*\).*/\1/p' <<<"$output" | head -n1
 }
 
 bridge_local_health() {
-  curl -sf -m 3 http://127.0.0.1:3050/health/ready -o /dev/null
+  curl -sf -m 3 "http://127.0.0.1:$BRIDGE_ONE_MCP_PORT/health/ready" -o /dev/null
 }
 
 bridge_wait_url() {
@@ -330,7 +331,7 @@ bridge_start_1mcp() {
   ) &
   printf '%s\n' "$!" > "$BRIDGE_ONE_MCP_PID_FILE"
 
-  if ! bridge_wait_url http://127.0.0.1:3050/health/ready \
+  if ! bridge_wait_url "http://127.0.0.1:$BRIDGE_ONE_MCP_PORT/health/ready" \
     "${BRIDGE_LOCAL_HEALTH_ATTEMPTS:-15}" "${BRIDGE_LOCAL_HEALTH_INTERVAL:-1}" 3; then
     echo "1MCP did not become healthy" >&2
     if [ -s "$BRIDGE_ONE_MCP_STDERR_FILE" ]; then

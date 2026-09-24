@@ -37,7 +37,7 @@ adapter_mcp_url() {
       return 0
     fi
   fi
-  printf 'http://127.0.0.1:3050/mcp\n'
+  printf 'http://127.0.0.1:%s/mcp\n' "$BRIDGE_ONE_MCP_PORT"
   return 0
 }
 

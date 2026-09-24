@@ -43,7 +43,7 @@ LISTENER_PID="$(bridge_listener_pid 2>/dev/null || true)"
 SERVER_PID="$(bridge_server_pid 2>/dev/null || true)"
 RUN_PID="$(cat "$BRIDGE_ONE_MCP_PID_FILE" 2>/dev/null || true)"
 
-echo "listener :3050 pid: ${LISTENER_PID:-none}"
+echo "listener :$BRIDGE_ONE_MCP_PORT pid: ${LISTENER_PID:-none}"
 echo "1MCP server.pid pid: ${SERVER_PID:-none}"
 echo "bridge one-mcp.pid: ${RUN_PID:-none}"
 ONE_MCP_LEASE_HELD=false
@@ -58,13 +58,13 @@ elif [ "$MCP_COUNT" -eq 0 ] && [ "$ONE_MCP_LEASE_HELD" = true ]; then
 fi
 
 if [ -n "$LISTENER_PID" ] && [ -n "$SERVER_PID" ] && [ "$LISTENER_PID" != "$SERVER_PID" ]; then
-  warn "PID/listener mismatch: 1MCP server.pid=$SERVER_PID but :3050 listener=$LISTENER_PID"
+  warn "PID/listener mismatch: 1MCP server.pid=$SERVER_PID but :$BRIDGE_ONE_MCP_PORT listener=$LISTENER_PID"
 fi
 if [ -n "$LISTENER_PID" ] && [ -n "$RUN_PID" ] && [ "$LISTENER_PID" != "$RUN_PID" ]; then
-  warn "PID/listener mismatch: bridge one-mcp.pid=$RUN_PID but :3050 listener=$LISTENER_PID"
+  warn "PID/listener mismatch: bridge one-mcp.pid=$RUN_PID but :$BRIDGE_ONE_MCP_PORT listener=$LISTENER_PID"
 fi
 if [ "$MCP_COUNT" -eq 1 ] && [ -n "$LISTENER_PID" ] && [ "${MCP_PIDS[0]}" != "$LISTENER_PID" ]; then
-  warn "PID/listener mismatch: config-scoped 1MCP=${MCP_PIDS[0]} but :3050 listener=$LISTENER_PID"
+  warn "PID/listener mismatch: config-scoped 1MCP=${MCP_PIDS[0]} but :$BRIDGE_ONE_MCP_PORT listener=$LISTENER_PID"
 fi
 
 LOCAL_READY=false
@@ -199,7 +199,7 @@ fi
 echo
 echo "== overview =="
 echo "  MCP endpoint: ${PUBLIC_URL:+$PUBLIC_URL/mcp}"
-echo "  local origin: http://127.0.0.1:3050/mcp"
+echo "  local origin: http://127.0.0.1:$BRIDGE_ONE_MCP_PORT/mcp"
 echo "  issues:       $ISSUES"
 
 [ "$ISSUES" -eq 0 ]

@@ -93,7 +93,7 @@ Human keystrokes are never copied into a separate broker-side input log. Sudo/pa
 
 ## Public exposure
 
-1MCP listens on loopback `:3050`. Cloudflare exposes HTTPS and OAuth remains required for the public MCP origin. Providers and browser debugging endpoints remain local implementation details; the reference deployment does not intentionally expose raw provider stdio, the Local inner 1MCP, Chrome DevTools endpoints, or Terminal broker sockets beyond the host boundaries that own them.
+1MCP listens on loopback at `MCP_ONE_MCP_PORT` (default `3050`). Cloudflare exposes HTTPS and OAuth remains required for the public MCP origin. Providers and browser debugging endpoints remain local implementation details; the reference deployment does not intentionally expose raw provider stdio, the Local inner 1MCP, Chrome DevTools endpoints, or Terminal broker sockets beyond the host boundaries that own them.
 
 Pinned 1MCP 0.37.0 permits only loopback OAuth callback origins in its consent-page CSP. The reference installer applies fail-closed compatibility patches that permit the exact registered HTTPS callback origin, preserve negotiated capabilities across supervised stdio restarts, and keep restart-stable log rotation. The OAuth patch does not permit arbitrary HTTPS form destinations. Requalify these patches when changing the pinned 1MCP version.
 

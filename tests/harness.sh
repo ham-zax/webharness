@@ -273,6 +273,32 @@ EOF
   rm -rf "$tmp"
 }
 
+test_one_mcp_port_rendering() {
+  local tmp value output rc
+  tmp="$(mktemp -d)" || return 1
+  mkdir -p "$tmp/workspace" "$tmp/runtime" "$tmp/home"
+  cat > "$tmp/deployment.env" <<EOF
+MCP_WORKSPACE_ROOT=$tmp/workspace
+MCP_PUBLIC_URL=https://mcp.example.test
+MCP_ONE_MCP_PORT=43050
+EOF
+  HOME="$tmp/home" XDG_RUNTIME_DIR="$tmp/runtime" node "$ROOT/scripts/render-config.mjs" \
+    --profile trusted-dev --env-file "$tmp/deployment.env" --state-dir "$tmp/state" --repo-root "$ROOT" >/dev/null || { rm -rf "$tmp"; return 1; }
+  grep -Fqx 'port = 43050' "$tmp/state/1mcp/config.toml" || { rm -rf "$tmp"; return 1; }
+  grep -Fqx "MCP_ONE_MCP_PORT='43050'" "$tmp/state/bridge.env" || { rm -rf "$tmp"; return 1; }
+  for value in 0 nope 65536; do
+    sed -i "s/MCP_ONE_MCP_PORT=.*/MCP_ONE_MCP_PORT=$value/" "$tmp/deployment.env"
+    output="$(HOME="$tmp/home" XDG_RUNTIME_DIR="$tmp/runtime" node "$ROOT/scripts/render-config.mjs" \
+      --profile trusted-dev --env-file "$tmp/deployment.env" --state-dir "$tmp/invalid" --repo-root "$ROOT" 2>&1)"
+    rc=$?
+    if [ "$rc" -eq 0 ] || ! grep -Fq 'MCP_ONE_MCP_PORT must be an integer from 1 to 65535' <<<"$output"; then
+      rm -rf "$tmp"
+      return 1
+    fi
+  done
+  rm -rf "$tmp"
+}
+
 test_terminal_frontend_selector() {
   local tmp value output rc profile
   tmp="$(mktemp -d)" || return 1
@@ -751,6 +777,7 @@ run_test 'final rendered composition places Browser behind Local only in persona
 run_test 'owner Local stdio servers are supervised by default with an explicit opt-out' test_owner_local_stdio_supervision_defaults
 run_test 'Dev spool deployment override rejects invalid values' test_dev_spool_limit_validation
 run_test '1MCP rotating log deployment policy rejects invalid values' test_one_mcp_log_policy_validation
+run_test '1MCP loopback port renders and validates' test_one_mcp_port_rendering
 run_test 'personal Terminal frontend selector defaults, overrides, and validates in profile scope' test_terminal_frontend_selector
 run_test 'personal owner overlay sanitizes and propagates GUI policy' test_owner_overlay_rendering
 run_test 'browser-jev credential files are validated and forwarded only by path' test_browser_jev_credential_path_rendering

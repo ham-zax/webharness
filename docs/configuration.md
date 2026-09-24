@@ -20,6 +20,7 @@ MCP_DEV_IMPORT_MAX_BYTES=104857600
 MCP_DEV_MAX_SPOOL_BYTES=67108864
 MCP_DEV_SPOOL_TTL_SECONDS=604800
 MCP_DEV_SPOOL_MAX_TOTAL_BYTES=536870912
+MCP_ONE_MCP_PORT=3050
 MCP_ONE_MCP_LOG_MAX_SIZE_BYTES=10485760
 MCP_ONE_MCP_LOG_MAX_FILES=5
 MCP_PERSONAL_DEFAULT_CWD=
@@ -30,7 +31,7 @@ MCP_BROWSER_JEV_ENV_FILE=
 MCP_LOCAL_SERVERS_FILE=
 ```
 
-`MCP_PUBLIC_URL` is the externally reachable HTTPS MCP origin. In the maintained reference deployment, Cloudflare routes that hostname to the loopback 1MCP listener at `127.0.0.1:3050`.
+`MCP_PUBLIC_URL` is the externally reachable HTTPS MCP origin. `MCP_ONE_MCP_PORT` selects the loopback 1MCP listener port and defaults to `3050`. Set Cloudflare's origin service to the same port. This is useful when WSL mirrored networking reserves the default port on the Windows host.
 
 `MCP_TUNNEL_NAME` controls only the locally-managed Cloudflare startup command. Empty/unset, as on the maintained workstation, runs `cloudflared tunnel run` and relies on the operator-owned default `~/.cloudflared/config.yml` for tunnel identity. A non-empty value runs `cloudflared tunnel run <name>`. That named selector is implemented but is not the maintained workstation path.
 

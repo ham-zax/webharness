@@ -158,7 +158,7 @@ if (!Number.isInteger(size) || size < 1048576 || size > 67108864) throw new Erro
 if (!Number.isInteger(files) || files < 1 || files > 10) throw new Error('1MCP logging.maxFiles is outside bridge policy');
 NODE
 
-URL="${1:-http://127.0.0.1:3050/mcp}"
+URL="${1:-http://127.0.0.1:$BRIDGE_ONE_MCP_PORT/mcp}"
 echo "== MCP initialize against $URL =="
 curl -sf -m 5 -X POST "$URL" \
   -H 'Content-Type: application/json' \

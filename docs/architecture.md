@@ -7,7 +7,7 @@ ChatGPT
   -> HTTPS + OAuth
 Cloudflare Tunnel
   -> loopback origin
-1MCP :3050
+1MCP loopback (MCP_ONE_MCP_PORT; default 3050)
   -> Dev
   -> Local      (Personal Workstation, tag:local)
        -> inner 1MCP

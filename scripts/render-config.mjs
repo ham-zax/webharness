@@ -249,7 +249,7 @@ export async function renderConfig(options) {
   const deployment = {
     ...(await readEnvFile(envFile, { optional: true })),
     ...Object.fromEntries(
-      ['MCP_WORKSPACE_ROOT', 'MCP_PUBLIC_URL', 'MCP_TUNNEL_NAME', 'MCP_DEV_MAX_OUTPUT_BYTES', 'MCP_DEV_IMPORT_MAX_BYTES', 'MCP_DEV_MAX_SPOOL_BYTES', 'MCP_DEV_SPOOL_TTL_SECONDS', 'MCP_DEV_SPOOL_MAX_TOTAL_BYTES', 'MCP_ONE_MCP_LOG_MAX_SIZE_BYTES', 'MCP_ONE_MCP_LOG_MAX_FILES', 'MCP_PERSONAL_DEFAULT_CWD', 'MCP_TERMINAL_FRONTEND', 'MCP_OWNER_CONTEXT_FILE', 'MCP_OWNER_ENV_FILE', 'MCP_BROWSER_JEV_ENV_FILE', 'MCP_LOCAL_SERVERS_FILE', 'BRIDGE_ONE_MCP_ENTRY'].filter((key) => process.env[key] !== undefined).map((key) => [key, process.env[key]]),
+      ['MCP_WORKSPACE_ROOT', 'MCP_PUBLIC_URL', 'MCP_TUNNEL_NAME', 'MCP_DEV_MAX_OUTPUT_BYTES', 'MCP_DEV_IMPORT_MAX_BYTES', 'MCP_DEV_MAX_SPOOL_BYTES', 'MCP_DEV_SPOOL_TTL_SECONDS', 'MCP_DEV_SPOOL_MAX_TOTAL_BYTES', 'MCP_ONE_MCP_PORT', 'MCP_ONE_MCP_LOG_MAX_SIZE_BYTES', 'MCP_ONE_MCP_LOG_MAX_FILES', 'MCP_PERSONAL_DEFAULT_CWD', 'MCP_TERMINAL_FRONTEND', 'MCP_OWNER_CONTEXT_FILE', 'MCP_OWNER_ENV_FILE', 'MCP_BROWSER_JEV_ENV_FILE', 'MCP_LOCAL_SERVERS_FILE', 'BRIDGE_ONE_MCP_ENTRY'].filter((key) => process.env[key] !== undefined).map((key) => [key, process.env[key]]),
     ),
   };
   const profileValues = await readEnvFile(path.join(repoRoot, 'config', 'profiles', `${profile}.env`));
@@ -350,6 +350,11 @@ export async function renderConfig(options) {
     throw new Error('MCP_DEV_SPOOL_MAX_TOTAL_BYTES must be >= MCP_DEV_MAX_SPOOL_BYTES');
   }
 
+  const oneMcpPortRaw = deployment.MCP_ONE_MCP_PORT ?? '3050';
+  const oneMcpPort = Number(oneMcpPortRaw);
+  if (!/^\d+$/.test(oneMcpPortRaw) || !Number.isInteger(oneMcpPort) || oneMcpPort < 1 || oneMcpPort > 65535) {
+    throw new Error('MCP_ONE_MCP_PORT must be an integer from 1 to 65535');
+  }
   const oneMcpLogMaxSizeRaw = deployment.MCP_ONE_MCP_LOG_MAX_SIZE_BYTES ?? String(10 * 1024 * 1024);
   const oneMcpLogMaxSize = Number(oneMcpLogMaxSizeRaw);
   if (!Number.isInteger(oneMcpLogMaxSize) || oneMcpLogMaxSize < 1024 * 1024 || oneMcpLogMaxSize > 64 * 1024 * 1024) {
@@ -452,6 +457,7 @@ export async function renderConfig(options) {
   const appConfigPath = path.join(oneMcpDir, 'config.toml');
   const bridgeEnvPath = path.join(stateDir, 'bridge.env');
   const appConfig = [
+    `port = ${oneMcpPort}`,
     ...(isPersonal ? ['[admin]', 'enabled = false', ''] : []),
     '[auth]',
     'sessionTtl = 43200',
@@ -468,6 +474,7 @@ export async function renderConfig(options) {
     `MCP_WORKSPACE_ROOT=${shellSingleQuote(workspaceRoot)}`,
     `MCP_PUBLIC_URL=${shellSingleQuote(publicUrl.replace(/\/$/, ''))}`,
     `MCP_TUNNEL_NAME=${shellSingleQuote(tunnelName)}`,
+    `MCP_ONE_MCP_PORT=${shellSingleQuote(String(oneMcpPort))}`,
     `MCP_BRIDGE_ROOT=${shellSingleQuote(repoRoot)}`,
     `BRIDGE_STATE_DIR=${shellSingleQuote(stateDir)}`,
     '',

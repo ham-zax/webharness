@@ -34,7 +34,7 @@ cloudflared tunnel create webharness
 cloudflared tunnel route dns webharness mcp.example.com
 ```
 
-Configure the tunnel in the normal `~/.cloudflared/config.yml`. A minimal equivalent of the WebHarness-relevant part of the maintained setup is:
+Configure the tunnel in the normal `~/.cloudflared/config.yml`. A minimal example using the default origin port is:
 
 ```yaml
 tunnel: <TUNNEL-UUID>
@@ -46,7 +46,7 @@ ingress:
   - service: http_status:404
 ```
 
-The maintained machine may use the same Cloudflare configuration for other ingress rules; those are unrelated to WebHarness. WebHarness only depends on the MCP hostname reaching the loopback 1MCP origin.
+Set the service port to match `MCP_ONE_MCP_PORT` in the deployment `.env` when you change the default. The maintained machine may use the same Cloudflare configuration for other ingress rules; those are unrelated to WebHarness. WebHarness only depends on the MCP hostname reaching the loopback 1MCP origin.
 
 The maintained workstation deliberately leaves this value empty:
 
