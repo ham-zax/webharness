@@ -72,7 +72,6 @@ if [ "${PERSONAL_BOOTSTRAP_SKIP_INSTALL:-0}" != "1" ]; then
 
   echo "== installing pinned Personal Workstation provider dependencies =="
   npm --prefix "$ROOT/providers/pi-dev" ci --omit=dev
-  npm --prefix "$ROOT/providers/code-router" ci --omit=dev
   npm --prefix "$ROOT/providers/terminal" ci --omit=dev
   npm --prefix "$ROOT/providers/browser" ci --omit=dev
   npm --prefix "$ROOT/providers/browser-fast" ci --omit=dev
@@ -81,7 +80,6 @@ if [ "${PERSONAL_BOOTSTRAP_SKIP_INSTALL:-0}" != "1" ]; then
   npm --prefix "$ROOT/providers/local-tools" ci --omit=dev
 
   echo "== installing pinned Personal Workstation native runtimes =="
-  "$ROOT/scripts/install-codedb.sh"
   "$ROOT/scripts/setup-clearcote-wsl.sh"
 else
   echo "== skipping toolbox/provider installation by PERSONAL_BOOTSTRAP_SKIP_INSTALL =="

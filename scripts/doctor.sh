@@ -161,9 +161,10 @@ if (JSON.stringify(keys(outer)) !== JSON.stringify(expectedOuter)) process.exit(
 if (profile === 'personal') {
   const inner = JSON.parse(fs.readFileSync(innerFile, 'utf8'));
   const innerKeys = keys(inner);
-  for (const required of ['browser-devtools', 'browser-fast', 'browser-jev', 'code', 'terminal', 'host', 'dev']) {
+  for (const required of ['browser-devtools', 'browser-fast', 'browser-jev', 'terminal', 'host', 'dev']) {
     if (!innerKeys.includes(required)) process.exit(1);
   }
+  if (inner.mcpServers.code || inner.mcpServers.codedb) process.exit(1);
   if (outer.mcpServers.local?.env?.MCP_LOCAL_FALLBACK_ONLY_SERVERS !== 'dev') process.exit(1);
 }
 NODE

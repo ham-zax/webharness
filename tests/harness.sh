@@ -9,13 +9,13 @@ fail() { printf 'not ok - %s\n' "$1"; FAILURES=$((FAILURES + 1)); }
 run_test() { local name="$1"; shift; TESTS=$((TESTS + 1)); if "$@"; then pass "$name"; else fail "$name"; fi; }
 
 test_raw_codedb_surface_removed() {
-  [ -f "$ROOT/scripts/install-codedb.sh" ] &&
+  [ ! -e "$ROOT/scripts/install-codedb.sh" ] &&
   [ ! -e "$ROOT/scripts/codedb-mcp.sh" ] &&
-  node - "$ROOT/config/templates/mcp.json" "$ROOT/config/templates/mcp-personal.json" <<'NODE'
+  node - "$ROOT/config/templates/mcp.json" "$ROOT/config/templates/mcp-personal.json" "$ROOT/config/templates/mcp-local.json" <<'NODE'
 const fs = require('fs');
 for (const file of process.argv.slice(2)) {
   const cfg = JSON.parse(fs.readFileSync(file, 'utf8'));
-  if (cfg.mcpServers?.codedb) process.exit(1);
+  if (cfg.mcpServers?.codedb || cfg.mcpServers?.code) process.exit(1);
 }
 NODE
 }
@@ -54,7 +54,7 @@ const keys = cfg => Object.keys(cfg.mcpServers ?? {}).sort();
 if (JSON.stringify(keys(restricted)) !== JSON.stringify(['dev', 'shell'])) process.exit(1);
 if (JSON.stringify(keys(trusted)) !== JSON.stringify(['dev'])) process.exit(1);
 if (JSON.stringify(keys(personal)) !== JSON.stringify(['dev', 'local'])) process.exit(1);
-if (JSON.stringify(keys(personalLocal)) !== JSON.stringify(['browser-devtools', 'browser-fast', 'browser-jev', 'code', 'dev', 'host', 'terminal'])) process.exit(1);
+if (JSON.stringify(keys(personalLocal)) !== JSON.stringify(['browser-devtools', 'browser-fast', 'browser-jev', 'dev', 'host', 'terminal'])) process.exit(1);
 if (restricted.mcpServers?.code || trusted.mcpServers?.code) process.exit(1);
 if (restricted.mcpServers?.terminal || trusted.mcpServers?.terminal) process.exit(1);
 if (restricted.mcpServers?.local || trusted.mcpServers?.local) process.exit(1);
@@ -82,9 +82,6 @@ if (personal.mcpServers.dev.env.MCP_DEV_DEFAULT_CWD !== personalHome) process.ex
 if (personal.mcpServers.dev.env.MCP_DEV_WORKSPACE_ROOT !== undefined) process.exit(1);
 if (personal.mcpServers.dev.env.MCP_DEV_TERMINAL_SOCKET !== runtimeDir + '/wsl-agent-terminal.sock') process.exit(1);
 if (personal.mcpServers.code !== undefined || personal.mcpServers.terminal !== undefined) process.exit(1);
-if (personalLocal.mcpServers.code.command !== 'node') process.exit(1);
-if (!personalLocal.mcpServers.code.args.includes(root + '/providers/code-router/server.mjs')) process.exit(1);
-if (personalLocal.mcpServers.code.env.MCP_CODE_DEFAULT_CWD !== personalHome) process.exit(1);
 if (personalLocal.mcpServers.terminal.command !== 'node') process.exit(1);
 if (!personalLocal.mcpServers.terminal.args.includes(root + '/providers/terminal/mcp-server.mjs')) process.exit(1);
 if (personalLocal.mcpServers.terminal.env.MCP_TERMINAL_SOCKET !== runtimeDir + '/wsl-agent-terminal.sock') process.exit(1);
@@ -96,6 +93,9 @@ if (personal.mcpServers.local.command !== 'node') process.exit(1);
 if (!personal.mcpServers.local.args.includes(root + '/providers/local-tools/server.mjs')) process.exit(1);
 if (personal.mcpServers.local.env.MCP_LOCAL_INNER_CONFIG !== personalLocalFile) process.exit(1);
 if (!personal.mcpServers.local.env.MCP_LOCAL_ONE_MCP_ENTRY.endsWith('/@1mcp/agent/build/index.js')) process.exit(1);
+if (personal.mcpServers.local.env.MCP_LOCAL_INNER_IDLE_MS !== '1800000') process.exit(1);
+if (personal.mcpServers.dev.env.MCP_DEV_WORKER_IDLE_MS !== '600000') process.exit(1);
+if (personalLocal.mcpServers.dev.env.MCP_DEV_WORKER_IDLE_MS !== '600000') process.exit(1);
 if (personal.mcpServers.local.env.MCP_LOCAL_FALLBACK_ONLY_SERVERS !== 'dev') process.exit(1);
 if (JSON.stringify(personal.mcpServers.local.tags) !== JSON.stringify(['local'])) process.exit(1);
 if (personalLocal.mcpServers['browser-devtools'].command !== 'node') process.exit(1);
@@ -284,7 +284,7 @@ MCP_ONE_MCP_PORT=43050
 EOF
   HOME="$tmp/home" XDG_RUNTIME_DIR="$tmp/runtime" node "$ROOT/scripts/render-config.mjs" \
     --profile trusted-dev --env-file "$tmp/deployment.env" --state-dir "$tmp/state" --repo-root "$ROOT" >/dev/null || { rm -rf "$tmp"; return 1; }
-  grep -Fqx 'port = 43050' "$tmp/state/1mcp/config.toml" || { rm -rf "$tmp"; return 1; }
+  grep -Fqx 'port = 43060' "$tmp/state/1mcp/config.toml" || { rm -rf "$tmp"; return 1; }
   grep -Fqx "MCP_ONE_MCP_PORT='43050'" "$tmp/state/bridge.env" || { rm -rf "$tmp"; return 1; }
   for value in 0 nope 65536; do
     sed -i "s/MCP_ONE_MCP_PORT=.*/MCP_ONE_MCP_PORT=$value/" "$tmp/deployment.env"
@@ -563,7 +563,7 @@ const [outerFile, innerFile, expected] = process.argv.slice(2);
 const outer = JSON.parse(fs.readFileSync(outerFile, 'utf8'));
 const inner = JSON.parse(fs.readFileSync(innerFile, 'utf8'));
 if (outer.mcpServers.dev.env.MCP_DEV_DEFAULT_CWD !== expected) process.exit(1);
-if (inner.mcpServers.code.env.MCP_CODE_DEFAULT_CWD !== expected) process.exit(1);
+if (inner.mcpServers.dev.env.MCP_DEV_DEFAULT_CWD !== expected) process.exit(1);
 NODE
   rc=$?
   [ "$rc" -eq 0 ] || { rm -rf "$tmp"; return "$rc"; }
@@ -593,7 +593,6 @@ test_personal_runtime_files_have_no_machine_home() {
     "$ROOT/systemd/wsl-agent-terminal-broker.service.in" \
     "$ROOT/providers/terminal/tmux.mjs" \
     "$ROOT/providers/terminal/broker.mjs" \
-    "$ROOT/providers/code-router/server.mjs" \
     "$ROOT/providers/local-tools/server.mjs" \
     "$ROOT/providers/browser/server.mjs" \
     "$ROOT/providers/browser-fast/server.mjs" \
@@ -772,7 +771,48 @@ test_extension_install_preflights_required_config() {
   rm -rf "$tmp"
 }
 
-run_test 'raw CodeDB catalog stays behind the Code facade' test_raw_codedb_surface_removed
+test_cold_start_policy_rendering() {
+  local tmp
+  tmp="$(mktemp -d)" || return 1
+  node --input-type=module - "$ROOT" "$tmp" <<'NODE'
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import assert from 'node:assert/strict';
+const [root, temp] = process.argv.slice(2);
+const { renderConfig } = await import(path.join(root, 'scripts/render-config.mjs'));
+const envFile = path.join(temp, 'deployment.env');
+const base = 'MCP_PUBLIC_URL=https://mcp.example.test\nMCP_ONE_MCP_PORT=43050\n';
+const render = async (settings, suffix = 'test') => {
+  await fs.writeFile(envFile, base + settings);
+  return renderConfig({ profile: 'personal', repoRoot: root, stateDir: path.join(temp, suffix), envFile });
+};
+const result = await render('BRIDGE_BACKEND_PORT=43070\nBRIDGE_WAKE_IDLE_MS=1234\nMCP_LOCAL_INNER_IDLE_MS=2345\nMCP_DEV_WORKER_IDLE_MS=3456\n');
+const outer = JSON.parse(await fs.readFile(result.configPath));
+const inner = JSON.parse(await fs.readFile(result.localInnerConfigPath));
+assert.equal(outer.mcpServers.local.env.MCP_LOCAL_INNER_IDLE_MS, '2345');
+assert.equal(outer.mcpServers.dev.env.MCP_DEV_WORKER_IDLE_MS, '3456');
+assert.equal(inner.mcpServers.dev.env.MCP_DEV_WORKER_IDLE_MS, '3456');
+assert.equal(inner.mcpServers['browser-jev'].env.MCP_LIFECYCLE_LEASE_DIR, outer.mcpServers.local.env.MCP_LIFECYCLE_LEASE_DIR);
+assert.match(await fs.readFile(result.appConfigPath, 'utf8'), /^port = 43070/m);
+assert.match(await fs.readFile(result.bridgeEnvPath, 'utf8'), /BRIDGE_WAKE_IDLE_MS='1234'/);
+const direct = await render('BRIDGE_COLD_START=0\n', 'direct');
+assert.match(await fs.readFile(direct.appConfigPath, 'utf8'), /^port = 43050/m);
+for (const [key, value] of [['BRIDGE_COLD_START', 'yes'], ['BRIDGE_BACKEND_PORT', '43050'], ['BRIDGE_BACKEND_PORT', '65536'], ['BRIDGE_WAKE_IDLE_MS', '-1'], ['MCP_LOCAL_INNER_IDLE_MS', 'bad'], ['MCP_DEV_WORKER_IDLE_MS', '2147483648'], ['MCP_LIFECYCLE_LEASE_DIR', 'relative']]) {
+  await assert.rejects(render(`${key}=${value}\n`), new RegExp(key));
+}
+for (const name of ['code', 'codedb']) {
+  const file = path.join(temp, 'local.json');
+  await fs.writeFile(file, JSON.stringify({ mcpServers: { [name]: { command: process.execPath } } }));
+  await assert.rejects(render(`MCP_LOCAL_SERVERS_FILE=${file}\n`), /reserved after CodeDB removal/);
+}
+NODE
+  local rc=$?
+  rm -rf "$tmp"
+  return "$rc"
+}
+
+run_test 'cold start policy renders, validates, and reserves removed CodeDB names' test_cold_start_policy_rendering
+run_test 'CodeDB provider and installation surface are removed' test_raw_codedb_surface_removed
 run_test 'final rendered composition places Browser behind Local only in personal mode' test_final_rendered_composition
 run_test 'owner Local stdio servers are supervised by default with an explicit opt-out' test_owner_local_stdio_supervision_defaults
 run_test 'Dev spool deployment override rejects invalid values' test_dev_spool_limit_validation

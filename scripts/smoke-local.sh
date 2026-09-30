@@ -16,7 +16,7 @@ const code = cfg.mcpServers?.code;
 const terminal = cfg.mcpServers?.terminal;
 const local = cfg.mcpServers?.local;
 if (cfg.mcpServers?.filesystem) throw new Error('filesystem provider must be absent after Pi cutover');
-if (cfg.mcpServers?.codedb) throw new Error('raw codedb provider must remain hidden behind the Code facade');
+if (cfg.mcpServers?.codedb) throw new Error('CodeDB is not part of the maintained tool surface');
 if (cfg.mcpServers?.['browser-devtools'] || cfg.mcpServers?.['browser-fast'] || cfg.mcpServers?.['browser-jev']) throw new Error('Browser providers must remain behind the Local broker');
 if (profile) {
   const actual = Object.keys(cfg.mcpServers ?? {}).sort();
@@ -43,17 +43,12 @@ if (local) {
 
   const inner = JSON.parse(fs.readFileSync(env.MCP_LOCAL_INNER_CONFIG, 'utf8'));
   const innerNames = Object.keys(inner.mcpServers ?? {}).sort();
-  for (const required of ['browser-devtools', 'browser-fast', 'browser-jev', 'code', 'terminal', 'host', 'dev']) {
+  for (const required of ['browser-devtools', 'browser-fast', 'browser-jev', 'terminal', 'host', 'dev']) {
     if (!innerNames.includes(required)) throw new Error(`Local inner provider set is missing required server: ${required}`);
   }
   if (env.MCP_LOCAL_FALLBACK_ONLY_SERVERS !== 'dev') throw new Error('only Dev may be fallback-only in personal Local');
 
-  const code = inner.mcpServers.code;
-  if (code.command !== 'node') throw new Error('inner Code facade must run with node');
-  const expectedCodeServer = path.join(repoRoot, 'providers', 'code-router', 'server.mjs');
-  if (JSON.stringify(code.args ?? []) !== JSON.stringify([expectedCodeServer])) throw new Error('unexpected inner Code facade server path');
-  if (!path.isAbsolute(code.env?.MCP_CODE_DEFAULT_CWD ?? '')) throw new Error('inner MCP_CODE_DEFAULT_CWD must be absolute');
-  if (code.tags !== undefined) throw new Error('inner Code facade must not carry an outer OAuth tag');
+  if (inner.mcpServers.code || inner.mcpServers.codedb) throw new Error('CodeDB must be absent from the Local tool surface');
 
   const terminal = inner.mcpServers.terminal;
   if (terminal.command !== 'node') throw new Error('inner Terminal provider must run with node');
@@ -166,4 +161,4 @@ curl -sf -m 5 -X POST "$URL" \
   -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"smoke","version":"1.0.0"}}}'
 echo
 echo
-echo "(connectivity check only; inspect dev plus restricted-only shell for smaller profiles, or direct Dev plus the five-tool Local broker with code/terminal/host/browser logical servers for personal composition)"
+echo "(connectivity check only; inspect dev plus restricted-only shell for smaller profiles, or direct Dev plus the five-tool Local broker with terminal/host/browser logical servers for personal composition)"

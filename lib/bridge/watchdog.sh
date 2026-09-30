@@ -39,8 +39,8 @@ while true; do
       exit 0
     fi
 
-    if ! bridge_reconcile_1mcp "$TUNNEL_URL" >>"$LOG" 2>&1; then
-      echo "$(date -Is) 1MCP reconciliation failed" >> "$LOG"
+    if ! bridge_reconcile_origin "$TUNNEL_URL" >>"$LOG" 2>&1; then
+      echo "$(date -Is) origin reconciliation failed" >> "$LOG"
     fi
 
     if ! bridge_start_cloudflared >>"$LOG" 2>&1; then

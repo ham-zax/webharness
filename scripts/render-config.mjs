@@ -249,7 +249,7 @@ export async function renderConfig(options) {
   const deployment = {
     ...(await readEnvFile(envFile, { optional: true })),
     ...Object.fromEntries(
-      ['MCP_WORKSPACE_ROOT', 'MCP_PUBLIC_URL', 'MCP_TUNNEL_NAME', 'MCP_DEV_MAX_OUTPUT_BYTES', 'MCP_DEV_IMPORT_MAX_BYTES', 'MCP_DEV_MAX_SPOOL_BYTES', 'MCP_DEV_SPOOL_TTL_SECONDS', 'MCP_DEV_SPOOL_MAX_TOTAL_BYTES', 'MCP_ONE_MCP_PORT', 'MCP_ONE_MCP_LOG_MAX_SIZE_BYTES', 'MCP_ONE_MCP_LOG_MAX_FILES', 'MCP_PERSONAL_DEFAULT_CWD', 'MCP_TERMINAL_FRONTEND', 'MCP_OWNER_CONTEXT_FILE', 'MCP_OWNER_ENV_FILE', 'MCP_BROWSER_JEV_ENV_FILE', 'MCP_LOCAL_SERVERS_FILE', 'BRIDGE_ONE_MCP_ENTRY'].filter((key) => process.env[key] !== undefined).map((key) => [key, process.env[key]]),
+      ['MCP_WORKSPACE_ROOT', 'MCP_PUBLIC_URL', 'MCP_TUNNEL_NAME', 'MCP_DEV_MAX_OUTPUT_BYTES', 'MCP_DEV_IMPORT_MAX_BYTES', 'MCP_DEV_MAX_SPOOL_BYTES', 'MCP_DEV_SPOOL_TTL_SECONDS', 'MCP_DEV_SPOOL_MAX_TOTAL_BYTES', 'MCP_ONE_MCP_PORT', 'MCP_ONE_MCP_LOG_MAX_SIZE_BYTES', 'MCP_ONE_MCP_LOG_MAX_FILES', 'MCP_PERSONAL_DEFAULT_CWD', 'MCP_TERMINAL_FRONTEND', 'MCP_OWNER_CONTEXT_FILE', 'MCP_OWNER_ENV_FILE', 'MCP_BROWSER_JEV_ENV_FILE', 'MCP_LOCAL_SERVERS_FILE', 'BRIDGE_ONE_MCP_ENTRY', 'BRIDGE_COLD_START', 'BRIDGE_BACKEND_PORT', 'BRIDGE_WAKE_IDLE_MS', 'MCP_LOCAL_INNER_IDLE_MS', 'MCP_DEV_WORKER_IDLE_MS', 'MCP_LIFECYCLE_LEASE_DIR'].filter((key) => process.env[key] !== undefined).map((key) => [key, process.env[key]]),
     ),
   };
   const profileValues = await readEnvFile(path.join(repoRoot, 'config', 'profiles', `${profile}.env`));
@@ -355,6 +355,23 @@ export async function renderConfig(options) {
   if (!/^\d+$/.test(oneMcpPortRaw) || !Number.isInteger(oneMcpPort) || oneMcpPort < 1 || oneMcpPort > 65535) {
     throw new Error('MCP_ONE_MCP_PORT must be an integer from 1 to 65535');
   }
+  const lifecycleLeaseDir = deployment.MCP_LIFECYCLE_LEASE_DIR || path.join(runtimeDir || stateDir, 'mcp-dev-bridge', 'leases');
+  if (!path.isAbsolute(lifecycleLeaseDir)) throw new Error('MCP_LIFECYCLE_LEASE_DIR must be an absolute path');
+  const coldStart = deployment.BRIDGE_COLD_START ?? '1';
+  if (!['0', '1'].includes(coldStart)) throw new Error('BRIDGE_COLD_START must be 0 or 1');
+  const integerSetting = (key, fallback, minimum, maximum) => {
+    const raw = String(deployment[key] === '' ? fallback : (deployment[key] ?? fallback));
+    const value = Number(raw);
+    if (!/^\d+$/.test(raw) || !Number.isSafeInteger(value) || value < minimum || value > maximum) {
+      throw new Error(`${key} must be an integer from ${minimum} to ${maximum}`);
+    }
+    return value;
+  };
+  const backendPort = integerSetting('BRIDGE_BACKEND_PORT', coldStart === '1' ? oneMcpPort + 10 : oneMcpPort, 1, 65535);
+  if (coldStart === '1' && backendPort === oneMcpPort) throw new Error('BRIDGE_BACKEND_PORT must differ from MCP_ONE_MCP_PORT when cold start is enabled');
+  const wakeIdleMs = integerSetting('BRIDGE_WAKE_IDLE_MS', 600000, 1, 2147483647);
+  const localIdleMs = integerSetting('MCP_LOCAL_INNER_IDLE_MS', 1800000, 0, 2147483647);
+  const devIdleMs = integerSetting('MCP_DEV_WORKER_IDLE_MS', 600000, 0, 2147483647);
   const oneMcpLogMaxSizeRaw = deployment.MCP_ONE_MCP_LOG_MAX_SIZE_BYTES ?? String(10 * 1024 * 1024);
   const oneMcpLogMaxSize = Number(oneMcpLogMaxSizeRaw);
   if (!Number.isInteger(oneMcpLogMaxSize) || oneMcpLogMaxSize < 1024 * 1024 || oneMcpLogMaxSize > 64 * 1024 * 1024) {
@@ -409,11 +426,15 @@ export async function renderConfig(options) {
     ? replaceStrings(JSON.parse(await fs.readFile(path.join(repoRoot, 'config', 'templates', 'mcp-local.json'), 'utf8')), replacements)
     : null;
 
+  rendered.mcpServers.dev.env.MCP_LIFECYCLE_LEASE_DIR = lifecycleLeaseDir;
+  rendered.mcpServers.dev.env.MCP_DEV_WORKER_IDLE_MS = String(devIdleMs);
   if (isPersonal) {
+    rendered.mcpServers.local.env.MCP_LIFECYCLE_LEASE_DIR = lifecycleLeaseDir;
+    localRendered.mcpServers['browser-jev'].env.MCP_LIFECYCLE_LEASE_DIR = lifecycleLeaseDir;
+    rendered.mcpServers.local.env.MCP_LOCAL_INNER_IDLE_MS = String(localIdleMs);
     rendered.mcpServers.dev.env.MCP_DEV_SHELL_MODE = shellMode;
     rendered.mcpServers.dev.env.MCP_DEV_PATH_MODE = profileValues.MCP_DEV_PATH_MODE;
     rendered.mcpServers.dev.env.MCP_DEV_DEFAULT_CWD = personalDefaultCwd;
-    localRendered.mcpServers.code.env.MCP_CODE_DEFAULT_CWD = personalDefaultCwd;
     if (ownerContextFile) rendered.mcpServers.dev.env.MCP_OWNER_CONTEXT_FILE = ownerContextFile;
     for (const key of OWNER_RUNTIME_ENV_KEYS) {
       if (ownerEnv[key] === undefined) continue;
@@ -436,6 +457,7 @@ export async function renderConfig(options) {
       localRendered.mcpServers['browser-jev'].env[key] = ownerEnv[key];
     }
     for (const [name, server] of Object.entries(localOwnerServers)) {
+      if (['code', 'codedb'].includes(name)) throw new Error(`MCP_LOCAL_SERVERS_FILE server name is reserved after CodeDB removal: ${name}`);
       if (Object.hasOwn(localRendered.mcpServers, name)) {
         throw new Error(`MCP_LOCAL_SERVERS_FILE cannot replace built-in Local server: ${name}`);
       }
@@ -457,7 +479,7 @@ export async function renderConfig(options) {
   const appConfigPath = path.join(oneMcpDir, 'config.toml');
   const bridgeEnvPath = path.join(stateDir, 'bridge.env');
   const appConfig = [
-    `port = ${oneMcpPort}`,
+    `port = ${coldStart === '1' ? backendPort : oneMcpPort}`,
     ...(isPersonal ? ['[admin]', 'enabled = false', ''] : []),
     '[auth]',
     'sessionTtl = 43200',
@@ -475,6 +497,10 @@ export async function renderConfig(options) {
     `MCP_PUBLIC_URL=${shellSingleQuote(publicUrl.replace(/\/$/, ''))}`,
     `MCP_TUNNEL_NAME=${shellSingleQuote(tunnelName)}`,
     `MCP_ONE_MCP_PORT=${shellSingleQuote(String(oneMcpPort))}`,
+    `MCP_LIFECYCLE_LEASE_DIR=${shellSingleQuote(lifecycleLeaseDir)}`,
+    `BRIDGE_COLD_START=${shellSingleQuote(coldStart)}`,
+    `BRIDGE_BACKEND_PORT=${shellSingleQuote(String(backendPort))}`,
+    `BRIDGE_WAKE_IDLE_MS=${shellSingleQuote(String(wakeIdleMs))}`,
     `MCP_BRIDGE_ROOT=${shellSingleQuote(repoRoot)}`,
     `BRIDGE_STATE_DIR=${shellSingleQuote(stateDir)}`,
     '',

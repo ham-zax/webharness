@@ -6,7 +6,6 @@
 bin/                 WebHarness operator, lifecycle, extension, and Terminal entrypoints
 lib/bridge/          lifecycle/process supervision internals
 providers/pi-dev/    Dev read/edit/write/import_file/file_ops/review_changes/exec/Bash/wait provider
-providers/code-router/ Code facade + rooted CodeDB router
 providers/terminal/  Terminal MCP, broker, tmux/transcript logic
 providers/browser/   Chrome DevTools facade + resource-local child routing
 providers/browser-fast/ compact observe/execute facade over Agent Browser on Windows + Linux
@@ -29,7 +28,6 @@ Fresh linked worktrees do not inherit ignored `node_modules`. Install pinned dep
 ```bash
 npm --prefix providers/pi-dev ci --omit=dev
 npm --prefix providers/terminal ci --omit=dev
-npm --prefix providers/code-router ci --omit=dev
 npm --prefix providers/browser ci --omit=dev
 npm --prefix providers/browser-fast ci --omit=dev
 npm --prefix providers/browser-jev ci --omit=dev
@@ -53,14 +51,13 @@ bash tests/publication.sh
 bash tests/lifecycle.sh
 (cd providers/pi-dev && npm test)
 (cd providers/terminal && npm test)
-(cd providers/code-router && npm test)
 (cd providers/browser && npm test)
 (cd providers/browser-fast && npm test)
 (cd providers/browser-jev && npm test)
 (cd providers/local-tools && npm test)
 node scripts/check-doc-links.mjs
 bash -n bin/* lib/bridge/*.sh scripts/*.sh tests/*.sh
-node --check scripts/*.mjs providers/pi-dev/*.mjs providers/terminal/*.mjs providers/code-router/*.mjs providers/browser/*.mjs providers/browser-fast/*.mjs providers/browser-jev/*.mjs providers/local-tools/*.mjs
+node --check scripts/*.mjs providers/pi-dev/*.mjs providers/terminal/*.mjs providers/browser/*.mjs providers/browser-fast/*.mjs providers/browser-jev/*.mjs providers/local-tools/*.mjs
 git diff --check
 ```
 
@@ -78,12 +75,11 @@ webharness doctor --profile personal
 webharness status
 ```
 
-Then complete the harmless Dev plus Local Code/Terminal/Browser, Terminal-restart-survival, and public OAuth/endpoint checks in [Acceptance](acceptance.md). These are reference-machine qualification steps, not portable CI.
+Then complete the harmless Dev plus Local Terminal/Browser, Terminal-restart-survival, and public OAuth/endpoint checks in [Acceptance](acceptance.md). These are reference-machine qualification steps, not portable CI.
 
 ## Change boundaries
 
 - Smaller profile behavior must not accidentally inherit Personal Workstation authority.
-- Do not expose the raw CodeDB tool catalog.
 - Do not make tmux lifetime depend on the broker or 1MCP.
 - Keep `wait` durable and separate from the normal Terminal model-read cursor.
 - Keep shell-free `exec(argv[])` and native Bash as short-RPC execution paths only; use Bash when shell semantics are materially required, and route long or duration-uncertain commands through Local Terminal + Dev `wait`.
@@ -125,4 +121,4 @@ The destination must be a clean existing Git repository. Staging preserves its `
 
 ## Dependency upgrades
 
-Treat 1MCP, Pi coding primitives, MCP SDK/Zod, CodeDB, tmux behavior, and the legacy restricted-shell dependency as qualified pins. Upgrade intentionally and rerun the relevant provider, lifecycle, OAuth, and product-path acceptance.
+Treat 1MCP, Pi coding primitives, MCP SDK/Zod, tmux behavior, and the legacy restricted-shell dependency as qualified pins. Upgrade intentionally and rerun the relevant provider, lifecycle, OAuth, and product-path acceptance.

@@ -18,6 +18,13 @@ test('tmux backend defaults cwd to the current user home', () => {
   }
 });
 
+test('an empty live tmux server lists no sessions', async t => {
+  const sandbox = await makeSandbox(t);
+  const tmux = new TmuxBackend({ socketPath: sandbox.socketPath, stateRoot: sandbox.stateRoot });
+  assert.deepEqual(await tmux.listSessions(), []);
+  assert.deepEqual(await tmux.listClients(), []);
+});
+
 test('dedicated tmux backend covers create, send, resize, capture, list, dead status, and close', async (t) => {
   const sandbox = await makeSandbox(t);
   const tmux = new TmuxBackend({

@@ -35,8 +35,8 @@ test_public_structure() {
   [ -f "$ROOT/systemd/wsl-agent-terminal-broker.service.in" ] && \
   [ -f "$ROOT/providers/legacy-shell/server.py" ] && \
   [ -f "$ROOT/providers/pi-dev/server.mjs" ] && \
-  [ -f "$ROOT/providers/code-router/server.mjs" ] && \
   [ -f "$ROOT/providers/terminal/mcp-server.mjs" ] && \
+  [ -f "$ROOT/lib/runtime-leases.mjs" ] && \
   [ -f "$ROOT/providers/local-tools/server.mjs" ] && \
   [ -f "$ROOT/providers/browser/server.mjs" ] && \
   [ -f "$ROOT/providers/browser-fast/server.mjs" ] && \
@@ -85,7 +85,6 @@ test_public_classifier_matches_reference_boundary() {
     scripts/install-terminal-broker-user.sh \
     systemd/wsl-agent-tmux.service.in \
     systemd/wsl-agent-terminal-broker.service.in \
-    providers/code-router/example \
     providers/browser/example \
     providers/browser-fast/example \
     providers/local-tools/example \
@@ -146,11 +145,10 @@ const keys = cfg => Object.keys(cfg.mcpServers ?? {}).sort();
 if (JSON.stringify(keys(restricted)) !== JSON.stringify(['dev', 'shell'])) process.exit(1);
 if (JSON.stringify(keys(trusted)) !== JSON.stringify(['dev'])) process.exit(1);
 if (JSON.stringify(keys(personal)) !== JSON.stringify(['dev', 'local'])) process.exit(1);
-if (JSON.stringify(keys(local)) !== JSON.stringify(['browser-devtools', 'browser-fast', 'browser-jev', 'code', 'dev', 'host', 'terminal'])) process.exit(1);
+if (JSON.stringify(keys(local)) !== JSON.stringify(['browser-devtools', 'browser-fast', 'browser-jev', 'dev', 'host', 'terminal'])) process.exit(1);
 if (!local.mcpServers['browser-devtools'].args.includes(root + '/providers/browser/server.mjs')) process.exit(1);
 if (!local.mcpServers['browser-fast'].args.includes(root + '/providers/browser-fast/server.mjs')) process.exit(1);
 if (!local.mcpServers['browser-jev'].args.includes(root + '/providers/browser-jev/server.mjs')) process.exit(1);
-if (!local.mcpServers.code.args.includes(root + '/providers/code-router/server.mjs')) process.exit(1);
 if (!local.mcpServers.terminal.args.includes(root + '/providers/terminal/mcp-server.mjs')) process.exit(1);
 if (!local.mcpServers.host.args.includes(root + '/providers/pi-dev/host-server.mjs')) process.exit(1);
 if (personal.mcpServers.local.env.MCP_LOCAL_FALLBACK_ONLY_SERVERS !== 'dev') process.exit(1);
@@ -255,7 +253,7 @@ test_no_personal_identity_in_public_files() {
 test_generic_systemd_template() {
   local unit="$ROOT/systemd/mcp-dev-bridge.service.in"
   [ -f "$unit" ] && \
-  contains "$unit" 'ExecStart=@REPO_ROOT@/bin/start' && \
+  contains "$unit" 'ExecStart=@REPO_ROOT@/bin/run' && \
   contains "$unit" 'ExecStop=@REPO_ROOT@/bin/stop' && \
   contains "$unit" 'EnvironmentFile=-@STATE_DIR@/bridge\.env'
 }
@@ -270,7 +268,7 @@ test_systemd_installer_renders_without_live_manager() {
   unit="$target/mcp-dev-bridge.service"
   [ -f "$unit" ] || { rm -rf "$tmp"; return 1; }
   ! grep -q '@[A-Z_][A-Z_]*@' "$unit" || { rm -rf "$tmp"; return 1; }
-  grep -Fq "ExecStart=$ROOT/bin/start" "$unit" || { rm -rf "$tmp"; return 1; }
+  grep -Fq "ExecStart=$ROOT/bin/run" "$unit" || { rm -rf "$tmp"; return 1; }
   grep -Fq "EnvironmentFile=-$tmp/state/bridge.env" "$unit" || { rm -rf "$tmp"; return 1; }
   if command -v systemd-analyze >/dev/null 2>&1; then
     systemd-analyze verify "$unit" >/dev/null 2>&1 || { rm -rf "$tmp"; return 1; }

@@ -6,6 +6,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import { hasActiveRuntimeLeases } from '../../lib/runtime-leases.mjs';
 import { reclaimStaleRuntimeOwnership } from '../../lib/one-mcp-runtime-ownership.mjs';
 
 export const INNER_TOOL_SEPARATOR = '_1mcp_';
@@ -116,8 +117,9 @@ function matchesQuery(item, query) {
     .some(value => value.toLowerCase().includes(needle));
 }
 
-function conciseServer(server, toolCount) {
-  return { server, available: toolCount > 0, toolCount };
+function conciseServer(server, backendState) {
+  // Configured capability is known; per-server readiness and counts require waking it.
+  return { server, available: null, toolCount: null, backendState };
 }
 
 function matchesServerQuery(item, query) {
@@ -241,6 +243,133 @@ export class InnerDirect1Mcp {
   }
 }
 
+export const DEFAULT_INNER_IDLE_MS = 30 * 60 * 1000;
+const MAX_INNER_IDLE_MS = 2 ** 31 - 1;
+
+export function parseInnerIdleMs(value) {
+  if (value === undefined || value === null || String(value).trim() === '') return DEFAULT_INNER_IDLE_MS;
+  const text = String(value).trim();
+  const parsed = /^\d+$/.test(text) ? Number(text) : Number.NaN;
+  if (!Number.isSafeInteger(parsed) || parsed > MAX_INNER_IDLE_MS) {
+    throw new Error(`MCP_LOCAL_INNER_IDLE_MS must be an integer from 0 to ${MAX_INNER_IDLE_MS}`);
+  }
+  return parsed;
+}
+
+// Starts the inner 1MCP on first use and stops it after `idleMs` without in-flight
+// operations, so idle inner providers do not hold memory while no client uses Local.
+export class LazyInner1Mcp {
+  constructor({ start, idleMs = DEFAULT_INNER_IDLE_MS, isPinned = async () => false } = {}) {
+    if (typeof start !== 'function') throw new TypeError('start function is required');
+    if (!Number.isSafeInteger(idleMs) || idleMs < 0 || idleMs > MAX_INNER_IDLE_MS) {
+      throw new TypeError(`idleMs must be an integer from 0 to ${MAX_INNER_IDLE_MS}`);
+    }
+    if (typeof isPinned !== 'function') throw new TypeError('isPinned function is required');
+    this.isPinned = isPinned;
+    this.startFn = start;
+    this.idleMs = idleMs;
+    this.inner = null;
+    this.startPromise = null;
+    this.closePromise = null;
+    this.inFlight = 0;
+    this.timer = null;
+    this.closed = false;
+  }
+
+  get alive() {
+    return !this.closed;
+  }
+
+  get state() {
+    if (this.closed) return 'closed';
+    if (this.startPromise) return 'starting';
+    if (this.closePromise) return 'stopping';
+    return this.inner?.alive ? 'running' : 'asleep';
+  }
+
+  clearTimer() {
+    if (this.timer === null) return;
+    clearTimeout(this.timer);
+    this.timer = null;
+  }
+
+  armTimer() {
+    this.clearTimer();
+    if (this.closed || this.idleMs === 0 || this.inFlight > 0 || !this.inner) return;
+    this.timer = setTimeout(async () => {
+      this.timer = null;
+      if (this.closed || this.inFlight > 0 || this.startPromise || !this.inner) return;
+      let pinned;
+      try { pinned = await this.isPinned(); } catch { pinned = true; }
+      if (this.closed || this.inFlight > 0 || this.startPromise || !this.inner) return;
+      if (pinned) { this.armTimer(); return; }
+      const idle = this.inner;
+      this.inner = null;
+      this.closePromise = Promise.resolve()
+        .then(() => idle.close())
+        .catch(() => {})
+        .finally(() => { this.closePromise = null; });
+    }, this.idleMs);
+    this.timer.unref?.();
+  }
+
+  ensureInner() {
+    if (this.inner?.alive) return Promise.resolve(this.inner);
+    if (!this.startPromise) {
+      const starting = (async () => {
+        const stale = this.inner;
+        this.inner = null;
+        if (stale) await Promise.resolve().then(() => stale.close()).catch(() => {});
+        if (this.closePromise) await this.closePromise;
+        if (this.closed) throw brokerError('INNER_UNAVAILABLE', 'inner 1MCP is not running');
+        const inner = await this.startFn();
+        if (this.closed) {
+          await Promise.resolve().then(() => inner.close()).catch(() => {});
+          throw brokerError('INNER_UNAVAILABLE', 'inner 1MCP is not running');
+        }
+        this.inner = inner;
+        return inner;
+      })();
+      this.startPromise = starting;
+      const clear = () => { if (this.startPromise === starting) this.startPromise = null; };
+      starting.then(clear, clear);
+    }
+    return this.startPromise;
+  }
+
+  async run(operation) {
+    if (this.closed) throw brokerError('INNER_UNAVAILABLE', 'inner 1MCP is not running');
+    this.inFlight += 1;
+    this.clearTimer();
+    try {
+      const inner = await this.ensureInner();
+      return await operation(inner);
+    } finally {
+      this.inFlight -= 1;
+      if (this.inFlight === 0) this.armTimer();
+    }
+  }
+
+  listTools(cursor) {
+    return this.run(inner => inner.listTools(cursor));
+  }
+
+  callTool(name, args = {}, signal) {
+    return this.run(inner => inner.callTool(name, args, signal));
+  }
+
+  async close() {
+    if (this.closed) return;
+    this.closed = true;
+    this.clearTimer();
+    if (this.startPromise) await this.startPromise.catch(() => {});
+    if (this.closePromise) await this.closePromise;
+    const inner = this.inner;
+    this.inner = null;
+    if (inner) await inner.close();
+  }
+}
+
 export class LocalToolBroker {
   constructor({ inner, configPath, fallbackOnlyServers = [] }) {
     if (!inner || typeof inner.listTools !== 'function' || typeof inner.callTool !== 'function' || typeof inner.close !== 'function') {
@@ -284,25 +413,6 @@ export class LocalToolBroker {
     } catch (error) {
       if (error?.code === 'INNER_UNAVAILABLE') throw error;
       throw brokerError('INNER_LIST_FAILED', 'failed to list inner tools', error);
-    }
-  }
-
-  async serverToolCounts(allowedServers) {
-    const counts = new Map(Array.from(allowedServers, server => [server, 0]));
-    let cursor;
-    const seenCursors = new Set();
-    while (true) {
-      const cursorKey = cursor ?? '';
-      if (seenCursors.has(cursorKey)) throw brokerError('INNER_LIST_FAILED', 'inner tools/list cursor repeated');
-      seenCursors.add(cursorKey);
-      const page = await this.page(cursor);
-      for (const innerTool of page.tools ?? []) {
-        const parsed = parseQualifiedName(innerTool?.name);
-        if (!parsed || parsed.server === '1mcp' || !allowedServers.has(parsed.server)) continue;
-        counts.set(parsed.server, counts.get(parsed.server) + 1);
-      }
-      if (page.nextCursor === undefined) return counts;
-      cursor = page.nextCursor;
     }
   }
 
@@ -360,6 +470,7 @@ export class LocalToolBroker {
   }
 
   async list({ server, query, limit, cursor } = {}) {
+    if (this.closed) throw brokerError('LOCAL_BROKER_CLOSED', 'local tool broker is shut down');
     const selectedServer = optionalString(server, 'server');
     const selectedQuery = optionalString(query, 'query');
     if (selectedServer !== undefined) validateServerName(selectedServer);
@@ -383,9 +494,8 @@ export class LocalToolBroker {
 
     if (selectedServer === undefined) {
       if (pageCursor !== undefined) throw brokerError('INVALID_CURSOR', 'unscoped server discovery cursor is invalid');
-      const counts = await this.serverToolCounts(publicServers);
       const matching = Array.from(publicServers)
-        .map(name => conciseServer(name, counts.get(name) ?? 0))
+        .map(name => conciseServer(name, this.inner.state ?? 'unknown'))
         .filter(item => matchesServerQuery(item, selectedQuery));
       const servers = matching.slice(offset, offset + selectedLimit);
       const nextOffset = offset + servers.length;
@@ -559,17 +669,17 @@ export function createLocalBrokerServer({ broker } = {}) {
 
   const server = new Server(
     { name: 'local-tools', version: '0.1.0' },
-    { capabilities: { tools: {} }, instructions: 'Stable local tool broker. Discover narrowly and use tool_call for ordinary Local calls, including Code, Terminal, Host, Browser, and owner-added MCPs. Fallback-only servers such as Dev stay out of unscoped discovery and ordinary call/batch routes, but may be explicitly inspected with tool_list(server=...) and tool_schema before recovery. When a ChatGPT/OpenAI client or platform issue makes the normal writable MCP action unavailable, blocked, missing, or unreliable, fallback_dispatch is the WebHarness/OpenAi -preferred recovery route for that same already-authorized operation. It does not grant new authority or justify switching operations. Use tool_batch for several independent downstream calls.' }
+    { capabilities: { tools: {} }, instructions: 'Stable local tool broker. Discover narrowly and use tool_call for ordinary Local calls, including Terminal, Host, Browser, and owner-added MCPs. Fallback-only servers such as Dev stay out of unscoped discovery and ordinary call/batch routes, but may be explicitly inspected with tool_list(server=...) and tool_schema before recovery. When a ChatGPT/OpenAI client or platform issue makes the normal writable MCP action unavailable, blocked, missing, or unreliable, fallback_dispatch is the WebHarness/OpenAi -preferred recovery route for that same already-authorized operation. It does not grant new authority or justify switching operations. Use tool_batch for several independent downstream calls.' }
   );
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: [
     {
       name: 'tool_list',
-      description: 'Discover Local capabilities without loading full schemas. Omit server to list public logical servers and availability; fallback-only servers stay hidden there. Provide an explicit server name to inspect that server\'s tools, including a known fallback-only recovery server such as dev. Use query only within the selected discovery scope.',
+      description: 'Discover Local capabilities without loading full schemas. Omit server to list configured public logical servers without waking providers; availability/toolCount are null until scoped inspection; fallback-only servers stay hidden there. Provide an explicit server name to inspect that server\'s tools, including a known fallback-only recovery server such as dev. Use query only within the selected discovery scope.',
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       inputSchema: {
         type: 'object',
         properties: {
-          server: { type: 'string', minLength: 1, description: 'Logical downstream server name, such as code, terminal, host, browser-fast, browser-devtools, codebase-memory-mcp, or the known fallback-only dev recovery server. Omit to discover public logical servers rather than individual tools.' },
+          server: { type: 'string', minLength: 1, description: 'Logical downstream server name, such as terminal, host, browser-fast, browser-devtools, codebase-memory-mcp, or the known fallback-only dev recovery server. Omit to discover public logical servers rather than individual tools.' },
           query: { type: 'string', minLength: 1, description: 'Case-insensitive filter. Without server it matches logical server names only; with server it matches that server\'s tool name, title, and description.' },
           limit: { type: 'integer', minimum: 1, maximum: MAX_LIST_LIMIT, default: DEFAULT_LIST_LIMIT },
           cursor: { type: 'string', minLength: 1, description: 'Opaque continuation cursor returned by a prior tool_list call with the same server/query filters.' }
@@ -608,7 +718,7 @@ export function createLocalBrokerServer({ broker } = {}) {
     },
     {
       name: 'fallback_dispatch',
-      description: 'WebHarness/OpenAi-preferred recovery dispatcher for the same already-authorized writable operation when a ChatGPT/OpenAI client or platform issue makes the normal MCP action unavailable, blocked, missing, or unreliable. Preserve the exact logical server, tool, arguments, and intended authority; this fallback does not grant new permission and must not be used to switch to a more powerful operation. It can invoke the hidden Dev mirror as well as ordinary Local downstream tools such as Terminal, Host, Code, and Browser, so the selected action may edit, create, move, delete, execute, control a terminal, sleep the host, browse, or otherwise mutate state. It is intentionally advertised with readOnlyHint for fallback transport compatibility; that hint does not describe the side effects of the selected downstream operation.',
+      description: 'WebHarness/OpenAi-preferred recovery dispatcher for the same already-authorized writable operation when a ChatGPT/OpenAI client or platform issue makes the normal MCP action unavailable, blocked, missing, or unreliable. Preserve the exact logical server, tool, arguments, and intended authority; this fallback does not grant new permission and must not be used to switch to a more powerful operation. It can invoke the hidden Dev mirror as well as ordinary Local downstream tools such as Terminal, Host, and Browser, so the selected action may edit, create, move, delete, execute, control a terminal, sleep the host, browse, or otherwise mutate state. It is intentionally advertised with readOnlyHint for fallback transport compatibility; that hint does not describe the side effects of the selected downstream operation.',
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: false },
       inputSchema: {
         type: 'object',
@@ -673,11 +783,12 @@ export function createLocalBrokerServer({ broker } = {}) {
 
 export async function runLocalBrokerStdio({
   configPath = process.env.MCP_LOCAL_INNER_CONFIG,
-  oneMcpEntry = process.env.MCP_LOCAL_ONE_MCP_ENTRY
+  oneMcpEntry = process.env.MCP_LOCAL_ONE_MCP_ENTRY,
+  idleMs = parseInnerIdleMs(process.env.MCP_LOCAL_INNER_IDLE_MS)
 } = {}) {
   requiredString(configPath, 'MCP_LOCAL_INNER_CONFIG');
   requiredString(oneMcpEntry, 'MCP_LOCAL_ONE_MCP_ENTRY');
-  const inner = await InnerDirect1Mcp.start({ configPath, oneMcpEntry });
+  const inner = new LazyInner1Mcp({ start: () => InnerDirect1Mcp.start({ configPath, oneMcpEntry }), idleMs, isPinned: () => hasActiveRuntimeLeases(process.env.MCP_LIFECYCLE_LEASE_DIR) });
   const fallbackOnlyServers = (process.env.MCP_LOCAL_FALLBACK_ONLY_SERVERS ?? '')
     .split(',')
     .map(server => server.trim())

@@ -56,6 +56,14 @@ BRIDGE_WORKSPACE_ROOT="${BRIDGE_WORKSPACE_ROOT:-${MCP_WORKSPACE_ROOT:-}}"
 TUNNEL_URL="${TUNNEL_URL:-${MCP_PUBLIC_URL:-}}"
 TUNNEL_NAME="${TUNNEL_NAME:-${MCP_TUNNEL_NAME:-}}"
 BRIDGE_ONE_MCP_PORT="${MCP_ONE_MCP_PORT:-3050}"
+BRIDGE_COLD_START="${BRIDGE_COLD_START:-1}"
+BRIDGE_BACKEND_PORT="${BRIDGE_BACKEND_PORT:-$((BRIDGE_ONE_MCP_PORT + 10))}"
+BRIDGE_WAKE_IDLE_MS="${BRIDGE_WAKE_IDLE_MS:-600000}"
+BRIDGE_WAKE_PROXY_PID_FILE="$BRIDGE_RUN_DIR/wake-proxy.pid"
+export BRIDGE_COLD_START BRIDGE_BACKEND_PORT BRIDGE_WAKE_IDLE_MS
+export BRIDGE_ROOT BRIDGE_RUN_DIR BRIDGE_CONFIG_DIR BRIDGE_STATE_DIR BRIDGE_ENV_FILE
+export BRIDGE_WORKSPACE_ROOT BRIDGE_ONE_MCP_ENTRY BRIDGE_NODE_BIN
+export MCP_ONE_MCP_PORT="$BRIDGE_ONE_MCP_PORT"
 
 BRIDGE_ENABLED_FILE="$BRIDGE_RUN_DIR/cloudflare-oauth.enabled"
 BRIDGE_LOCK_FILE="$BRIDGE_RUN_DIR/lifecycle.lock"
@@ -297,6 +305,10 @@ bridge_prune_stale_1mcp_logs() {
   done < <(find "$log_dir" -maxdepth 1 -type f -name "${stem}[0-9]*.log" -print0 2>/dev/null)
 }
 
+bridge_backend_health_port() {
+  if [ "$BRIDGE_COLD_START" = 1 ]; then printf '%s\n' "$BRIDGE_BACKEND_PORT"; else printf '%s\n' "$BRIDGE_ONE_MCP_PORT"; fi
+}
+
 bridge_start_1mcp() {
   local external="$1" entry log_inode_before="" log_size_before=0
   [ -n "$external" ] || { echo "external URL is required" >&2; return 2; }
@@ -331,7 +343,7 @@ bridge_start_1mcp() {
   ) &
   printf '%s\n' "$!" > "$BRIDGE_ONE_MCP_PID_FILE"
 
-  if ! bridge_wait_url "http://127.0.0.1:$BRIDGE_ONE_MCP_PORT/health/ready" \
+  if ! bridge_wait_url "http://127.0.0.1:$(bridge_backend_health_port)/health/ready" \
     "${BRIDGE_LOCAL_HEALTH_ATTEMPTS:-15}" "${BRIDGE_LOCAL_HEALTH_INTERVAL:-1}" 3; then
     echo "1MCP did not become healthy" >&2
     if [ -s "$BRIDGE_ONE_MCP_STDERR_FILE" ]; then
@@ -397,7 +409,7 @@ bridge_reconcile_1mcp() {
 bridge_reconcile_1mcp_ready() {
   local external="$1"
   bridge_reconcile_1mcp "$external" || return 1
-  if bridge_local_health; then
+  if bridge_wait_url "http://127.0.0.1:$(bridge_backend_health_port)/health/ready" 1 0 3; then
     return 0
   fi
 
@@ -448,4 +460,44 @@ bridge_start_watchdog() {
     rm -f "$BRIDGE_WATCHDOG_PID_FILE"
     return 1
   fi
+}
+
+# The wake proxy owns intentional backend sleep. Watchdog supervises only this
+# listener in cold mode; it must never bring an idle backend back to life.
+bridge_stop_origin() {
+  local proxy_pid
+  proxy_pid="$(cat "$BRIDGE_WAKE_PROXY_PID_FILE" 2>/dev/null || true)"
+  if bridge_pid_matches "$proxy_pid" "$BRIDGE_ROOT/lib/bridge/wake-proxy.mjs"; then
+    kill -USR2 "$proxy_pid" 2>/dev/null || true
+    # Allow the managed signal to be handled before the normal bounded stop.
+    sleep 0.05
+  fi
+  bridge_stop_pidfile "$BRIDGE_WAKE_PROXY_PID_FILE" "$BRIDGE_ROOT/lib/bridge/wake-proxy.mjs"
+  bridge_stop_1mcp
+}
+
+bridge_reconcile_origin() {
+  local external="$1"
+  if [ "$BRIDGE_COLD_START" != 1 ]; then
+    bridge_stop_pidfile "$BRIDGE_WAKE_PROXY_PID_FILE" "$BRIDGE_ROOT/lib/bridge/wake-proxy.mjs"
+    bridge_reconcile_1mcp "$external"
+    return
+  fi
+  if bridge_pidfile_alive "$BRIDGE_WAKE_PROXY_PID_FILE" "$BRIDGE_ROOT/lib/bridge/wake-proxy.mjs"; then
+    return 0
+  fi
+  bridge_stop_origin
+  setsid "${BRIDGE_NODE_BIN:-node}" "$BRIDGE_ROOT/lib/bridge/wake-proxy.mjs" \
+    9>&- >>"$BRIDGE_RUN_DIR/wake-proxy.log" 2>&1 </dev/null &
+  printf '%s\n' "$!" > "$BRIDGE_WAKE_PROXY_PID_FILE"
+  bridge_wait_url "http://127.0.0.1:$BRIDGE_ONE_MCP_PORT/health/ready" 20 0.1 1 || {
+    bridge_stop_origin
+    return 1
+  }
+  bridge_pidfile_alive "$BRIDGE_WAKE_PROXY_PID_FILE" "$BRIDGE_ROOT/lib/bridge/wake-proxy.mjs"
+}
+
+bridge_reconcile_origin_ready() {
+  if [ "$BRIDGE_COLD_START" = 1 ]; then bridge_reconcile_origin "$1";
+  else bridge_reconcile_1mcp_ready "$1"; fi
 }

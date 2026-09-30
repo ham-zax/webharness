@@ -61,9 +61,6 @@ The durable wait still exists, but its current source cannot be observed (for ex
 
 The first durable baseline could not be committed within the positive call hold. No durable wait was created. Retry with the condition to establish a fresh boundary. Name-only resume should return `WAIT_NOT_FOUND`.
 
-## Code results lag immediately after an edit
-
-The rooted CodeDB watcher behind Local `server="code"` is eventually consistent. Use Dev `read`/`exec`/Bash for immediate post-edit verification, then use the Local Code server once the watcher catches up. Do not switch to a different `project=` argument; repository routing is determined by `cwd`.
 
 ## ChatGPT shows an old action catalog
 

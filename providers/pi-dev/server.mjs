@@ -5,11 +5,16 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 import { canonicalDefaultCwd, canonicalWorkspaceRoot } from './boundary.mjs';
-import { runRead, runEdit, runWrite } from './files.mjs';
-import { runFileOps } from './file-ops.mjs';
-import { runImportFile } from './import-file.mjs';
-import { runReviewChanges } from './review-changes.mjs';
-import { pruneBashSpools, runBash, runExec } from './shell.mjs';
+import { fileURLToPath } from 'node:url';
+import { IdleExecutionWorker, serveExecutionWorker } from './idle-worker.mjs';
+import { pruneBashSpools } from './spool-gc.mjs';
+
+const executionWorker = process.argv.includes('--dev-execution-worker');
+const { runRead, runEdit, runWrite } = executionWorker ? await import('./files.mjs') : {};
+const { runFileOps } = executionWorker ? await import('./file-ops.mjs') : {};
+const { runImportFile } = executionWorker ? await import('./import-file.mjs') : {};
+const { runReviewChanges } = executionWorker ? await import('./review-changes.mjs') : {};
+const { runBash, runExec } = executionWorker ? await import('./shell.mjs') : {};
 import {
   renderBashText,
   renderEditPartial,
@@ -158,6 +163,23 @@ const server = new McpServer(
   { name: 'pi-dev', version: '0.1.0' },
   ownerContext ? { instructions: ownerContext } : undefined,
 );
+const idleValue = process.env.MCP_DEV_WORKER_IDLE_MS ?? '600000';
+const idleMs = Number(idleValue);
+if (!/^\d+$/.test(idleValue) || !Number.isSafeInteger(idleMs) || idleMs < 0 || idleMs > 2147483647) {
+  console.error('MCP_DEV_WORKER_IDLE_MS must be an integer from 0 to 2147483647');
+  process.exit(2);
+}
+const worker = executionWorker ? null : new IdleExecutionWorker({
+  serverPath: fileURLToPath(import.meta.url), idleMs,
+});
+const executionHandlers = new Map();
+const shutdownController = new AbortController();
+function registerTool(name, config, handler) {
+  if (executionWorker) executionHandlers.set(name, handler);
+  else server.registerTool(name, config, name === 'wait'
+    ? (args, extra) => handler(args, { ...extra, signal: AbortSignal.any([extra.signal, shutdownController.signal]) })
+    : (args, extra) => worker.call(name, args, extra.signal));
+}
 const modelPath = pathMode === 'user'
   ? z.string().min(1).describe('Path; relative paths resolve from the configured default cwd and absolute paths are accepted')
   : z.string().min(1).describe('Path relative to the configured workspace root');
@@ -206,7 +228,7 @@ function renderWaitResult(result) {
   return `${result.code ?? 'WAIT_FAILED'}: ${result.name}${result.evidence === undefined ? '' : ` ${String(result.evidence)}`}`;
 }
 
-server.registerTool('read', {
+registerTool('read', {
   description: pathMode === 'user'
     ? 'Read focused UTF-8 text available to the WSL user. Prefer this over command execution for ordinary file reads. offset is a 1-based line number; limit is a line count. Large text is bounded with continuation guidance. Relative paths use the configured default cwd and absolute paths are accepted.'
     : 'Read focused UTF-8 text below the configured workspace root. Prefer this over command execution for ordinary file reads. offset is a 1-based line number; limit is a line count. Large text is bounded with continuation guidance.',
@@ -229,9 +251,9 @@ server.registerTool('read', {
   return { content: result.content };
 }));
 
-server.registerTool('edit', {
+registerTool('edit', {
   description: pathMode === 'user'
-    ? 'Apply guarded, unique, disjoint replacements to one or more existing text files. One exact oldText always wins; only zero exact matches trigger fallback matching for line endings, trailing whitespace, and common Unicode punctuation/space differences. Merge exact and tolerant edits that share a line. Multi-file batches are preflighted together but are not transactional; a later failure may leave earlier targets applied and is reported as partial or uncertain. If oldText is not yet known, locate it with read/rg, Code, or ast-grep and include enough context to remain unique. Use write for creation and file_ops for regular-file move/delete. Relative paths use the configured default cwd and absolute paths are accepted'
+    ? 'Apply guarded, unique, disjoint replacements to one or more existing text files. One exact oldText always wins; only zero exact matches trigger fallback matching for line endings, trailing whitespace, and common Unicode punctuation/space differences. Merge exact and tolerant edits that share a line. Multi-file batches are preflighted together but are not transactional; a later failure may leave earlier targets applied and is reported as partial or uncertain. If oldText is not yet known, locate it with read/rg or ast-grep and include enough context to remain unique. Use write for creation and file_ops for regular-file move/delete. Relative paths use the configured default cwd and absolute paths are accepted'
     : 'Apply guarded, unique, disjoint replacements to one or more existing text files below the workspace root. One exact oldText always wins; only zero exact matches trigger fallback matching for line endings, trailing whitespace, and common Unicode punctuation/space differences. Merge exact and tolerant edits that share a line. Multi-file batches are preflighted together but are not transactional; a later failure may leave earlier targets applied and is reported as partial or uncertain. If oldText is not yet known, locate it with read/rg and include enough context to remain unique',
   inputSchema: {
     targets: z.array(z.object({
@@ -247,7 +269,7 @@ server.registerTool('edit', {
   return { content: [{ type: 'text', text }] };
 }));
 
-server.registerTool('write', {
+registerTool('write', {
   description: pathMode === 'user'
     ? 'Create-only: create a new WSL-user-accessible text file whose parent directory already exists; fails if the target exists. Use edit for existing text files and file_ops for regular-file move/delete. Relative paths use the configured default cwd and absolute paths are accepted'
     : 'Create-only: create a new text file below the workspace root whose parent directory already exists; fails if the target exists. Use edit for existing text files',
@@ -258,7 +280,7 @@ server.registerTool('write', {
 }));
 
 if (pathMode === 'user') {
-  server.registerTool('import_file', {
+  registerTool('import_file', {
     description: 'Import one ChatGPT-native attached or generated file into the WSL filesystem. This is create-only: the destination parent must already exist and an existing destination is never overwritten. Use this for binary or external file ingress instead of base64, shell downloads, or invented host paths. The source must be a native ChatGPT file value from a trusted OpenAI file host. Relative destinations resolve from the configured default cwd; absolute paths are accepted.',
     inputSchema: {
       file: z.object({
@@ -286,7 +308,7 @@ if (pathMode === 'user') {
     };
   }));
 
-  server.registerTool('review_changes', {
+  registerTool('review_changes', {
     description: 'Return one bounded aggregate review of the current Git working-tree changes: status, tracked line counts, and a unified patch including untracked file contents when they fit the shared patch budget. Use this once after the final related file mutation instead of repeatedly calling Git status/diff. cwd selects the repository; optional paths narrow review to literal files or directories and are useful when unrelated dirty work is present. This tool is read-only and creates no Git refs, commits, or temporary index state.',
     inputSchema: {
       cwd: cwdPath.optional(),
@@ -306,7 +328,7 @@ if (pathMode === 'user') {
     };
   }));
 
-  server.registerTool('wait', {
+  registerTool('wait', {
     description: 'Create, resume, or cancel one durable named condition/timer wait. Prefer this over polling or sleep loops. Arm with name+condition and resume later with name only. A pending wait stays durable and must be resumed by a later active model turn; it does not start one. For long-running commands, start the process through Local server="terminal" with terminal_open, then use terminal_exit or terminal_output waits across short RPCs and inspect final output with terminal_read. timeout_seconds is the durable deadline (default 300s, max 24h); hold_seconds bounds only this invocation (default 10s, max 15s). Supports timer, Terminal output/exit, process exit, TCP listen, file exists/change, HTTP readiness, and user-systemd conditions. Terminal-output waits observe only output produced after arming and do not consume the Terminal model cursor.',
     inputSchema: waitInputSchema,
   }, async (args, extra) => invokeWait(async () => {
@@ -320,7 +342,7 @@ if (pathMode === 'user') {
     return { content: [{ type: 'text', text: renderWaitResult(result) }] };
   }));
 
-  server.registerTool('file_ops', {
+  registerTool('file_ops', {
     description: 'Move or delete existing regular files without following final-component symlinks. Batches are preflighted together but are not transactional; a later failure may leave earlier operations applied and is reported as partial or uncertain. Moves are same-filesystem hard-link plus guarded source unlink, never overwrite an existing destination, and do not fall back to copying across filesystems.',
     inputSchema: {
       operations: z.array(z.discriminatedUnion('kind', [
@@ -343,9 +365,9 @@ if (pathMode === 'user') {
 }
 
 if (mode === 'unrestricted') {
-  server.registerTool('exec', {
+  registerTool('exec', {
     description: pathMode === 'user'
-      ? 'Run one executable directly with structured argv and no shell parsing. This is a short-RPC path: use it only when completion is expected comfortably inside the model-facing connector window (target <=45 seconds). If runtime is uncertain, may approach a minute, or must survive the call, do not start it here; use Local server="terminal" with terminal_open, observe completion/readiness through Dev wait, then use terminal_read. Prefer exec for ordinary Git, builds, tests, rg, repository inspection, and other short noninteractive commands; argv[0] is the executable and later elements are passed literally. Use bash only when shell syntax is required. Default timeout is 30 seconds, maximum 300 seconds; that provider-side maximum does not extend connector lifetime. Large output may be truncated to a retained-output file. cwd defaults to the configured default cwd and may be relative or absolute.'
+      ? 'Run one executable directly with structured argv and no shell parsing. This is a short-RPC path: use it only when completion is expected comfortably inside the model-facing connector window (target <=45 seconds). If runtime is uncertain, may approach a minute, or must survive the call, do not start it here; use Local server="terminal" with terminal_open for persistent Terminal sessions, observe completion/readiness through Dev wait, then use terminal_read. Prefer exec for ordinary Git, builds, tests, rg, repository inspection, and other short noninteractive commands; argv[0] is the executable and later elements are passed literally. Use bash only when shell syntax is required. Default timeout is 30 seconds, maximum 300 seconds; that provider-side maximum does not extend connector lifetime. Large output may be truncated to a retained-output file. cwd defaults to the configured default cwd and may be relative or absolute.'
       : 'Run one executable directly with structured argv and no shell parsing. This is a short-RPC path: do not start work here when runtime is uncertain or may approach the model-facing connector window (target <=45 seconds for direct calls). argv[0] is the executable and later elements are passed literally. Use bash only when shell syntax is required. Default timeout is 30 seconds, maximum 300 seconds; that provider-side maximum does not extend connector lifetime. Large output may be truncated with a bounded retained-output path. cwd is optional and workspace-relative.',
     inputSchema: {
       argv: z.array(z.string()).min(1).max(256).describe('Executable name/path followed by literal arguments. Do not add shell quoting around individual elements.'),
@@ -365,9 +387,9 @@ if (mode === 'unrestricted') {
     return { content: [{ type: 'text', text: renderBashText(result) }] };
   }));
 
-  server.registerTool('bash', {
+  registerTool('bash', {
     description: pathMode === 'user'
-      ? 'Run one bounded, noninteractive Bash program. This is a short-RPC path: use it only when completion is expected comfortably inside the model-facing connector window (target <=45 seconds). If runtime is uncertain, may approach a minute, or must survive the call, do not start it here; use Local server="terminal" with terminal_open, observe completion/readiness through Dev wait, then use terminal_read. Use Bash only when shell syntax such as pipes, redirects, substitutions, variables, loops, or compound commands is required. Prefer exec for ordinary short commands and Local tool_batch for repeated MCP calls. Default timeout is 30 seconds, maximum 300 seconds; that provider-side maximum does not extend connector lifetime. Large output may be truncated to a retained-output file. Do not use Bash to bypass Terminal human ownership. cwd defaults to the configured default cwd and may be relative or absolute.'
+      ? 'Run one bounded, noninteractive Bash program. This is a short-RPC path: use it only when completion is expected comfortably inside the model-facing connector window (target <=45 seconds). If runtime is uncertain, may approach a minute, or must survive the call, do not start it here; use Local server="terminal" with terminal_open for persistent Terminal sessions, observe completion/readiness through Dev wait, then use terminal_read. Use Bash only when shell syntax such as pipes, redirects, substitutions, variables, loops, or compound commands is required. Prefer exec for ordinary short commands and Local tool_batch for repeated MCP calls. Default timeout is 30 seconds, maximum 300 seconds; that provider-side maximum does not extend connector lifetime. Large output may be truncated to a retained-output file. Do not use Bash to bypass Terminal human ownership. cwd defaults to the configured default cwd and may be relative or absolute.'
       : 'Run one bounded, noninteractive Bash program. This is a short-RPC path: do not start work here when runtime is uncertain or may approach the model-facing connector window (target <=45 seconds for direct calls). Use this only when shell syntax such as pipes, redirects, substitutions, variables, loops, or compound commands is required; prefer exec for ordinary short commands. Default timeout is 30 seconds, maximum 300 seconds; that provider-side maximum does not extend connector lifetime. Large output may be truncated with a bounded retained-output path. cwd is optional and workspace-relative.',
     inputSchema: {
       command: z.string().min(1),
@@ -388,4 +410,22 @@ if (mode === 'unrestricted') {
   }));
 }
 
-await server.connect(new StdioServerTransport());
+if (executionWorker) {
+  serveExecutionWorker(executionHandlers);
+} else {
+  let closing = false;
+  const shutdown = async () => {
+    if (closing) return;
+    closing = true;
+    shutdownController.abort();
+    await worker.close();
+    await server.close();
+  };
+  process.once('SIGTERM', () => void shutdown());
+  process.once('SIGINT', () => void shutdown());
+  const transport = new StdioServerTransport();
+  transport.onclose = () => void shutdown();
+  await server.connect(transport);
+  // SDK owns transport.onclose; EOF must independently close the execution child.
+  process.stdin.once('end', () => void shutdown());
+}

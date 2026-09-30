@@ -12,7 +12,7 @@ const listed = execFileSync(
   { cwd: root, encoding: 'utf8' },
 ).trim();
 const files = listed
-  ? listed.split('\n').filter(file => file && !file.split('/').includes('node_modules'))
+  ? [...new Set(listed.split('\n'))].filter(file => file && !file.split('/').includes('node_modules') && fs.existsSync(path.join(root, file)))
   : [];
 
 function externalOrAnchor(target) {
@@ -41,7 +41,7 @@ function markdownOutsideFences(text) {
       else if (match[1][0] === fence) fence = null;
       continue;
     }
-    if (!fence) kept.push(line);
+    if (!fence) kept.push(line.replace(/(`+).*?\1/g, ''));
   }
   return kept.join('\n');
 }

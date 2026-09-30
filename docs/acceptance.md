@@ -29,8 +29,7 @@ Required evidence:
 Use the live MCP connection and exercise each public capability boundary without destructive or consequential work:
 
 - **Dev:** read a known repository file or run a bounded `pwd`/Git inspection.
-- **Local discovery:** confirm the public logical catalog includes `code`, `terminal`, `host`, `browser-fast`, `browser-jev`, and `browser-devtools`, while `dev` remains hidden from ordinary discovery.
-- **Local Code:** resolve a known symbol or obtain bounded repository context from the canonical public checkout through `server="code"`.
+- **Local discovery:** confirm the public logical catalog includes `terminal`, `host`, `browser-fast`, `browser-jev`, and `browser-devtools`, while `dev` remains hidden from ordinary discovery.
 - **Local Terminal:** open a named shell session through `server="terminal"`, print a harmless marker, and read it back.
 - **Local Host:** load the `host/pc_sleep` schema only; do not invoke sleep during harmless qualification.
 
@@ -61,7 +60,7 @@ browser-jev
 browser-devtools
 ```
 
-Load one harmless schema from Code, Terminal, and each Browser server; load the Host schema without invoking it. A GUI launch or website mutation is not required for this discovery check. When browser execution itself changed, separately exercise the target that changed under the operator's normal browser policy.
+Load one harmless schema from Terminal, and each Browser server; load the Host schema without invoking it. A GUI launch or website mutation is not required for this discovery check. When browser execution itself changed, separately exercise the target that changed under the operator's normal browser policy.
 
 For a browser-jev runtime change, qualify the autonomous and stateful paths against an already-live managed browser profile:
 

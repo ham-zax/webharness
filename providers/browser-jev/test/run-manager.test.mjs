@@ -47,7 +47,7 @@ class FakeWorker {
   async close() { this.closeCount += 1; }
 }
 
-function managerFixture({ worker, workerFactory, resolver, idFactory } = {}) {
+function managerFixture({ worker, workerFactory, resolver, idFactory, leaseFactory } = {}) {
   const created = [];
   const selectedWorker = worker ?? new FakeWorker();
   const manager = new BrowserJevRunManager({
@@ -65,10 +65,36 @@ function managerFixture({ worker, workerFactory, resolver, idFactory } = {}) {
       created.push(options);
       return selectedWorker;
     }),
-    idFactory: idFactory ?? (() => 'abc123')
+    idFactory: idFactory ?? (() => 'abc123'),
+    leaseDirectory: undefined,
+    leaseFactory: leaseFactory ?? (async () => ({ async close() {} }))
   });
   return { manager, worker: selectedWorker, created };
 }
+
+test('stateful run holds a lifecycle lease between calls and releases it after worker close', async () => {
+  const events = [];
+  const worker = new FakeWorker();
+  worker.close = async () => { events.push('worker-close'); };
+  const { manager } = managerFixture({ worker, leaseFactory: async () => {
+    events.push('lease-acquired');
+    return { async close() { events.push('lease-closed'); } };
+  } });
+  const started = await manager.start(startArgs());
+  assert.deepEqual(events, ['lease-acquired']);
+  await manager.stop(started.run_id);
+  assert.deepEqual(events, ['lease-acquired', 'worker-close', 'lease-closed']);
+});
+
+test('failed worker startup releases its lifecycle lease', async () => {
+  let released = 0;
+  const { manager } = managerFixture({
+    workerFactory: async () => { throw new Error('worker unavailable'); },
+    leaseFactory: async () => ({ async close() { released += 1; } })
+  });
+  await assert.rejects(manager.start(startArgs()), /worker unavailable/);
+  assert.equal(released, 1);
+});
 
 test('start creates a namespaced worker and returns only sanitized state', async () => {
   const worker = new FakeWorker({

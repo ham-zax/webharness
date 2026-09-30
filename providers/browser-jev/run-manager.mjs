@@ -11,6 +11,7 @@ import {
 } from './contracts.mjs';
 import { loadWorkerEnvironment } from './credentials.mjs';
 import { JevWorkerClient } from './worker-client.mjs';
+import { acquireRuntimeLease } from '../../lib/runtime-leases.mjs';
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_PYTHON = path.join(DIR, '.venv', 'bin', 'python');
@@ -276,7 +277,9 @@ export class BrowserJevRunManager {
     workerFactory = options => JevWorkerClient.start(options),
     python = DEFAULT_PYTHON,
     script = DEFAULT_WORKER,
-    idFactory = () => randomUUID().replaceAll('-', '')
+    idFactory = () => randomUUID().replaceAll('-', ''),
+    leaseDirectory = process.env.MCP_LIFECYCLE_LEASE_DIR,
+    leaseFactory = options => acquireRuntimeLease(options)
   } = {}) {
     this.backendResolver = backendResolver;
     this.credentialLoader = credentialLoader;
@@ -286,6 +289,8 @@ export class BrowserJevRunManager {
     this.python = python;
     this.script = script;
     this.idFactory = idFactory;
+    this.leaseDirectory = leaseDirectory;
+    this.leaseFactory = leaseFactory;
     this.runs = new Map();
     this.operationTails = new Map();
   }
@@ -368,7 +373,14 @@ export class BrowserJevRunManager {
         BROWSER_JEV_PROFILE_KEY: backend.queueKey,
         PYTHONUNBUFFERED: '1'
       };
-      const worker = await this.workerFactory({ python: this.python, script: this.script, env });
+      const lease = await this.leaseFactory({ directory: this.leaseDirectory, kind: 'browser-jev' });
+      let worker;
+      try {
+        worker = await this.workerFactory({ python: this.python, script: this.script, env });
+      } catch (error) {
+        await lease.close();
+        throw error;
+      }
       const run = {
         id,
         backend: {
@@ -378,6 +390,7 @@ export class BrowserJevRunManager {
           queueKey: backend.queueKey
         },
         worker,
+        lease,
         goal: args.goal,
         success: args.scenario.success,
         collection: createCollection(args.scenario.collection),
@@ -397,6 +410,7 @@ export class BrowserJevRunManager {
         return run.state;
       } catch (error) {
         await worker.close().catch(() => {});
+        await lease.close();
         throw error;
       }
     });
@@ -505,6 +519,7 @@ export class BrowserJevRunManager {
         requestError = error;
       } finally {
         await current.worker.close().catch(() => {});
+        await current.lease.close();
         current.status = 'stopped';
         this.runs.delete(runId);
       }

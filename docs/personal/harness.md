@@ -7,7 +7,6 @@ The `personal` profile is the full WebHarness reference deployment. It runs with
 ```text
 Dev       read edit write import_file file_ops review_changes wait exec bash
 Local     tool_list tool_schema tool_call fallback_dispatch tool_batch
-            |-- code              code_search / code_context / code_symbol
             |-- terminal          durable PTY/session control
             |-- host              pc_sleep
             |-- browser-fast      observe/execute interaction; Windows default, WSLg on request
@@ -18,7 +17,7 @@ Local     tool_list tool_schema tool_call fallback_dispatch tool_batch
 Think in two model-facing surfaces:
 
 - **Dev** handles focused text/file work, ChatGPT-native file ingress, aggregate Git review, bounded execution, and durable waits. Prefer `exec` with structured `argv[]` for ordinary executable invocation; use `bash` only when shell syntax is actually required.
-- **Local** exposes five stable broker tools and owns the public `code`, `terminal`, `host`, Browser, and owner-added logical servers. Use `tool_call` for an ordinary one-shot downstream invocation and `tool_batch` when the same public logical `{server, tool}` should receive several independent structured argument objects; do not rebuild that batching in Bash. Use `fallback_dispatch` only when an already-authorized writable MCP operation is unavailable or unreliable. The fallback can additionally reach the hidden Dev mirror and intentionally carries `readOnlyHint` as transport metadata even though the selected downstream operation may mutate state. If the outer Dev tool catalog/schema is also unavailable, inspect the recovery route read-only with `tool_list(server="dev")` and `tool_schema(server="dev", tool=...)`; Dev remains unavailable to ordinary `tool_call`/`tool_batch`. Preserve the same intended server/tool/arguments; do not use fallback dispatch to broaden authority or invent a different operation. The built-in Code route is `server="code"`, Terminal is `server="terminal"`, Windows host actions are `server="host"`, and the browser routes are `browser-fast`, `browser-jev`, and `browser-devtools`. Personal deployments may additionally grant owner-selected local MCPs through `MCP_LOCAL_SERVERS_FILE`; discover them by logical server name and load only the exact downstream schema needed. All such servers share the same `tag:local` authorization domain. For `browser-fast`, observe once, consume any returned `memory` that applies to the current host, then pass the returned `active_tab` to `execute` with the mechanical sequence. For `browser-jev`, start with non-empty declarative success checks, tick one cycle at a time, inspect cached state as needed, and always stop the run; Jev uses its own background target and does not take over the mediated browser-fast tab. Omit `arguments.browser_target` for the dedicated persistent Windows MCP Chrome profile; use `arguments.browser_target="linux"` for WSLg. The Windows MCP profile is separate from everyday Chrome and keeps its own persistent sign-ins; Windows MCP and Linux browser state remain separate.
+- **Local** exposes five stable broker tools and owns the public `terminal`, `host`, Browser, and owner-added logical servers. Use `tool_call` for an ordinary one-shot downstream invocation and `tool_batch` when the same public logical `{server, tool}` should receive several independent structured argument objects; do not rebuild that batching in Bash. Use `fallback_dispatch` only when an already-authorized writable MCP operation is unavailable or unreliable. The fallback can additionally reach the hidden Dev mirror and intentionally carries `readOnlyHint` as transport metadata even though the selected downstream operation may mutate state. If the outer Dev tool catalog/schema is also unavailable, inspect the recovery route read-only with `tool_list(server="dev")` and `tool_schema(server="dev", tool=...)`; Dev remains unavailable to ordinary `tool_call`/`tool_batch`. Preserve the same intended server/tool/arguments; do not use fallback dispatch to broaden authority or invent a different operation. Terminal is `server="terminal"`, Windows host actions are `server="host"`, and the browser routes are `browser-fast`, `browser-jev`, and `browser-devtools`. Personal deployments may additionally grant owner-selected local MCPs through `MCP_LOCAL_SERVERS_FILE`; discover them by logical server name and load only the exact downstream schema needed. All such servers share the same `tag:local` authorization domain. For `browser-fast`, observe once, consume any returned `memory` that applies to the current host, then pass the returned `active_tab` to `execute` with the mechanical sequence. For `browser-jev`, start with non-empty declarative success checks, tick one cycle at a time, inspect cached state as needed, and always stop the run; Jev uses its own background target and does not take over the mediated browser-fast tab. Omit `arguments.browser_target` for the dedicated persistent Windows MCP Chrome profile; use `arguments.browser_target="linux"` for WSLg. The Windows MCP profile is separate from everyday Chrome and keeps its own persistent sign-ins; Windows MCP and Linux browser state remain separate.
 
 ## Learning exact-site browser memory
 
@@ -88,7 +87,7 @@ webharness setup --profile personal --enable-startup
 
 `--enable-startup` is explicit consent to install the user-systemd units, enable user linger, enable the services, and start them now. After that, the services start automatically whenever this WSL user's systemd manager starts. The bootstrap does **not** configure Windows to launch WSL.
 
-The same command also qualifies the Personal Workstation CLI toolbox, installs/verifies the pinned 1MCP runtime through the repository's shared runtime installer, installs all seven pinned personal in-repo provider dependency trees plus browser-jev's frozen uv environment, installs/verifies the pinned CodeDB binary, prepares Clearcote's Ubuntu/WSL runtime dependencies and pinned browser build, renders the outer Personal Workstation composition plus the Local inner browser composition, and installs:
+The same command also qualifies the Personal Workstation CLI toolbox, installs/verifies the pinned 1MCP runtime through the repository's shared runtime installer, installs all six pinned personal in-repo provider dependency trees plus browser-jev's frozen uv environment, prepares Clearcote's Ubuntu/WSL runtime dependencies and pinned browser build, renders the outer Personal Workstation composition plus the Local inner browser composition, and installs:
 
 ```text
 ~/.local/bin/webharness -> <this checkout>/bin/webharness
@@ -165,7 +164,7 @@ Runs one bounded executable directly from a structured `argv[]` with no shell pa
 
 ### `bash`
 
-Runs one bounded, noninteractive native Bash program. It has the same **short-RPC-only** lifetime rule as `exec`: use it only when completion is expected comfortably inside the connector window, with 45 seconds as the routing target. If runtime is uncertain or may approach a minute, use Local Terminal + Dev `wait` instead of increasing `timeout_seconds`; the provider-side 300-second maximum does not extend connector lifetime. Within short work, use Bash only when shell semantics such as pipes, redirects, substitutions, variables, loops, or compound commands are materially required. Do not use Bash to orchestrate repeated MCP calls when Local `tool_batch` is available. For a large or unfamiliar repository with unknown CodeDB state, `exec` + `rg` plus focused `read` is the lower-cost discovery path before invoking Code.
+Runs one bounded, noninteractive native Bash program. It has the same **short-RPC-only** lifetime rule as `exec`: use it only when completion is expected comfortably inside the connector window, with 45 seconds as the routing target. If runtime is uncertain or may approach a minute, use Local Terminal + Dev `wait` instead of increasing `timeout_seconds`; the provider-side 300-second maximum does not extend connector lifetime. Within short work, use Bash only when shell semantics such as pipes, redirects, substitutions, variables, loops, or compound commands are materially required. Do not use Bash to orchestrate repeated MCP calls when Local `tool_batch` is available. Use `exec` + `rg` plus focused `read` for repository discovery.
 
 For syntax-shaped discovery or codemods, use ast-grep through `exec` when no shell composition is needed. Inspect bounded matches and normally perform the final mutation through guarded `edit`; use ast-grep bulk rewrite only when the transformation is deterministic and every bounded match is intentionally changed.
 
@@ -222,23 +221,6 @@ Sleeps the Windows host after a 10-second grace period. The call requires `confi
 
 This action only schedules a wake before the host sleeps; it cannot receive a new on-demand MCP call while Windows, WSL, and the bridge are already asleep.
 
-## Local Code server
-
-### `code_search`
-
-Ranked text/code search when the exact symbol is unknown. Prefer `code_symbol` when a symbol or definition name is already known or guessable.
-
-### `code_symbol`
-
-Use when you know or can guess a definition name.
-
-### `code_context`
-
-Compact first-touch context for a task: definitions, focused bodies, graph neighbors, files, and snippets. First-touch does not mean always call it first on an unknown large repository.
-
-Call these through Local `server="code"`. All three Code tools share the same rooted CodeDB child/index lifecycle. First use for a repository may start a persistent child and create or update substantial on-disk index state, which can consume significant disk and RAM. There is no hard repository-size preflight or threshold. For a large or unfamiliar repository with unknown CodeDB state, prefer Dev `exec` + `rg` plus focused `read` for initial discovery unless CodeDB-backed repository intelligence is specifically desired; use Bash only when the discovery command itself needs shell composition.
-
-The Code router resolves the nearest canonical Git root from `cwd`. Nested repositories win over outer repositories. Do not pass project-switching state; the rooted child owns repository identity.
 
 ## Local Terminal server
 

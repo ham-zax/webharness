@@ -101,7 +101,7 @@ test_cloudflare_oauth_is_canonical() {
 test_start_is_canonical_entrypoint() {
   contains "$ROOT/bin/start" 'WebHarness' && \
   ! contains "$ROOT/bin/start" 'mcp\.hamza\.my\.id' && \
-  contains "$ROOT/bin/start" 'bridge_reconcile_1mcp' && \
+  contains "$ROOT/bin/start" 'bridge_reconcile_origin' && \
   contains "$ROOT/bin/start" 'bridge_start_cloudflared' && \
   contains "$ROOT/bin/start" 'bridge_start_watchdog'
 }
@@ -118,7 +118,7 @@ test_1mcp_runtime_does_not_append_an_unbounded_console_log() {
 
 test_start_orders_origin_before_watchdog() {
   local origin_line watchdog_line
-  origin_line="$(grep -n 'bridge_reconcile_1mcp' "$ROOT/bin/start" | head -n1 | cut -d: -f1)"
+  origin_line="$(grep -n 'bridge_reconcile_origin' "$ROOT/bin/start" | head -n1 | cut -d: -f1)"
   watchdog_line="$(grep -n 'bridge_start_watchdog' "$ROOT/bin/start" | head -n1 | cut -d: -f1)"
   [ -n "$origin_line" ] && [ -n "$watchdog_line" ] && [ "$origin_line" -lt "$watchdog_line" ]
 }
@@ -150,7 +150,7 @@ test_status_has_core_diagnostics() {
 test_systemd_user_autostart_contract() {
   local unit="$ROOT/systemd/mcp-dev-bridge.service.in"
   [ -f "$unit" ] && [ -x "$ROOT/scripts/install-systemd-user.sh" ] && \
-  contains "$unit" 'ExecStart=@REPO_ROOT@/bin/start' && \
+  contains "$unit" 'ExecStart=@REPO_ROOT@/bin/run' && \
   contains "$unit" 'ExecStop=@REPO_ROOT@/bin/stop' && \
   contains "$unit" 'EnvironmentFile=-@STATE_DIR@/bridge\.env' && \
   contains "$unit" 'WantedBy=default\.target' && \
@@ -537,7 +537,16 @@ make_fake_stack() {
   local sandbox="$1" public_mode="${2:-healthy}" cloudflared_mode="${3:-healthy}"
   local fakebin="$sandbox/fakebin"
   mkdir -p "$fakebin" "$sandbox/run" "$sandbox/config" "$sandbox/workspace" "$sandbox/global/@1mcp/agent/build"
-  : > "$sandbox/global/@1mcp/agent/build/index.js"
+  cat > "$sandbox/global/@1mcp/agent/build/index.js" <<'JS'
+const fs = require('fs');
+fs.writeFileSync(`${process.env.BRIDGE_CONFIG_DIR}/server.pid`, JSON.stringify({ pid: process.pid }));
+fs.writeFileSync(process.env.FAKE_LOCAL_MARKER, 'ready');
+const stop = () => { fs.rmSync(process.env.FAKE_LOCAL_MARKER, { force: true }); process.exit(0); };
+process.on('SIGTERM', stop); process.on('SIGINT', stop);
+if (process.env.BRIDGE_COLD_START === '1') {
+  require('http').createServer((req, res) => res.end('ok')).listen(Number(process.env.BRIDGE_BACKEND_PORT), '127.0.0.1');
+} else setInterval(() => {}, 60000);
+JS
   printf '{}\n' > "$sandbox/config/mcp.json"
 
   cat > "$fakebin/node" <<'EOF'
@@ -589,6 +598,9 @@ stack_env_file() {
   local sandbox="$1"
   cat <<EOF
 PATH=$sandbox/fakebin:$PATH
+BRIDGE_COLD_START=0
+BRIDGE_ENV_FILE=$sandbox/absent.env
+MCP_ONE_MCP_PORT=3050
 BRIDGE_NODE_BIN=$(command -v node)
 BRIDGE_RUN_DIR=$sandbox/run
 BRIDGE_CONFIG_DIR=$sandbox/config
@@ -598,7 +610,7 @@ FAKE_LOCAL_MARKER=$sandbox/local-ready
 FAKE_PUBLIC_MARKER=$sandbox/public-ready
 TUNNEL_URL=https://test.example
 BRIDGE_LOCAL_HEALTH_ATTEMPTS=5
-BRIDGE_LOCAL_HEALTH_INTERVAL=0
+BRIDGE_LOCAL_HEALTH_INTERVAL=0.05
 BRIDGE_PUBLIC_HEALTH_ATTEMPTS=2
 BRIDGE_PUBLIC_HEALTH_INTERVAL=0
 BRIDGE_WATCHDOG_INTERVAL=999
@@ -698,6 +710,34 @@ test_watchdog_recovers_both_daemons() {
   [ "$ok" -eq 1 ]
 }
 
+test_cold_stack_starts_asleep_wakes_and_watchdog_preserves_sleep() {
+  local sandbox="$TMP/cold-stack" real_curl public_port=43090 backend_port=43100
+  real_curl="$(command -v curl)"
+  make_fake_stack "$sandbox"
+  cat > "$sandbox/fakebin/curl" <<'SH'
+#!/usr/bin/env bash
+if [[ "$*" == *"https://test.example/health/ready"* ]]; then
+  [ -f "$FAKE_PUBLIC_MARKER" ]; exit $?
+fi
+exec "$REAL_CURL" "$@"
+SH
+  chmod +x "$sandbox/fakebin/curl"
+  local -a cold_env=("BRIDGE_COLD_START=1" "MCP_ONE_MCP_PORT=$public_port" "BRIDGE_BACKEND_PORT=$backend_port" "BRIDGE_WAKE_IDLE_MS=100" "REAL_CURL=$real_curl" "BRIDGE_LOCAL_HEALTH_INTERVAL=0.05")
+  run_stack_env "$sandbox" env "${cold_env[@]}" "$ROOT/bin/start" >"$sandbox/start.log" 2>&1 || { cat "$sandbox/start.log" >&2; return 1; }
+  local ok=0 i
+  if [ -s "$sandbox/run/wake-proxy.pid" ] && [ ! -e "$sandbox/run/one-mcp.pid" ]; then
+    "$real_curl" -sf "http://127.0.0.1:$public_port/health/ready" >/dev/null || return 1
+    [ ! -e "$sandbox/run/one-mcp.pid" ] || return 1
+    "$real_curl" -sf "http://127.0.0.1:$public_port/mcp" >/dev/null || { cat "$sandbox/run/wake-proxy.log" >&2; return 1; }
+    for i in $(seq 1 40); do [ ! -e "$sandbox/run/one-mcp.pid" ] && break; sleep 0.05; done
+    run_stack_env "$sandbox" env "${cold_env[@]}" BRIDGE_WATCHDOG_ONCE=1 "$ROOT/lib/bridge/watchdog.sh" >/dev/null 2>&1 || return 1
+    [ ! -e "$sandbox/run/one-mcp.pid" ] && ok=1
+  fi
+  run_stack_env "$sandbox" env "${cold_env[@]}" "$ROOT/bin/stop" >/dev/null 2>&1 || return 1
+  [ "$ok" = 1 ] && [ ! -e "$sandbox/run/wake-proxy.pid" ] && [ ! -e "$sandbox/run/one-mcp.pid" ]
+}
+
+run_test 'cold gateway starts asleep, wakes, idles and watchdog preserves sleep' test_cold_stack_starts_asleep_wakes_and_watchdog_preserves_sleep
 run_test 'canonical Cloudflare OAuth stack starts and stops cleanly' test_full_stack_start_stop
 run_test 'cloudflared startup failure rolls the stack back to stopped' test_failed_cloudflared_start_rolls_back
 run_test 'public health failure rolls the stack back to stopped' test_failed_public_health_rolls_back

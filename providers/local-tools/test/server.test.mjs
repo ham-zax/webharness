@@ -6,10 +6,14 @@ import test from 'node:test';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import {
+  DEFAULT_INNER_IDLE_MS,
+  LazyInner1Mcp,
   LocalToolBroker,
   MAX_LIST_LIMIT,
-  createLocalBrokerServer
+  createLocalBrokerServer,
+  parseInnerIdleMs
 } from '../server.mjs';
+import { acquireRuntimeLease, hasActiveRuntimeLeases } from '../../../lib/runtime-leases.mjs';
 import { reclaimStaleRuntimeOwnership } from '../../../lib/one-mcp-runtime-ownership.mjs';
 
 async function configFile(t, servers = ['browser']) {
@@ -125,16 +129,17 @@ test('tool_list without server discovers logical servers and filters only server
   const all = await broker.list();
   assert.deepEqual(all, {
     servers: [
-      { server: 'browser-devtools', available: true, toolCount: 1 },
-      { server: 'satori', available: true, toolCount: 1 },
-      { server: 'codebase-memory-mcp', available: false, toolCount: 0 }
+      { server: 'browser-devtools', available: null, toolCount: null, backendState: 'unknown' },
+      { server: 'satori', available: null, toolCount: null, backendState: 'unknown' },
+      { server: 'codebase-memory-mcp', available: null, toolCount: null, backendState: 'unknown' }
     ],
     hasMore: false
   });
 
+  assert.deepEqual(inner.listCalls, []);
   const memory = await broker.list({ query: 'memory' });
   assert.deepEqual(memory, {
-    servers: [{ server: 'codebase-memory-mcp', available: false, toolCount: 0 }],
+    servers: [{ server: 'codebase-memory-mcp', available: null, toolCount: null, backendState: 'unknown' }],
     hasMore: false
   });
 });
@@ -416,4 +421,207 @@ test('inner transport failures are bounded errors and shutdown closes the privat
   await broker.shutdown();
   assert.equal(inner.closed, true);
   await assert.rejects(() => broker.call({ server: 'browser', tool: 'x' }), /LOCAL_BROKER_CLOSED/);
+});
+
+function fakeInnerFactory() {
+  const created = [];
+  const start = async () => {
+    const inner = {
+      alive: true,
+      closeCount: 0,
+      calls: [],
+      async listTools(cursor) { this.calls.push(['list', cursor]); return { tools: [] }; },
+      async callTool(name, args, signal) {
+        this.calls.push(['call', name]);
+        if (this.hold) await this.hold;
+        return { content: [], name, args, signal };
+      },
+      async close() { this.closeCount += 1; this.alive = false; }
+    };
+    created.push(inner);
+    return inner;
+  };
+  return { created, start };
+}
+
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+test('inner idle timeout parsing defaults and validates', () => {
+  assert.equal(parseInnerIdleMs(undefined), DEFAULT_INNER_IDLE_MS);
+  assert.equal(parseInnerIdleMs(''), DEFAULT_INNER_IDLE_MS);
+  assert.equal(DEFAULT_INNER_IDLE_MS, 1800000);
+  assert.equal(parseInnerIdleMs('0'), 0);
+  assert.equal(parseInnerIdleMs('1500'), 1500);
+  for (const bad of ['-1', '1.5', 'abc', '1e3', '99999999999']) {
+    assert.throws(() => parseInnerIdleMs(bad), /MCP_LOCAL_INNER_IDLE_MS/, bad);
+  }
+});
+
+test('lazy inner does not start until the first operation and shares one start', async () => {
+  const { created, start } = fakeInnerFactory();
+  const lazy = new LazyInner1Mcp({ start, idleMs: 0 });
+  assert.equal(created.length, 0);
+  await Promise.all([lazy.listTools(), lazy.callTool('a_1mcp_b', {}), lazy.listTools('c')]);
+  assert.equal(created.length, 1);
+  await lazy.callTool('a_1mcp_b', {});
+  assert.equal(created.length, 1);
+  await lazy.close();
+});
+
+test('lazy inner retries after a failed start', async () => {
+  let attempts = 0;
+  const { created, start } = fakeInnerFactory();
+  const lazy = new LazyInner1Mcp({
+    idleMs: 0,
+    start: async () => {
+      attempts += 1;
+      if (attempts === 1) throw new Error('boom');
+      return start();
+    }
+  });
+  await assert.rejects(lazy.listTools(), /boom/);
+  await lazy.listTools();
+  assert.equal(attempts, 2);
+  assert.equal(created.length, 1);
+  await lazy.close();
+});
+
+test('lazy inner closes after the idle timeout and restarts on the next call', async () => {
+  const { created, start } = fakeInnerFactory();
+  const lazy = new LazyInner1Mcp({ start, idleMs: 30 });
+  await lazy.listTools();
+  assert.equal(created[0].closeCount, 0);
+  await sleep(120);
+  assert.equal(created[0].closeCount, 1);
+  await lazy.callTool('a_1mcp_b', {});
+  assert.equal(created.length, 2);
+  assert.equal(created[1].closeCount, 0);
+  await lazy.close();
+  assert.equal(created[1].closeCount, 1);
+});
+
+test('lazy inner never closes while an operation is in flight', async () => {
+  const { created, start } = fakeInnerFactory();
+  const lazy = new LazyInner1Mcp({ start, idleMs: 20 });
+  await lazy.listTools();
+  let release;
+  created[0].hold = new Promise(resolve => { release = resolve; });
+  const pending = lazy.callTool('a_1mcp_b', {});
+  await sleep(100);
+  assert.equal(created[0].closeCount, 0);
+  release();
+  await pending;
+  await sleep(100);
+  assert.equal(created[0].closeCount, 1);
+  await lazy.close();
+});
+
+test('lazy inner starts a fresh inner after the peer died', async () => {
+  const { created, start } = fakeInnerFactory();
+  const lazy = new LazyInner1Mcp({ start, idleMs: 0 });
+  await lazy.listTools();
+  created[0].alive = false;
+  await Promise.all([lazy.listTools(), lazy.listTools()]);
+  assert.equal(created.length, 2);
+  assert.equal(created[0].closeCount, 1);
+  await lazy.close();
+});
+
+test('lazy inner with idleMs 0 never idle-stops', async () => {
+  const { created, start } = fakeInnerFactory();
+  const lazy = new LazyInner1Mcp({ start, idleMs: 0 });
+  await lazy.listTools();
+  await sleep(80);
+  assert.equal(created[0].closeCount, 0);
+  await lazy.close();
+  assert.equal(created[0].closeCount, 1);
+});
+
+test('lazy inner close is idempotent, cancels the timer, and rejects later calls', async () => {
+  const { created, start } = fakeInnerFactory();
+  const lazy = new LazyInner1Mcp({ start, idleMs: 20 });
+  await lazy.listTools();
+  await lazy.close();
+  await lazy.close();
+  assert.equal(created[0].closeCount, 1);
+  assert.equal(lazy.alive, false);
+  await assert.rejects(lazy.listTools(), { code: 'INNER_UNAVAILABLE' });
+  await assert.rejects(lazy.callTool('a_1mcp_b', {}), { code: 'INNER_UNAVAILABLE' });
+  await sleep(60);
+  assert.equal(created.length, 1);
+  assert.equal(created[0].closeCount, 1);
+});
+
+test('lazy inner close waits for a pending start and closes the started inner', async () => {
+  const { created, start } = fakeInnerFactory();
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  const lazy = new LazyInner1Mcp({ idleMs: 0, start: async () => { await gate; return start(); } });
+  const pending = lazy.listTools();
+  const rejected = assert.rejects(pending, { code: 'INNER_UNAVAILABLE' });
+  const closing = lazy.close();
+  release();
+  await closing;
+  await rejected;
+  assert.equal(created.length, 1);
+  assert.equal(created[0].closeCount, 1);
+});
+
+test('broker works through the lazy inner wrapper without starting it on construction', async t => {
+  const { created, start } = fakeInnerFactory();
+  const lazy = new LazyInner1Mcp({ start, idleMs: 0 });
+  const broker = new LocalToolBroker({ inner: lazy, configPath: await configFile(t) });
+  assert.equal(created.length, 0);
+  const discovery = await broker.list({});
+  assert.equal(created.length, 0);
+  assert.deepEqual(discovery.servers, [{ server: 'browser', available: null, toolCount: null, backendState: 'asleep' }]);
+  await broker.call({ server: 'browser', tool: 'fixture' });
+  assert.equal(created.length, 1);
+  await broker.shutdown();
+  assert.equal(created[0].closeCount, 1);
+});
+
+
+test('unscoped discovery paginates and filters without touching a sleeping backend', async t => {
+  const configPath = await configFile(t, ['alpha', 'beta', 'gamma', 'dev']);
+  const inner = { state: 'asleep', async listTools() { throw new Error('must stay asleep'); }, async callTool() {}, async close() {} };
+  const broker = new LocalToolBroker({ inner, configPath, fallbackOnlyServers: ['dev'] });
+  const first = await broker.list({ limit: 1 });
+  assert.deepEqual(first.servers.map(item => item.server), ['alpha']);
+  assert.equal(first.hasMore, true);
+  const second = await broker.list({ limit: 2, cursor: first.nextCursor });
+  assert.deepEqual(second.servers.map(item => item.server), ['beta', 'gamma']);
+  assert.equal(second.hasMore, false);
+  await assert.rejects(() => broker.list({ query: 'beta', cursor: first.nextCursor }), /INVALID_CURSOR/);
+  assert.deepEqual((await broker.list({ query: 'beta' })).servers.map(item => item.server), ['beta']);
+});
+
+test('idle inner stays alive while a background lease pins it', async () => {
+  const { created, start } = fakeInnerFactory();
+  let pinned = true;
+  const lazy = new LazyInner1Mcp({ start, idleMs: 15, isPinned: async () => pinned });
+  await lazy.listTools();
+  await new Promise(resolve => setTimeout(resolve, 65));
+  assert.equal(created[0].closeCount, 0);
+  pinned = false;
+  await new Promise(resolve => setTimeout(resolve, 65));
+  assert.equal(created[0].closeCount, 1);
+  await lazy.close();
+});
+
+
+test('runtime lease file protects the inner until its owner releases it', async t => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'local-lease-test-'));
+  t.after(() => fs.rm(directory, { recursive: true, force: true }));
+  const lease = await acquireRuntimeLease({ directory, kind: 'jev-run' });
+  t.after(() => lease.close());
+  const { created, start } = fakeInnerFactory();
+  const lazy = new LazyInner1Mcp({ start, idleMs: 15, isPinned: () => hasActiveRuntimeLeases(directory) });
+  t.after(() => lazy.close());
+  await lazy.listTools();
+  await new Promise(resolve => setTimeout(resolve, 65));
+  assert.equal(created[0].closeCount, 0);
+  await lease.close();
+  await new Promise(resolve => setTimeout(resolve, 65));
+  assert.equal(created[0].closeCount, 1);
 });

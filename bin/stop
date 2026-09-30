@@ -15,7 +15,7 @@ trap 'bridge_lock_release' EXIT INT TERM
 bridge_disable
 bridge_stop_watchdog
 bridge_stop_cloudflared
-bridge_stop_1mcp
+bridge_stop_origin
 rm -f "$BRIDGE_TUNNEL_URL_FILE"
 
 bridge_lock_release

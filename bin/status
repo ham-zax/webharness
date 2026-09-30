@@ -28,6 +28,12 @@ fi
 
 echo
 echo "== 1MCP OAuth origin =="
+PROXY_UP=false
+if bridge_pidfile_alive "$BRIDGE_WAKE_PROXY_PID_FILE" "$RENDERED_SOURCE_ROOT/lib/bridge/wake-proxy.mjs"; then PROXY_UP=true; fi
+echo "cold start: $BRIDGE_COLD_START; wake proxy: $PROXY_UP"
+if [ "$BRIDGE_COLD_START" = 1 ]; then
+  echo "backend port: $BRIDGE_BACKEND_PORT (zero backend processes is expected while asleep)"
+fi
 mapfile -t MCP_PIDS < <(bridge_find_1mcp_pids)
 MCP_COUNT="${#MCP_PIDS[@]}"
 if [ "$MCP_COUNT" -eq 0 ]; then
@@ -57,13 +63,13 @@ elif [ "$MCP_COUNT" -eq 0 ] && [ "$ONE_MCP_LEASE_HELD" = true ]; then
   warn "WebHarness runtime lease is held without a config-scoped 1MCP process"
 fi
 
-if [ -n "$LISTENER_PID" ] && [ -n "$SERVER_PID" ] && [ "$LISTENER_PID" != "$SERVER_PID" ]; then
+if [ "$BRIDGE_COLD_START" != 1 ] && [ -n "$LISTENER_PID" ] && [ -n "$SERVER_PID" ] && [ "$LISTENER_PID" != "$SERVER_PID" ]; then
   warn "PID/listener mismatch: 1MCP server.pid=$SERVER_PID but :$BRIDGE_ONE_MCP_PORT listener=$LISTENER_PID"
 fi
-if [ -n "$LISTENER_PID" ] && [ -n "$RUN_PID" ] && [ "$LISTENER_PID" != "$RUN_PID" ]; then
+if [ "$BRIDGE_COLD_START" != 1 ] && [ -n "$LISTENER_PID" ] && [ -n "$RUN_PID" ] && [ "$LISTENER_PID" != "$RUN_PID" ]; then
   warn "PID/listener mismatch: bridge one-mcp.pid=$RUN_PID but :$BRIDGE_ONE_MCP_PORT listener=$LISTENER_PID"
 fi
-if [ "$MCP_COUNT" -eq 1 ] && [ -n "$LISTENER_PID" ] && [ "${MCP_PIDS[0]}" != "$LISTENER_PID" ]; then
+if [ "$BRIDGE_COLD_START" != 1 ] && [ "$MCP_COUNT" -eq 1 ] && [ -n "$LISTENER_PID" ] && [ "${MCP_PIDS[0]}" != "$LISTENER_PID" ]; then
   warn "PID/listener mismatch: config-scoped 1MCP=${MCP_PIDS[0]} but :$BRIDGE_ONE_MCP_PORT listener=$LISTENER_PID"
 fi
 
@@ -100,13 +106,17 @@ else
 fi
 
 if [ "$DESIRED" = "running" ]; then
-  [ "$MCP_COUNT" -eq 1 ] || warn "running bridge expects exactly one 1MCP process, found $MCP_COUNT"
+  if [ "$BRIDGE_COLD_START" = 1 ]; then
+    [ "$PROXY_UP" = true ] || warn "running bridge wake proxy PID is missing/stale"
+  else
+    [ "$MCP_COUNT" -eq 1 ] || warn "running bridge expects exactly one 1MCP process, found $MCP_COUNT"
+  fi
   [ "$LOCAL_READY" = true ] || warn "running bridge local 1MCP health is unavailable"
   [ "$CLOUDFLARED_UP" = true ] || warn "running bridge cloudflared PID is missing/stale"
   [ "$WATCHDOG_UP" = true ] || warn "running bridge watchdog PID is missing/stale"
   [ "$PUBLIC_READY" = true ] || warn "running bridge public health is unavailable"
 else
-  if [ "$MCP_COUNT" -gt 0 ] || [ "$CLOUDFLARED_UP" = true ] || [ "$WATCHDOG_UP" = true ]; then
+  if [ "$PROXY_UP" = true ] || [ "$MCP_COUNT" -gt 0 ] || [ "$CLOUDFLARED_UP" = true ] || [ "$WATCHDOG_UP" = true ]; then
     warn "bridge is disabled but managed processes are still present"
   fi
 fi

@@ -148,7 +148,8 @@ export class TmuxBackend {
     } catch (error) {
       const stderr = String(error?.stderr || '').trim();
       const message = stderr || error?.message || 'tmux command failed';
-      const targetMissing = /can't find (?:session|window|pane)|no such (?:session|window|pane)/i.test(message);
+      const targetMissing = /can't find (?:session|window|pane)|no such (?:session|window|pane)/i.test(message)
+        || (args[0] === 'has-session' && message === 'no current target');
       const unavailable = /no such file|error connecting|no server running|connection refused/i.test(message);
       const code = targetMissing ? 'SESSION_NOT_FOUND' : (unavailable ? 'TMUX_UNAVAILABLE' : 'TMUX_ERROR');
       throw new TerminalError(code, message, {
@@ -219,7 +220,15 @@ export class TmuxBackend {
       '#{window_index}',
       '#{pane_index}',
     ].join('|');
-    const { stdout } = await this.run(['list-panes', '-a', '-F', format]);
+    let stdout;
+    try {
+      ({ stdout } = await this.run(['list-panes', '-a', '-F', format]));
+    } catch (error) {
+      // tmux can report this for a live server with no sessions. Confirm the
+      // empty catalog rather than turning a normal first-use state into failure.
+      if (error.code === 'TMUX_ERROR' && error.message === 'no current target' && (await this.listSessionNames()).length === 0) return [];
+      throw error;
+    }
     const sessions = [];
     for (const line of stdout.split('\n').filter(Boolean)) {
       const fields = line.split('|');
@@ -231,7 +240,9 @@ export class TmuxBackend {
   }
 
   async sessionInfo(name) {
-    validateSessionName(name);
+    // display-message can succeed with an empty value for a missing target.
+    // Prove session existence so durable waits observe an explicit close.
+    await this.assertSession(name);
     const { stdout } = await this.run([
       'display-message', '-p', '-t', `${name}:0.0`, SESSION_INFO_FORMAT_FIELDS.join('|'),
     ]);
@@ -239,11 +250,17 @@ export class TmuxBackend {
   }
 
   async listClients() {
-    const { stdout } = await this.run([
-      'list-clients',
-      '-F',
-      '#{client_pid}|#{client_session}|#{client_tty}|#{client_readonly}|#{client_created}',
-    ]);
+    let stdout;
+    try {
+      ({ stdout } = await this.run([
+        'list-clients',
+        '-F',
+        '#{client_pid}|#{client_session}|#{client_tty}|#{client_readonly}|#{client_created}',
+      ]));
+    } catch (error) {
+      if (error.code === 'TMUX_ERROR' && error.message === 'no current target' && (await this.listSessionNames()).length === 0) return [];
+      throw error;
+    }
     return stdout.split('\n').filter(Boolean).map((line) => {
       const [pid, session, tty, readOnly, created] = line.split('|');
       return { pid: Number(pid), session, tty, readOnly: readOnly === '1', created };

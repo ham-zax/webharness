@@ -13,14 +13,13 @@ Agents should reason about two outer MCP surfaces rather than individual backend
 | Capability | Use it for | Important boundary |
 |---|---|---|
 | **Dev** | focused files, guarded edits, native file import, aggregate Git review, structured argv execution, native Bash, durable waits | direct high-frequency workstation primitives with the authority of the selected trust profile |
-| **Local** | Code intelligence, durable Terminal control, host actions, Browser, owner-added MCPs, and writable-call recovery | exposes only `tool_list`, `tool_schema`, `tool_call`, `fallback_dispatch`, and `tool_batch`; logical servers stay behind one compact broker surface, while only Dev is mirrored as a hidden fallback route |
+| **Local** | durable Terminal control, host actions, Browser, owner-added MCPs, and writable-call recovery | exposes only `tool_list`, `tool_schema`, `tool_call`, `fallback_dispatch`, and `tool_batch`; logical servers stay behind one compact broker surface, while only Dev is mirrored as a hidden fallback route |
 
 The full workstation composition is deliberately small at the client boundary:
 
 ```text
 Dev       read edit write import_file file_ops review_changes wait exec bash
 Local     tool_list tool_schema tool_call fallback_dispatch tool_batch
-            |-- code              code_search / code_context / code_symbol
             |-- terminal          durable PTY/session control
             |-- host              pc_sleep
             |-- browser-fast      observe / execute
@@ -39,14 +38,16 @@ MCP client (for example ChatGPT)
 Cloudflare Tunnel
   |
   v
-1MCP on loopback
+Loopback wake proxy (always listening)
+  |
+  v
+1MCP on loopback (on demand)
   |
   +-- Dev
   `-- Local
         |
         `-- inner 1MCP
               |-- dev ------------------> fallback_dispatch only
-              |-- code -----------------> rooted CodeDB facade
               |-- terminal -------------> broker -> tmux PTYs
               |-- host -----------------> Windows host actions
               |-- browser-fast ---------> Agent Browser
@@ -56,7 +57,7 @@ Cloudflare Tunnel
                          `-- Linux: configured Chrome/Clearcote backend and profile through WSLg
 ```
 
-Cloudflare is the current public HTTPS transport and 1MCP is the OAuth/MCP gateway. The maintained workstation uses a locally-managed Cloudflare Tunnel configured outside the repository and leaves `MCP_TUNNEL_NAME` empty, so WebHarness runs `cloudflared tunnel run` against the operator-owned default Cloudflare configuration. OpenAI Secure MCP Tunnel is a separate future connector path that could keep 1MCP private behind a local `tunnel-client`; WebHarness does not currently implement or supervise that path. See [Getting Started](docs/getting-started.md#provision-the-cloudflare-transport-used-by-the-reference-deployment) for both boundaries. Providers remain local stdio processes. The Local broker exists so adding or upgrading a large downstream tool catalog does not force the entire catalog into every client session.
+Cloudflare is the current public HTTPS transport and 1MCP is the OAuth/MCP gateway. The maintained workstation uses a locally-managed Cloudflare Tunnel configured outside the repository and leaves `MCP_TUNNEL_NAME` empty, so WebHarness runs `cloudflared tunnel run` against the operator-owned default Cloudflare configuration. OpenAI Secure MCP Tunnel is a separate future connector path that could keep 1MCP private behind a local `tunnel-client`; WebHarness does not currently implement or supervise that path. See [Getting Started](docs/getting-started.md#provision-the-cloudflare-transport-used-by-the-reference-deployment) for both boundaries. Providers remain local stdio processes. A small loopback wake proxy keeps the endpoint available while idle 1MCP and its providers release memory. Dev execution uses an idle worker, and general Local discovery does not wake its inner backend. See [idle configuration](docs/configuration.md#on-demand-runtimes). The Local broker exists so adding or upgrading a large downstream tool catalog does not force the entire catalog into every client session.
 
 ## Choose an authority profile
 
@@ -64,7 +65,7 @@ There is no silent default. Pick the authority you intend to give the agent.
 
 | Profile | Authority | Reference role |
 |---|---|---|
-| `personal` | WSL-user Dev primitives plus Local logical servers for Code, persistent Terminal, Browser, host sleep, and owner-added MCPs | maintained full Personal Workstation reference |
+| `personal` | WSL-user Dev primitives plus Local logical servers for persistent Terminal, Browser, host sleep, and owner-added MCPs | maintained full Personal Workstation reference |
 | `restricted` | workspace-bounded files plus an allowlisted legacy shell | conservative smaller example |
 | `trusted-dev` | workspace-bounded files plus unrestricted structured argv execution and Bash as the Linux service user | smaller trusted-development example; use only on a dedicated host |
 
@@ -111,7 +112,7 @@ Use the narrowest domain that owns the task:
 | inspect or mutate known files; Git/build/test; short bounded command expected to finish comfortably inside the connector window | Dev |
 | import a ChatGPT attached/generated file into WSL | Dev -> `import_file` |
 | inspect the aggregate current Git diff after related mutations | Dev -> `review_changes` |
-| understand symbols/callers/dependencies after initial repository orientation | Local -> `code` |
+| find symbols and inspect source | Dev -> `exec` with `rg`, then `read` |
 | command runtime is uncertain, may approach a minute, must persist, needs a PTY, or may need human input | Local -> `terminal`, then Dev `wait` |
 | explicitly confirmed Windows host sleep | Local -> `host` -> `pc_sleep` |
 | routine navigation/forms/clicks in a resource-local browser | Local -> `browser-fast` |
@@ -120,7 +121,7 @@ Use the narrowest domain that owns the task:
 
 Treat direct Dev `exec`/`bash` as short-RPC execution. Route only work expected to complete comfortably inside the model-facing connector window through them; use **45 seconds as the routing target, not a protocol guarantee**. If runtime is uncertain or may approach a minute, start it through Local `server="terminal"`, observe `terminal_exit`/`terminal_output` or other readiness through Dev `wait`, and use `terminal_read` for output. The Dev provider may accept a larger internal timeout, but that does not extend the connector request lifetime.
 
-For large or unfamiliar repositories, begin with `exec(argv=["rg", ...])` and focused reads before paying the cost of a new CodeDB index unless indexed intelligence is specifically useful. Use Bash only when the discovery command itself needs shell composition.
+Use `exec(argv=["rg", ...])` and focused reads for repository discovery. Use Bash when the discovery command itself needs shell composition.
 
 For `browser-fast`, observe first and pass the returned `active_tab` to `execute`. Execution validates that exact pinned CDP target before using observation refs. `observe` is the recovery/rebind boundary if the old target disappears. A click follows exactly one newly created target before later actions; multiple new targets stop the sequence rather than guessing. Failed, partial, or unknown actions are never automatically replayed.
 
@@ -182,12 +183,11 @@ webharness stop
 
 | Capability | WebHarness reference | Current gap |
 |---|---|---|
-| Semantic repository intelligence | Local `server="code"` routes to the repository-rooted CodeDB search/context/symbol facade | indexing has a real disk/RAM cost and is not forced for every task |
 | Durable interactive processes | Local `server="terminal"` preserves the Terminal split between tmux process lifetime and broker/model control | no built-in cross-chat recording/journal product |
 | Event-driven waiting | Dev `wait` persists named process/port/file/HTTP/systemd/timer conditions | a wait does not itself create a new model turn |
 | Browser interaction | `browser-fast` provides compact observe/execute with persistent browser state | Chromium/CDP is the qualified browser family |
 | Browser diagnostics | `browser-devtools` provides the full Chrome DevTools MCP surface | shares the Local authorization domain with routine Browser |
-| High-cardinality local MCPs | Local keeps five outer metatools while Code, Terminal, Host, Browser, and owner MCPs stay behind logical server names; only Dev is a hidden fallback-only mirror | `fallback_dispatch` is intentionally read-only-annotated but can perform the selected downstream mutation, so `tag:local` must be treated as granting that recovery authority |
+| High-cardinality local MCPs | Local keeps five outer metatools while Terminal, Host, Browser, and owner MCPs stay behind logical server names; only Dev is a hidden fallback-only mirror | `fallback_dispatch` is intentionally read-only-annotated but can perform the selected downstream mutation, so `tag:local` must be treated as granting that recovery authority |
 | First-class delegated workers | not implemented in the stabilized runtime | Chat WSL-style Agents and cross-chat recordings are the primary current capability gap |
 
 The next planned additive capability is a small Agents surface—`spawn`, `message`, `status`, `finish`—backed by an Agent Broker. It is intentionally not part of this stabilization and does not require a Workspace/worktree/project-authority subsystem. See the [Agents implementation plan](docs/superpowers/plans/2026-08-29-webharness-agents-implementation.md) for that follow-on.
@@ -221,7 +221,7 @@ Forks should preserve the model-facing contracts they rely on, then deliberately
 
 - The project currently pins 1MCP 0.37.0 after qualification of the current provider composition, direct-mode rich Browser results, config reload, OAuth behavior, and the supervised-stdio compatibility patches described in the operations guide. Upgrade it deliberately rather than treating it as an unqualified interchangeable dependency.
 - 1MCP listens on loopback; Cloudflare supplies the public HTTPS route. OAuth remains required for the public MCP origin.
-- The Local broker is one authorization domain for Code, Terminal, Host, Browser, and owner-added MCPs. `fallback_dispatch` additionally reaches the hidden Dev mirror and is intentionally advertised with `readOnlyHint`; treat its description and selected downstream operation—not that hint—as the real side-effect boundary.
+- The Local broker is one authorization domain for Terminal, Host, Browser, and owner-added MCPs. `fallback_dispatch` additionally reaches the hidden Dev mirror and is intentionally advertised with `readOnlyHint`; treat its description and selected downstream operation—not that hint—as the real side-effect boundary.
 - Browser debugging endpoints are local implementation details and are not intentionally published beyond loopback.
 - Sudo/password/MFA input belongs in a human-controlled Terminal client, not in MCP arguments or agent-visible logs.
 
@@ -232,7 +232,7 @@ See [Security](docs/security.md) for the full trust model.
 - [Documentation index](docs/README.md) — choose the right guide
 - [Getting started](docs/getting-started.md) — reproduce the reference deployment
 - [Reference environment](docs/reference-environment.md) — qualified host/runtime assumptions and forking caveats
-- [Architecture](docs/architecture.md) — outer Dev/Local ownership and the Code, Terminal, Host, and Browser logical servers
+- [Architecture](docs/architecture.md) — outer Dev/Local ownership and the Terminal, Host, and Browser logical servers
 - [MCP compatibility](docs/compatibility.md) — model-facing contract and breaking-change rules
 - [Operations](docs/operations.md) — run, inspect, restart, recover, and cut over source
 - [Security](docs/security.md) — authority profiles and trust boundaries

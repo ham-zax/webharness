@@ -38,13 +38,6 @@
         "MCP_BROWSER_JEV_ENV_FILE": "__BROWSER_JEV_ENV_FILE__"
       }
     },
-    "code": {
-      "command": "node",
-      "args": [
-        "__REPO_ROOT__/providers/code-router/server.mjs"
-      ],
-      "env": {}
-    },
     "terminal": {
       "command": "node",
       "args": [

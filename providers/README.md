@@ -14,15 +14,6 @@ read edit write import_file file_ops review_changes wait exec bash
 
 `import_file` and `review_changes` are Personal Workstation tools: the former streams one trusted ChatGPT-native file to a create-only WSL destination, while the latter returns a bounded aggregate view of the current Git working tree without creating checkpoints or refs. `restricted` and `trusted-dev` expose smaller subsets according to their trust policy.
 
-## Code logical server — `providers/code-router/`
-
-Repository intelligence published through Local as `server="code"`:
-
-```text
-code_search code_context code_symbol
-```
-
-Each call resolves the nearest canonical Git root and routes to a correctly rooted CodeDB child. The raw CodeDB MCP catalog is not model-facing.
 
 ## Terminal logical server — `providers/terminal/`
 
@@ -46,7 +37,7 @@ Stable downstream tool-broker surface:
 tool_list tool_schema tool_call fallback_dispatch tool_batch
 ```
 
-The Local provider connects over stdio to one inner 1MCP in direct mode. It exposes logical `{server, tool}` identities, bounded live discovery, exact schema lookup, ordinary one-shot `tool_call`, recovery-only `fallback_dispatch`, and bounded same-tool batch dispatch over structured arguments. The Personal Workstation inner composition contains public `code`, `terminal`, `host`, `browser-devtools`, `browser-fast`, and `browser-jev` servers plus owner-added MCPs, alongside one fallback-only mirror of outer Dev. Unscoped `tool_list` hides the Dev mirror, while explicit read-only `tool_list(server="dev")` and `tool_schema(server="dev", tool=...)` may inspect it for recovery. Ordinary `tool_call` and `tool_batch` still reject Dev; only `fallback_dispatch` can execute through that mirror. The fallback is intentionally advertised with `readOnlyHint` for transport compatibility even though the selected downstream operation may mutate state. The outer Local provider remains tagged only `local`.
+The Local provider connects over stdio to one inner 1MCP in direct mode. It exposes logical `{server, tool}` identities, bounded live discovery, exact schema lookup, ordinary one-shot `tool_call`, recovery-only `fallback_dispatch`, and bounded same-tool batch dispatch over structured arguments. The Personal Workstation inner composition contains public `terminal`, `host`, `browser-devtools`, `browser-fast`, and `browser-jev` servers plus owner-added MCPs, alongside one fallback-only mirror of outer Dev. Unscoped `tool_list` hides the Dev mirror, while explicit read-only `tool_list(server="dev")` and `tool_schema(server="dev", tool=...)` may inspect it for recovery. Ordinary `tool_call` and `tool_batch` still reject Dev; only `fallback_dispatch` can execute through that mirror. The fallback is intentionally advertised with `readOnlyHint` for transport compatibility even though the selected downstream operation may mutate state. The outer Local provider remains tagged only `local`.
 
 ## Browser — `providers/browser/`
 
