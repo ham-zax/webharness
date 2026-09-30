@@ -10,6 +10,7 @@ import { resolveBrowserMemory } from '../browser-memory.mjs';
 import { resolveLinuxBrowserBackend } from '../browser-backend-config.mjs';
 import { ManagedClearcoteRuntime } from '../clearcote-runtime.mjs';
 import { ensureWindowsChrome } from '../../browser/windows-chrome-runtime.mjs';
+import { readTargetInfo } from '../target-info.mjs';
 import {
   AgentBrowserRunner,
   FastBrowser,
@@ -61,6 +62,71 @@ test('action mapping prefers observation refs and keeps batching vocabulary smal
   assert.throws(() => actionCommand({ op: 'upload', target: 'e5', artifact: 'document.current' }), /upload.file/);
   assert.throws(() => actionCommand({ op: 'wait', url: '**/done' }), /exactly one/);
   assert.throws(() => actionCommand({ op: 'select', target: 'e5', values: ['a', 'b'] }), /exactly one/);
+});
+
+test('execute clears a field with an empty fill value and rejects non-string values before dispatch', async () => {
+  const commandsRun = [];
+  const browser = new FastBrowser({ runner: {
+    async batch(_target, commands) {
+      commandsRun.push(...commands);
+      return { exitCode: 0, items: commands.map(command => ({
+        success: true,
+        result: command[0] === 'tab' ? { tabs: [{ active: true, targetId: 'A' }] } : { value: command[2] }
+      })) };
+    }
+  } });
+  const result = await browser.execute({ tab: 'A', final_state: 'none', actions: [{ op: 'fill', target: 'e1', value: '' }] });
+  assert.equal(result.outcome, 'completed');
+  assert.deepEqual(commandsRun.at(-1), ['fill', '@e1', '']);
+  const dispatched = commandsRun.length;
+  for (const value of [undefined, null, 0]) {
+    await assert.rejects(browser.execute({ tab: 'A', actions: [{ op: 'fill', target: 'e1', value }] }), /fill.value must be a string/);
+  }
+  assert.equal(commandsRun.length, dispatched);
+});
+
+test('target ownership lookup reads CDP metadata without switching tabs and closes its connection', async () => {
+  const connections = [];
+  class Socket extends EventTarget {
+    constructor(url) {
+      super();
+      this.url = url;
+      this.closed = false;
+      connections.push(this);
+      queueMicrotask(() => this.dispatchEvent(new Event('open')));
+    }
+    send(message) {
+      this.request = JSON.parse(message);
+      this.dispatchEvent(new MessageEvent('message', { data: JSON.stringify({
+        id: this.request.id, result: { targetInfo: { targetId: 'B', type: 'page', openerId: 'A' } }
+      }) }));
+    }
+    close() { this.closed = true; this.dispatchEvent(new Event('close')); }
+  }
+  const info = await readTargetInfo('http://127.0.0.1:9222', 'B', {
+    fetchImpl: async url => {
+      assert.equal(url.href, 'http://127.0.0.1:9222/json/version');
+      return { ok: true, json: async () => ({ webSocketDebuggerUrl: 'ws://127.0.0.1:9222/devtools/browser/browser-id' }) };
+    },
+    WebSocketImpl: Socket
+  });
+  assert.equal(info.openerId, 'A');
+  assert.deepEqual(connections[0].request, { id: 1, method: 'Target.getTargetInfo', params: { targetId: 'B' } });
+  assert.equal(connections[0].closed, true);
+  await assert.rejects(readTargetInfo('ws://example.com:9222', 'B', { WebSocketImpl: Socket }), /loopback/);
+  assert.equal(connections.length, 1);
+});
+
+test('target ownership lookup times out and closes an unresponsive connection', async () => {
+  let socket;
+  class Socket extends EventTarget {
+    constructor() { super(); socket = this; }
+    close() { this.closed = true; this.dispatchEvent(new Event('close')); }
+  }
+  await assert.rejects(readTargetInfo('ws://127.0.0.1:9222/browser', 'B', {
+    WebSocketImpl: Socket, timeoutMs: 10
+  }), /timed out/);
+  assert.equal(socket.closed, true);
 });
 
 test('browser memory resolves exact sites and reusable platforms without first-label collisions', async t => {
@@ -909,6 +975,11 @@ test('execute follows exactly one target opened by a click before later actions'
   const opener = { active: true, tabId: 't1', targetId: 'OPENER', title: 'Opener', url: 'https://example.test/' };
   const popup = { active: false, tabId: 't2', targetId: 'POPUP', title: 'Popup', url: 'https://example.test/popup' };
   const runner = {
+    async tabOpener(target, tab) {
+      assert.equal(target, 'windows');
+      assert.equal(tab, 'POPUP');
+      return 'OPENER';
+    },
     async batch(target, commands, options) {
       calls.push({ target, commands, options });
       if (commands.length === 2 && commands[0][0] === 'click') {
@@ -964,6 +1035,37 @@ test('execute follows exactly one target opened by a click before later actions'
   assert.equal(result.final_state.active_tab, 'POPUP');
   assert.equal(result.final_state.origin, popup.url);
   assert.equal(calls.some(call => call.commands.length === 1 && call.commands[0][0] === 'tab' && call.commands[0][1] === 'POPUP'), true);
+});
+
+test('execute stops before following a new tab from another caller or an unverifiable opener', async () => {
+  for (const opener of ['OTHER', undefined, new Error('CDP unavailable')]) {
+    let clicked = false;
+    const calls = [];
+    const browser = new FastBrowser({ runner: {
+      async tabOpener() {
+        if (opener instanceof Error) throw opener;
+        return opener;
+      },
+      async batch(_target, commands) {
+        calls.push(...commands);
+        return { exitCode: 0, items: commands.map(command => {
+          if (command[0] === 'tab' && command[1] === 'list') return { success: true, result: {
+            tabs: [{ active: true, targetId: 'A' }, ...(clicked ? [{ active: false, targetId: 'B' }] : [])]
+          } };
+          if (command[0] === 'click') clicked = true;
+          return { success: true, result: {} };
+        }) };
+      }
+    } });
+    const result = await browser.execute({
+      browser_target: 'linux', browser_backend: 'clearcote', browser_profile: 'shared', tab: 'A',
+      final_state: 'none', actions: [{ op: 'click', target: 'e1' }, { op: 'press', key: 'Enter' }]
+    });
+    assert.equal(result.outcome, 'partial');
+    assert.deepEqual(result.steps.map(step => step.status), ['completed', 'not_run']);
+    assert.match(result.transition_error, /attributed|ownership could not be verified/);
+    assert.equal(calls.some(command => command[0] === 'press' || command[1] === 'B'), false);
+  }
 });
 
 test('execute fails closed after a click opens multiple targets without relabeling the click', async () => {

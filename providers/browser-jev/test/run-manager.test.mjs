@@ -324,6 +324,46 @@ test('unknown runs fail closed and close drains live workers', async () => {
   assert.equal(second.closeCount, 1);
 });
 
+test('close waits for in-flight startup and releases the worker and lifecycle lease once', async () => {
+  let releaseStart;
+  let notifyStart;
+  let released = 0;
+  const starting = new Promise(resolve => { notifyStart = resolve; });
+  const gate = new Promise(resolve => { releaseStart = resolve; });
+  const worker = new FakeWorker({ start: async () => { notifyStart(); await gate; return snapshot(); } });
+  const { manager } = managerFixture({ worker, leaseFactory: async () => ({ async close() { released += 1; } }) });
+  const start = manager.start(startArgs());
+  await starting;
+  let closed = false;
+  const close = manager.close().then(() => { closed = true; });
+  const secondClose = manager.close();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(closed, false);
+  await assert.rejects(manager.start(startArgs()), /JEV_MANAGER_CLOSED/);
+  releaseStart();
+  const { run_id: runId } = await start;
+  await Promise.all([close, secondClose]);
+  assert.throws(() => manager.state(runId), /unknown run/i);
+  assert.equal(worker.closeCount, 1);
+  assert.equal(released, 1);
+  assert.equal(worker.requests.filter(item => item.command === 'stop').length, 1);
+});
+
+test('close during backend resolution rejects the pending start before creating a worker', async () => {
+  let resolveBackend;
+  let workersCreated = 0;
+  const { manager } = managerFixture({
+    resolver: { resolve: () => new Promise(resolve => { resolveBackend = resolve; }) },
+    workerFactory: async () => { workersCreated += 1; return new FakeWorker(); }
+  });
+  const start = manager.start(startArgs());
+  const rejected = assert.rejects(start, /JEV_MANAGER_CLOSED/);
+  const close = manager.close();
+  resolveBackend({ queueKey: 'shared' });
+  await Promise.all([rejected, close]);
+  assert.equal(workersCreated, 0);
+});
+
 function fakeChild(onWrite) {
   const child = new EventEmitter();
   child.stdout = new PassThrough();
@@ -346,6 +386,24 @@ test('worker client matches response ids and permits only one outstanding reques
   await assert.rejects(client.request('tick', {}), /already has an outstanding/);
   assert.deepEqual(await pending, { status: 'ready' });
   await client.close();
+});
+
+test('worker client preserves Unicode across arbitrary pipe chunk boundaries and successive responses', async () => {
+  const text = 'café हिंदी 日本語 🦊';
+  const child = fakeChild((line, current) => {
+    const request = JSON.parse(line);
+    setImmediate(() => {
+      const response = Buffer.from(`${JSON.stringify({ id: request.id, ok: true, result: { text } })}\n`);
+      for (let offset = 0; offset < response.length; offset += 1) current.stdout.write(response.subarray(offset, offset + 1));
+    });
+  });
+  child.exitCode = 0;
+  const client = await JevWorkerClient.start({ python: '/venv/python', script: '/worker.py', env: {}, spawnProcess: () => child });
+  try {
+    for (let index = 0; index < 3; index += 1) assert.deepEqual(await client.request('state', {}), { text });
+  } finally {
+    await client.close();
+  }
 });
 
 test('worker client rejects malformed, mismatched, oversized, exited, and timed-out responses', async () => {

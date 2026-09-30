@@ -293,6 +293,9 @@ export class BrowserJevRunManager {
     this.leaseFactory = leaseFactory;
     this.runs = new Map();
     this.operationTails = new Map();
+    this.starts = new Set();
+    this.closing = false;
+    this.closePromise = null;
   }
 
   async queued(key, operation) {
@@ -357,11 +360,24 @@ export class BrowserJevRunManager {
   }
 
   async start(input) {
+    if (this.closing) throw managerError('JEV_MANAGER_CLOSED', 'run manager is shutting down');
+    const starting = this.startRun(input);
+    this.starts.add(starting);
+    try {
+      return await starting;
+    } finally {
+      this.starts.delete(starting);
+    }
+  }
+
+  async startRun(input) {
     const args = validateStartArguments(input);
     const backend = await this.backendResolver.resolve(args.scenario);
+    if (this.closing) throw managerError('JEV_MANAGER_CLOSED', 'run manager is shutting down');
     const id = this.idFactory();
     const daemonName = `jev-${id.slice(0, 32)}`;
     return await this.queued(backend.queueKey, async () => {
+      if (this.closing) throw managerError('JEV_MANAGER_CLOSED', 'run manager is shutting down');
       const credentials = await this.credentialLoader({
         file: this.credentialFile,
         baseEnv: this.baseEnv
@@ -529,7 +545,14 @@ export class BrowserJevRunManager {
   }
 
   async close() {
-    const runIds = [...this.runs.keys()];
-    await Promise.allSettled(runIds.map(runId => this.stop(runId)));
+    if (!this.closePromise) {
+      this.closing = true;
+      this.closePromise = (async () => {
+        await Promise.allSettled([...this.starts]);
+        const runIds = [...this.runs.keys()];
+        await Promise.allSettled(runIds.map(runId => this.stop(runId)));
+      })();
+    }
+    return await this.closePromise;
   }
 }

@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { StringDecoder } from 'node:string_decoder';
 
 const DEFAULT_MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
 const DEFAULT_TIMEOUT_MS = 120_000;
@@ -33,6 +34,7 @@ export class JevWorkerClient {
     this.nextId = 0;
     this.pending = null;
     this.stdoutBuffer = '';
+    this.stdoutDecoder = new StringDecoder('utf8');
     this.stderrBytes = 0;
     this.closed = false;
     this.fatalError = null;
@@ -47,7 +49,7 @@ export class JevWorkerClient {
 
   onStdout(chunk) {
     if (this.closed) return;
-    this.stdoutBuffer += chunk.toString('utf8');
+    this.stdoutBuffer += this.stdoutDecoder.write(chunk);
     let newline;
     while ((newline = this.stdoutBuffer.indexOf('\n')) !== -1) {
       const line = this.stdoutBuffer.slice(0, newline);
@@ -172,4 +174,3 @@ export class JevWorkerClient {
     await this.waitForExit(1000);
   }
 }
-

@@ -11,6 +11,7 @@ import { ensureWindowsChrome } from '../browser/windows-chrome-runtime.mjs';
 import { resolveLinuxBrowserBackend } from './browser-backend-config.mjs';
 import { ManagedClearcoteRuntime } from './clearcote-runtime.mjs';
 import { resolveBrowserMemory } from './browser-memory.mjs';
+import { readTargetInfo } from './target-info.mjs';
 
 export const AGENT_BROWSER_VERSION = '0.35.0';
 export const DEFAULT_SESSION_PREFIX = 'mcp-browser-fast';
@@ -36,6 +37,11 @@ function fastError(code, message, cause) {
 
 function requiredString(value, name) {
   if (typeof value !== 'string' || value.length === 0) throw fastError('INVALID_ARGUMENT', `${name} must be a non-empty string`);
+  return value;
+}
+
+function stringValue(value, name) {
+  if (typeof value !== 'string') throw fastError('INVALID_ARGUMENT', `${name} must be a string`);
   return value;
 }
 
@@ -630,6 +636,18 @@ export class AgentBrowserRunner {
       : this.linuxBatch(commands, options);
   }
 
+  async tabOpener(target, tab, options) {
+    const batch = await this.targetBatch(target, [['get', 'cdp-url']], { ...options, bail: true });
+    const item = batch.items[0];
+    if (item?.success !== true) throw fastError('BROWSER_FAST_CDP_UNAVAILABLE', item?.error || 'failed to resolve browser endpoint');
+    const result = item.result;
+    const endpoint = typeof result === 'string'
+      ? result
+      : ['url', 'cdpUrl', 'cdp_url', 'wsEndpoint'].map(key => result?.[key]).find(value => typeof value === 'string' && value.length > 0);
+    const info = await readTargetInfo(endpoint, tab);
+    return info.openerId;
+  }
+
   async pathForTarget(target, file) {
     if (target !== 'windows') return file;
     const translated = await this.processRunner('wslpath', ['-w', file]);
@@ -718,7 +736,7 @@ export function actionCommand(action) {
     case 'forward': return ['forward'];
     case 'reload': return ['reload'];
     case 'click': return ['click', directTarget(action)];
-    case 'fill': return ['fill', directTarget(action), requiredString(action.value, 'fill.value')];
+    case 'fill': return ['fill', directTarget(action), stringValue(action.value, 'fill.value')];
     case 'type': return ['type', directTarget(action), requiredString(action.value, 'type.value')];
     case 'check': return ['check', directTarget(action)];
     case 'uncheck': return ['uncheck', directTarget(action)];
@@ -963,6 +981,18 @@ export class FastBrowser {
           }
           if (newTabs.length === 1) {
             const newTab = newTabs[0].targetId ?? newTabs[0].tabId;
+            const openerTab = before.tabs.find(item => item.active === true) ?? before.tabs[0];
+            const openerId = openerTab?.targetId ?? openerTab?.tabId;
+            try {
+              const actualOpener = await this.runner.tabOpener(target, newTab, sessionSelection);
+              if (!openerId || actualOpener !== openerId) {
+                transitionError = `new tab ${newTab} cannot be attributed to clicked tab ${openerId ?? 'unknown'}; observe the intended tab before continuing`;
+                break;
+              }
+            } catch (error) {
+              transitionError = `new tab ${newTab} ownership could not be verified: ${error instanceof Error ? error.message : String(error)}`;
+              break;
+            }
             const selected = await this.runner.batch(target, [['tab', newTab]], { bail: true, ...sessionSelection });
             const selectedItem = selected.items[0];
             if (selected.contextError || selectedItem?.success !== true) {
@@ -1078,7 +1108,7 @@ export function createBrowserFastServer({ browser } = {}) {
     },
     {
       name: 'execute',
-      description: 'Execute multiple mechanical browser actions locally in one call, including hover, wheel scroll, drag, and upload by logical approved artifact name rather than arbitrary path. Managed Clearcote routes supported input through its humanized Playwright layer while Agent Browser keeps refs and tab identity. After a click, exactly one new tab is followed before later actions; multiple new tabs stop the sequence without guessing. Defaults to fail-fast, never auto-retries, and reports completed/failed/unknown/not-run steps plus final compact state so partial external side effects are explicit.',
+      description: 'Execute multiple mechanical browser actions locally in one call, including hover, wheel scroll, drag, and upload by logical approved artifact name rather than arbitrary path. Managed Clearcote routes supported input through its humanized Playwright layer while Agent Browser keeps refs and tab identity. After a click, exactly one new tab is followed before later actions only when Chromium verifies its opener is the clicked tab; multiple new tabs or unverifiable ownership stop the sequence without guessing. Defaults to fail-fast, never auto-retries, and reports completed/failed/unknown/not-run steps plus final compact state so partial external side effects are explicit.',
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
       inputSchema: {
         type: 'object',
