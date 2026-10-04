@@ -24,7 +24,7 @@ Use only on a dedicated development host where unrestricted shell authority is i
 
 Trusted-owner authority on a separate Linux machine. Dev uses user paths and unrestricted execution. Local exposes persistent Terminal and owner-added stdio servers, plus the hidden Dev recovery mirror; Browser and Host providers are absent. The Linux account is the authority boundary, and a Local grant includes the selected downstream operation's full authority.
 
-Use a separate tunnel, public origin, and OAuth state for each computer. The pinned consent form does not authenticate the human owner: keep consent submission and management private on a new public server, approving through an SSH local forward. See [Headless Server](headless-server.md) for installation and ingress rules.
+Use a separate tunnel, public origin, and OAuth state for each computer. The pinned consent form does not authenticate the human owner: keep consent submission and management private on a new public server, approving through an SSH local forward. See [Headless Server](headless-server.md) for installation, ingress rules, and approval/token-status troubleshooting.
 
 ## `personal` — Personal Workstation
 
