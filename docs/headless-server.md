@@ -20,6 +20,14 @@ Startup enables lingering user services and starts the bridge and Terminal core.
 
 Create a separate Cloudflare tunnel on the server and give it a distinct hostname, such as `mcp-server.example.com`. Register `https://mcp-server.example.com/mcp` as a separate app in the client. Its OAuth grants and runtime state must be separate from the workstation's. Give the app a recognizable machine name so either connection can be disabled independently.
 
+When creating the DNS route from a workstation that already has another tunnel configured, select the new tunnel UUID with an explicit empty configuration:
+
+```bash
+cloudflared tunnel --config /dev/null route dns YOUR_SEPARATE_TUNNEL_UUID mcp-server.example.com
+```
+
+This prevents the workstation's default tunnel configuration from selecting a different tunnel. Verify the resulting DNS record points at the new UUID before starting the server.
+
 Copy only that tunnel's credential to the server, with mode 0600. Keep the account-wide Cloudflare certificate on the owner's machine. Do not attach different MCP deployments to the same tunnel UUID as replicas: a client must reach the deployment that issued its OAuth grant. Cloudflare explains tunnel routing and replicas in its [routing documentation](https://developers.cloudflare.com/tunnel/concepts/routing/).
 
 ## Private owner approval
