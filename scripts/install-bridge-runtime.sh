@@ -4,6 +4,16 @@ set -euo pipefail
 ONE_MCP_VERSION="0.37.0"
 SHELL_MCP_VERSION="1.1.8"
 
+HEADLESS=0
+if [ "${1:-}" = "--headless" ]; then
+  HEADLESS=1
+  shift
+fi
+if [ "$#" -gt 0 ]; then
+  echo "unknown argument: $1 (usage: install-bridge-runtime.sh [--headless])" >&2
+  exit 2
+fi
+
 echo "== installing pinned 1MCP aggregator =="
 npm install -g "@1mcp/agent@$ONE_MCP_VERSION"
 
@@ -100,7 +110,13 @@ NODE
 echo "  verified native log rotation (structured maxSize/maxFiles)"
 
 echo "== verifying WebHarness prerequisites =="
-for cmd in node npm npx uv uvx cloudflared curl flock; do
+REQUIRED_CMDS=(node npm npx cloudflared curl flock)
+if [ "$HEADLESS" -eq 0 ]; then
+  REQUIRED_CMDS+=(uv uvx)
+else
+  echo "  headless mode: legacy-shell uv/uvx prerequisites are not required"
+fi
+for cmd in "${REQUIRED_CMDS[@]}"; do
   command -v "$cmd" >/dev/null 2>&1 || { echo "$cmd missing" >&2; exit 1; }
 done
 

@@ -34,6 +34,32 @@ function textResult(text) {
   return { content: [{ type: 'text', text }] };
 }
 
+// The broker owns cursor advancement and the configured ceiling.
+const DEFAULT_MODEL_READ_MAX_BYTES = 16384;
+
+function formatBoundedTranscriptRead(result) {
+  const text = typeof result?.text === 'string' ? result.text : '';
+  const { nextCursor, endOffset } = result ?? {};
+  if (!Number.isSafeInteger(nextCursor) || !Number.isSafeInteger(endOffset)) return text;
+  if (nextCursor >= endOffset) return text;
+  const prefix = text.length > 0 ? `${text}\n` : '';
+  if (text.length === 0) {
+    return `${prefix}[no progress: the next character is larger than this read's byte budget; retry with a larger max_bytes (nextCursor=${nextCursor} endOffset=${endOffset})]`;
+  }
+  const remaining = endOffset - nextCursor;
+  return `${prefix}[more output: nextCursor=${nextCursor} endOffset=${endOffset} (${remaining} bytes remain); repeat terminal_read to continue]`;
+}
+
+// Snapshots are bounded locally and never advance the transcript cursor.
+function formatBoundedSnapshot(text, budgetBytes) {
+  const bytes = Buffer.from(text, 'utf8');
+  if (bytes.length <= budgetBytes) return text;
+  let end = budgetBytes;
+  while (end > 0 && (bytes[end] & 0xc0) === 0x80) end -= 1;
+  const shown = bytes.subarray(0, end).toString('utf8');
+  return `${shown}\n[snapshot truncated: showing ${end} of ${bytes.length} bytes (max_bytes=${budgetBytes}); does not advance the transcript cursor]`;
+}
+
 function errorText(error) {
   const code = typeof error?.code === 'string' ? error.code : 'TERMINAL_ERROR';
   let text = `${code}: ${error instanceof Error ? error.message : String(error)}`;
@@ -112,15 +138,27 @@ export function createTerminalMcpServer({ client, frontend } = {}) {
   }));
 
   server.registerTool('terminal_read', {
-    description: 'Read a WebHarness Terminal session. Normally omit cursor to consume from the broker-owned persisted model unread position; successful reads advance that position. An explicit cursor intentionally replays/repositions from that offset and advances the persisted position to the returned point. snapshot=true captures the current tmux screen/TUI without advancing transcript position; use explicit cursors only for replay or recovery.',
+    description: 'Read from the persisted unread cursor, advancing only past returned bytes. Explicit cursor replays/repositions. max_bytes defaults to 16384 (max 65536); repeat reads when more output remains. snapshot=true captures a bounded screen without advancing the cursor.',
     inputSchema: {
       name,
       cursor: z.number().int().nonnegative().optional(),
       snapshot: z.boolean().optional(),
+      max_bytes: z.number().int().positive().max(65536).optional(),
     },
   }, async (args) => invoke(async () => {
-    const result = await client.request('model.read', compactParams(args));
-    return textResult(result.text);
+    if (args.snapshot === true) {
+      const result = await client.request('model.read', { name: args.name, snapshot: true });
+      return textResult(formatBoundedSnapshot(
+        typeof result?.text === 'string' ? result.text : '',
+        args.max_bytes ?? DEFAULT_MODEL_READ_MAX_BYTES,
+      ));
+    }
+    const result = await client.request('model.read', compactParams({
+      name: args.name,
+      cursor: args.cursor,
+      maxBytes: args.max_bytes ?? DEFAULT_MODEL_READ_MAX_BYTES,
+    }));
+    return textResult(formatBoundedTranscriptRead(result));
   }));
 
   const sendSchema = z.object({

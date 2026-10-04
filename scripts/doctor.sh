@@ -11,7 +11,7 @@ WARNINGS=0
 
 usage() {
   cat <<'EOF'
-Usage: scripts/doctor.sh [--profile restricted|trusted-dev|personal] [--env-file PATH] [--state-dir PATH]
+Usage: scripts/doctor.sh [--profile restricted|trusted-dev|personal|server] [--env-file PATH] [--state-dir PATH]
 
 Run non-mutating WebHarness reference-environment and rendered-state checks.
 If --profile is omitted, doctor uses MCP_BRIDGE_PROFILE from existing rendered
@@ -70,7 +70,7 @@ if [ -z "$PROFILE" ]; then
   fi
 fi
 case "$PROFILE" in
-  restricted|trusted-dev|personal) ;;
+  restricted|trusted-dev|personal|server) ;;
   *) echo "unknown profile: $PROFILE" >&2; usage >&2; exit 2 ;;
 esac
 
@@ -117,6 +117,22 @@ if [ "$PROFILE" = personal ]; then
   fi
 fi
 
+if [ "$PROFILE" = server ]; then
+  if [ "$(uname -s)" = Linux ]; then
+    ok "Linux host detected"
+  else
+    fail "server headless deployment requires Linux"
+  fi
+  ok "$(uname -m) architecture detected (server has no x86-only requirement)"
+  if [ "$(ps -p 1 -o comm= 2>/dev/null | tr -d ' ')" = systemd ]; then
+    ok "systemd is PID 1"
+  else
+    fail "server startup requires systemd"
+  fi
+  if command -v tmux >/dev/null 2>&1; then ok "tmux is available"; else warn "tmux is not installed yet; durable Terminal cannot start"; fi
+  if command -v cloudflared >/dev/null 2>&1; then ok "cloudflared is available"; else warn "cloudflared is not installed yet; public transport cannot start"; fi
+fi
+
 CHECK_ARGS=(--check --profile "$PROFILE" --env-file "$ENV_FILE" --state-dir "$STATE_DIR" --repo-root "$ROOT")
 if node "$ROOT/scripts/render-config.mjs" "${CHECK_ARGS[@]}" >/dev/null 2>&1; then
   ok "profile, deployment env, and templates validate without writing state"
@@ -140,6 +156,9 @@ else
   GENERATED_FILES=("$STATE_DIR/bridge.env" "$STATE_DIR/1mcp/mcp.json" "$STATE_DIR/1mcp/config.toml")
   if [ "$PROFILE" = personal ]; then
     GENERATED_FILES+=("$STATE_DIR/owner.env" "$STATE_DIR/local-1mcp/mcp.json")
+  fi
+  if [ "$PROFILE" = server ]; then
+    GENERATED_FILES+=("$STATE_DIR/local-1mcp/mcp.json")
   fi
   for file in "${GENERATED_FILES[@]}"; do
     if [ -f "$file" ] && [ "$(stat -c %u "$file" 2>/dev/null)" = "$(id -u)" ] && [ "$(stat -c %a "$file" 2>/dev/null)" = 600 ]; then
@@ -165,6 +184,18 @@ if (profile === 'personal') {
     if (!innerKeys.includes(required)) process.exit(1);
   }
   if (inner.mcpServers.code || inner.mcpServers.codedb) process.exit(1);
+  if (outer.mcpServers.local?.env?.MCP_LOCAL_FALLBACK_ONLY_SERVERS !== 'dev') process.exit(1);
+}
+if (profile === 'server') {
+  const inner = JSON.parse(fs.readFileSync(innerFile, 'utf8'));
+  const innerKeys = keys(inner);
+  for (const required of ['terminal', 'dev']) {
+    if (!innerKeys.includes(required)) process.exit(1);
+  }
+  for (const excluded of ['browser-devtools', 'browser-fast', 'browser-jev', 'host', 'code', 'codedb']) {
+    if (innerKeys.includes(excluded)) process.exit(1);
+  }
+  if (inner.mcpServers.terminal.env.MCP_TERMINAL_FRONTEND !== undefined) process.exit(1);
   if (outer.mcpServers.local?.env?.MCP_LOCAL_FALLBACK_ONLY_SERVERS !== 'dev') process.exit(1);
 }
 NODE

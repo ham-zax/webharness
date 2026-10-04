@@ -18,6 +18,7 @@ const { runBash, runExec } = executionWorker ? await import('./shell.mjs') : {};
 import {
   renderBashText,
   renderEditPartial,
+  renderEditSummary,
   renderEditText,
   renderFileOpsPartial,
   renderFileOpsText,
@@ -77,7 +78,7 @@ if (typeof stateDir !== 'string' || !path.isAbsolute(stateDir)) {
   process.exit(2);
 }
 
-const maxOutputBytes = Number(process.env.MCP_DEV_MAX_OUTPUT_BYTES ?? '1048576');
+const maxOutputBytes = Number(process.env.MCP_DEV_MAX_OUTPUT_BYTES ?? '65536');
 if (!Number.isInteger(maxOutputBytes) || maxOutputBytes <= 0 || maxOutputBytes > 16 * 1024 * 1024) {
   console.error('MCP_DEV_MAX_OUTPUT_BYTES must be an integer from 1 to 16777216');
   process.exit(2);
@@ -110,6 +111,16 @@ if (maxSpoolTotalBytes < maxSpoolBytes) {
   console.error('MCP_DEV_SPOOL_MAX_TOTAL_BYTES must be >= MCP_DEV_MAX_SPOOL_BYTES');
   process.exit(2);
 }
+
+// Lines returned by read when the caller gives no limit. Keeps one stray read of a big
+// file from flooding the model's context; 0 restores the tool's own larger bound.
+const readDefaultLinesValue = process.env.MCP_DEV_READ_DEFAULT_LINES ?? '500';
+const readDefaultLinesNumber = Number(readDefaultLinesValue);
+if (!/^\d+$/.test(readDefaultLinesValue) || readDefaultLinesNumber > 100000) {
+  console.error('MCP_DEV_READ_DEFAULT_LINES must be an integer from 0 to 100000 (0 disables the default)');
+  process.exit(2);
+}
+const readDefaultLines = readDefaultLinesNumber > 0 ? readDefaultLinesNumber : undefined;
 
 try {
   const gc = await pruneBashSpools({
@@ -229,9 +240,7 @@ function renderWaitResult(result) {
 }
 
 registerTool('read', {
-  description: pathMode === 'user'
-    ? 'Read focused UTF-8 text available to the WSL user. Prefer this over command execution for ordinary file reads. offset is a 1-based line number; limit is a line count. Large text is bounded with continuation guidance. Relative paths use the configured default cwd and absolute paths are accepted.'
-    : 'Read focused UTF-8 text below the configured workspace root. Prefer this over command execution for ordinary file reads. offset is a 1-based line number; limit is a line count. Large text is bounded with continuation guidance.',
+  description: 'Read UTF-8 text in pages of at most 16 KiB. offset is a 1-based line; limit is a line count. Truncated results give the next offset.' + (readDefaultLines ? ` Without limit, at most ${readDefaultLines} lines.` : ''),
   inputSchema: {
     path: modelPath,
     offset: z.number().int().positive().optional(),
@@ -244,7 +253,12 @@ registerTool('read', {
     openWorldHint: false,
   }
 }, async (args, extra) => invoke(async () => {
-  const result = await runRead({ ...pathPolicy, ...args }, extra.signal);
+  const result = await runRead({
+    ...pathPolicy,
+    path: args.path,
+    offset: args.offset,
+    limit: args.limit ?? readDefaultLines
+  }, extra.signal);
   if (result.content.some(block => block.type !== 'text')) {
     throw new Error('dev.read supports text files only');
   }
@@ -252,31 +266,32 @@ registerTool('read', {
 }));
 
 registerTool('edit', {
-  description: pathMode === 'user'
-    ? 'Apply guarded, unique, disjoint replacements to one or more existing text files. One exact oldText always wins; only zero exact matches trigger fallback matching for line endings, trailing whitespace, and common Unicode punctuation/space differences. Merge exact and tolerant edits that share a line. Multi-file batches are preflighted together but are not transactional; a later failure may leave earlier targets applied and is reported as partial or uncertain. If oldText is not yet known, locate it with read/rg or ast-grep and include enough context to remain unique. Use write for creation and file_ops for regular-file move/delete. Relative paths use the configured default cwd and absolute paths are accepted'
-    : 'Apply guarded, unique, disjoint replacements to one or more existing text files below the workspace root. One exact oldText always wins; only zero exact matches trigger fallback matching for line endings, trailing whitespace, and common Unicode punctuation/space differences. Merge exact and tolerant edits that share a line. Multi-file batches are preflighted together but are not transactional; a later failure may leave earlier targets applied and is reported as partial or uncertain. If oldText is not yet known, locate it with read/rg and include enough context to remain unique',
+  description: 'Apply unique, disjoint oldText replacements in existing files. Exact oldText always wins; fallback tolerates line endings, trailing whitespace and common Unicode punctuation/spaces. Merge edits sharing a line. Multi-file batches may partially apply; failures report affected paths. Returns +/- counts; diff=true returns diffs.',
   inputSchema: {
     targets: z.array(z.object({
       path: modelPath,
       edits: z.array(z.object({ oldText: z.string().min(1), newText: z.string() })).min(1)
-    })).min(1)
+    })).min(1),
+    diff: z.boolean().optional().describe('Return unified diffs instead of per-file +/- counts')
   }
 }, async (args, extra) => invoke(async () => {
-  const result = await runEdit({ ...pathPolicy, ...args }, extra.signal);
-  const text = result.targets.length === 1
-    ? renderEditText(result.targets[0].path, result.targets[0].diff)
-    : result.targets.map(target => `M ${target.path}`).join('\n');
+  const result = await runEdit({ ...pathPolicy, targets: args.targets }, extra.signal);
+  const text = args.diff
+    ? result.targets.map(target => renderEditText(target.path, target.diff)).join('\n\n')
+    : result.targets.map(target => renderEditSummary(target.path, target.diff)).join('\n');
   return { content: [{ type: 'text', text }] };
 }));
 
 registerTool('write', {
-  description: pathMode === 'user'
-    ? 'Create-only: create a new WSL-user-accessible text file whose parent directory already exists; fails if the target exists. Use edit for existing text files and file_ops for regular-file move/delete. Relative paths use the configured default cwd and absolute paths are accepted'
-    : 'Create-only: create a new text file below the workspace root whose parent directory already exists; fails if the target exists. Use edit for existing text files',
-  inputSchema: { path: modelPath, content: z.string() }
+  description: 'Create-only UTF-8 write; parent must exist. overwrite=true atomically replaces an existing regular file. Symlinks and directories are refused.',
+  inputSchema: {
+    path: modelPath,
+    content: z.string(),
+    overwrite: z.boolean().optional().describe('Atomically replace an existing regular file')
+  }
 }, async (args, extra) => invoke(async () => {
-  await runWrite({ ...pathPolicy, ...args }, extra.signal);
-  return { content: [{ type: 'text', text: renderWriteText(args.path) }] };
+  const result = await runWrite({ ...pathPolicy, ...args }, extra.signal);
+  return { content: [{ type: 'text', text: renderWriteText(args.path, { replaced: result?.replaced === true }) }] };
 }));
 
 if (pathMode === 'user') {
@@ -366,13 +381,11 @@ if (pathMode === 'user') {
 
 if (mode === 'unrestricted') {
   registerTool('exec', {
-    description: pathMode === 'user'
-      ? 'Run one executable directly with structured argv and no shell parsing. This is a short-RPC path: use it only when completion is expected comfortably inside the model-facing connector window (target <=45 seconds). If runtime is uncertain, may approach a minute, or must survive the call, do not start it here; use Local server="terminal" with terminal_open for persistent Terminal sessions, observe completion/readiness through Dev wait, then use terminal_read. Prefer exec for ordinary Git, builds, tests, rg, repository inspection, and other short noninteractive commands; argv[0] is the executable and later elements are passed literally. Use bash only when shell syntax is required. Default timeout is 30 seconds, maximum 300 seconds; that provider-side maximum does not extend connector lifetime. Large output may be truncated to a retained-output file. cwd defaults to the configured default cwd and may be relative or absolute.'
-      : 'Run one executable directly with structured argv and no shell parsing. This is a short-RPC path: do not start work here when runtime is uncertain or may approach the model-facing connector window (target <=45 seconds for direct calls). argv[0] is the executable and later elements are passed literally. Use bash only when shell syntax is required. Default timeout is 30 seconds, maximum 300 seconds; that provider-side maximum does not extend connector lifetime. Large output may be truncated with a bounded retained-output path. cwd is optional and workspace-relative.',
-    inputSchema: {
+    description: 'Run structured argv with no shell parsing; arguments are passed literally. Prefer for ordinary commands. Use only when runtime is known and comfortably below 45s. For uncertain, longer or persistent work use Local terminal_open, Dev wait, then terminal_read. Output is bounded; truncated output has a retained-file path.',
+  inputSchema: {
       argv: z.array(z.string()).min(1).max(256).describe('Executable name/path followed by literal arguments. Do not add shell quoting around individual elements.'),
       cwd: cwdPath.optional(),
-      timeout_seconds: z.number().positive().max(300).optional().describe('Provider-side execution deadline. Values above the short-RPC routing target do not extend the model-facing connector lifetime; use Local Terminal plus Dev wait for long-running work.')
+      timeout_seconds: z.number().positive().max(300).optional().describe('Execution deadline: default 30s, max 300s; does not extend the connector window.')
     }
   }, async (args, extra) => invoke(async () => {
     const result = await runExec({
@@ -388,13 +401,11 @@ if (mode === 'unrestricted') {
   }));
 
   registerTool('bash', {
-    description: pathMode === 'user'
-      ? 'Run one bounded, noninteractive Bash program. This is a short-RPC path: use it only when completion is expected comfortably inside the model-facing connector window (target <=45 seconds). If runtime is uncertain, may approach a minute, or must survive the call, do not start it here; use Local server="terminal" with terminal_open for persistent Terminal sessions, observe completion/readiness through Dev wait, then use terminal_read. Use Bash only when shell syntax such as pipes, redirects, substitutions, variables, loops, or compound commands is required. Prefer exec for ordinary short commands and Local tool_batch for repeated MCP calls. Default timeout is 30 seconds, maximum 300 seconds; that provider-side maximum does not extend connector lifetime. Large output may be truncated to a retained-output file. Do not use Bash to bypass Terminal human ownership. cwd defaults to the configured default cwd and may be relative or absolute.'
-      : 'Run one bounded, noninteractive Bash program. This is a short-RPC path: do not start work here when runtime is uncertain or may approach the model-facing connector window (target <=45 seconds for direct calls). Use this only when shell syntax such as pipes, redirects, substitutions, variables, loops, or compound commands is required; prefer exec for ordinary short commands. Default timeout is 30 seconds, maximum 300 seconds; that provider-side maximum does not extend connector lifetime. Large output may be truncated with a bounded retained-output path. cwd is optional and workspace-relative.',
-    inputSchema: {
+    description: 'Run a noninteractive Bash program for pipes, redirects or other shell syntax; otherwise prefer exec. Use only when runtime is known and comfortably below 45s. For uncertain, longer or persistent work use Local terminal_open, Dev wait, then terminal_read. Output is bounded; never bypass Terminal human ownership.',
+  inputSchema: {
       command: z.string().min(1),
       cwd: cwdPath.optional(),
-      timeout_seconds: z.number().positive().max(300).optional().describe('Provider-side execution deadline. Values above the short-RPC routing target do not extend the model-facing connector lifetime; use Local Terminal plus Dev wait for long-running work.')
+      timeout_seconds: z.number().positive().max(300).optional().describe('Execution deadline: default 30s, max 300s; does not extend the connector window.')
     }
   }, async (args, extra) => invoke(async () => {
     const result = await runBash({

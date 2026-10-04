@@ -99,12 +99,25 @@ function qualifiedName(server, tool) {
   return `${server}${INNER_TOOL_SEPARATOR}${tool}`;
 }
 
+// Parameter names at a glance, required ones starred ("name*, cols, rows"), so a caller
+// can usually make the call straight from tool_list without a tool_schema round trip.
+function paramSignature(inputSchema) {
+  const properties = inputSchema && typeof inputSchema === 'object' ? inputSchema.properties : undefined;
+  if (!properties || typeof properties !== 'object') return undefined;
+  const names = Object.keys(properties);
+  if (names.length === 0) return undefined;
+  const required = new Set(Array.isArray(inputSchema.required) ? inputSchema.required : []);
+  return names.map(name => (required.has(name) ? `${name}*` : name)).join(', ');
+}
+
 function conciseTool(tool, server, name) {
+  const params = paramSignature(tool.inputSchema);
   return {
     server,
     tool: name,
     ...(tool.title !== undefined ? { title: tool.title } : {}),
     ...(tool.description !== undefined ? { description: tool.description } : {}),
+    ...(params !== undefined ? { params } : {}),
     ...(tool.annotations !== undefined ? { annotations: tool.annotations } : {})
   };
 }

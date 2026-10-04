@@ -2,9 +2,9 @@ import fs from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import {
-  createReadTool,
   createWriteTool,
-  generateDiffString
+  generateDiffString,
+  truncateHead
 } from '@earendil-works/pi-coding-agent';
 import {
   canonicalDefaultCwd,
@@ -281,9 +281,30 @@ export async function runRead({ pathMode = 'workspace', defaultCwd, workspaceRoo
   const target = policy.pathMode === 'user'
     ? await resolveUserPath(policy.root, path)
     : await resolveExistingWorkspacePath(policy.root, path);
-  const tool = createReadTool(policy.root);
   try {
-    return await tool.execute(randomUUID(), { path: target, offset, limit }, signal);
+    const buffer = await fs.readFile(target, { signal });
+    let text;
+    try {
+      text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(buffer);
+    } catch {
+      throw new Error('dev.read supports UTF-8 text files only');
+    }
+    if (text.includes('\0')) throw new Error('dev.read supports text files only');
+    const lines = text.split('\n');
+    const start = (offset ?? 1) - 1;
+    if (start >= lines.length) {
+      throw new Error(`Offset ${offset} is beyond end of file (${lines.length} lines total)`);
+    }
+    const selected = lines.slice(start, limit === undefined ? undefined : start + limit);
+    const page = truncateHead(selected.join('\n'), { maxBytes: 16384 });
+    let output = page.content;
+    if (page.firstLineExceedsLimit) {
+      output = `[Line ${start + 1} exceeds the 16384-byte read limit; ${buffer.length} bytes total. Use exec with rg or a structured extractor for this line.]`;
+    } else if (page.truncated || (limit !== undefined && start + limit < lines.length)) {
+      const nextOffset = start + (page.truncated ? page.outputLines : selected.length) + 1;
+      output += `\n\n[truncated · ${buffer.length} bytes total; use offset=${nextOffset} to continue.]`;
+    }
+    return { content: [{ type: 'text', text: output }] };
   } catch (error) {
     throw modelFacingPathError(error, target, path);
   }
@@ -490,18 +511,55 @@ export async function runEdit({ pathMode = 'workspace', defaultCwd, workspaceRoo
   }, { signal });
 }
 
-export async function runWrite({ pathMode = 'workspace', defaultCwd, workspaceRoot, path, content }, signal) {
+export async function runWrite({
+  pathMode = 'workspace', defaultCwd, workspaceRoot, path, content, overwrite = false
+}, signal) {
   const policy = await resolveFilePolicy({ pathMode, workspaceRoot, defaultCwd });
   const target = policy.pathMode === 'user'
     ? await resolveUserPath(policy.root, path, { mustExist: false })
     : await resolveNewWorkspacePath(policy.root, path);
+  if (overwrite) return replaceFile(target, path, content, signal);
   const tool = createWriteTool(policy.root, { operations: exclusiveWriteOperations });
   try {
-    return await tool.execute(randomUUID(), { path: target, content }, signal);
+    await tool.execute(randomUUID(), { path: target, content }, signal);
+    return { replaced: false };
   } catch (error) {
     if (error?.code === 'EEXIST' || /EEXIST/.test(error?.message ?? '')) {
-      throw new Error('file already exists; use edit for existing files');
+      throw new Error('file already exists; use edit for existing files, or pass overwrite: true to replace it');
     }
     throw modelFacingPathError(error, target, path);
   }
+}
+
+// Explicit whole-file replacement: temp file in the same directory, then atomic rename,
+// under the same per-path lease as edit so it cannot interleave with a guarded edit.
+async function replaceFile(target, requestedPath, content, signal) {
+  return withMutationPath(target, async () => {
+    throwIfAborted(signal);
+    let existing = null;
+    try {
+      existing = await fs.lstat(target);
+    } catch (error) {
+      if (error?.code !== 'ENOENT') throw modelFacingPathError(error, target, requestedPath);
+    }
+    if (existing && !existing.isFile()) {
+      throw new Error('overwrite target must be a regular file, not a symlink or directory');
+    }
+    const temp = `${target}.${randomUUID()}.tmp`;
+    let handle;
+    try {
+      handle = await fs.open(temp, 'wx', existing ? 0o600 : 0o666);
+      await handle.writeFile(content, 'utf8');
+      if (existing) await handle.chmod(existing.mode & 0o7777);
+      await handle.sync();
+      await handle.close();
+      handle = null;
+      await fs.rename(temp, target);
+    } catch (error) {
+      if (handle) await handle.close().catch(() => {});
+      await fs.rm(temp, { force: true }).catch(() => {});
+      throw modelFacingPathError(error, target, requestedPath);
+    }
+    return { replaced: existing !== null };
+  }, { signal });
 }

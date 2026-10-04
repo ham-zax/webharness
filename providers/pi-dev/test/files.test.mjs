@@ -23,6 +23,52 @@ test('read honors Pi offset and limit within workspace', async () => {
   assert.doesNotMatch(text, /four/);
 });
 
+test('read byte cap preserves complete UTF-8 lines and gives a lossless continuation', async () => {
+  const workspaceRoot = await tempDir('pi-read-bytes-');
+  const lines = Array.from({ length: 30 }, (_, i) => `${i}: ${'é'.repeat(500)}`);
+  const content = lines.join('\n');
+  await fs.writeFile(path.join(workspaceRoot, 'large.txt'), content);
+  let offset = 1;
+  const recovered = [];
+  for (;;) {
+    const result = await runRead({ workspaceRoot, path: 'large.txt', offset, limit: 500 });
+    const [body, note] = result.content[0].text.split('\n\n[truncated');
+    assert.ok(Buffer.byteLength(body) <= 16384);
+    assert.doesNotMatch(body, /�/);
+    recovered.push(...body.split('\n'));
+    if (!note) break;
+    assert.match(note, new RegExp(`${Buffer.byteLength(content)} bytes total`));
+    const next = Number(note.match(/offset=(\d+)/)[1]);
+    assert.ok(next > offset);
+    offset = next;
+  }
+  assert.deepEqual(recovered, lines);
+});
+
+test('read advances across blank lines and handles empty or oversized lines explicitly', async () => {
+  const workspaceRoot = await tempDir('pi-read-empty-');
+  await fs.writeFile(path.join(workspaceRoot, 'blank.txt'), '\nnext');
+  const blank = await runRead({ workspaceRoot, path: 'blank.txt', limit: 1 });
+  assert.match(blank.content[0].text, /offset=2/);
+  const next = await runRead({ workspaceRoot, path: 'blank.txt', offset: 2 });
+  assert.equal(next.content[0].text, 'next');
+  await fs.writeFile(path.join(workspaceRoot, 'empty.txt'), '');
+  assert.equal((await runRead({ workspaceRoot, path: 'empty.txt' })).content[0].text, '');
+  await fs.writeFile(path.join(workspaceRoot, 'long.txt'), 'x'.repeat(20000));
+  const long = await runRead({ workspaceRoot, path: 'long.txt' });
+  assert.match(long.content[0].text, /Line 1 exceeds.*20000 bytes total/);
+  assert.match(long.content[0].text, /extractor/);
+  await assert.rejects(() => runRead({ workspaceRoot, path: 'blank.txt', offset: 3 }), /beyond end of file/);
+});
+
+test('read rejects binary and invalid UTF-8 instead of returning corrupted text', async () => {
+  const workspaceRoot = await tempDir('pi-read-binary-');
+  for (const content of [Buffer.from([0xff]), Buffer.from('a\0b')]) {
+    await fs.writeFile(path.join(workspaceRoot, 'binary.bin'), content);
+    await assert.rejects(() => runRead({ workspaceRoot, path: 'binary.bin' }), /text files only/);
+  }
+});
+
 test('user read resolves relative paths from default cwd and accepts harmless absolute paths', async () => {
   const defaultCwd = await tempDir('pi-user-read-');
   await fs.writeFile(path.join(defaultCwd, 'relative.txt'), 'relative\n');
@@ -829,4 +875,78 @@ test('edit canceled while queued for its target lease rejects without mutating',
   await assert.rejects(pending, /abort/i);
   await holder;
   assert.equal(await fs.readFile(file, 'utf8'), 'alpha\n');
+});
+
+test('write overwrite replaces an existing regular file, keeps its mode, and leaves no temp files', async () => {
+  const workspaceRoot = await tempDir('pi-overwrite-');
+  const target = path.join(workspaceRoot, 'a.txt');
+  await fs.writeFile(target, 'old\n', { mode: 0o640 });
+  await fs.chmod(target, 0o640);
+  const result = await runWrite({ workspaceRoot, path: 'a.txt', content: 'new\n', overwrite: true });
+  assert.equal(result.replaced, true);
+  assert.equal(await fs.readFile(target, 'utf8'), 'new\n');
+  assert.equal((await fs.stat(target)).mode & 0o777, 0o640);
+  assert.deepEqual(await fs.readdir(workspaceRoot), ['a.txt']);
+});
+
+test('write overwrite on a missing file creates it and reports not replaced', async () => {
+  const workspaceRoot = await tempDir('pi-overwrite-new-');
+  const result = await runWrite({ workspaceRoot, path: 'fresh.txt', content: 'hi\n', overwrite: true });
+  assert.equal(result.replaced, false);
+  assert.equal(await fs.readFile(path.join(workspaceRoot, 'fresh.txt'), 'utf8'), 'hi\n');
+});
+
+test('write without overwrite still refuses and now points at the flag', async () => {
+  const workspaceRoot = await tempDir('pi-no-overwrite-');
+  await fs.writeFile(path.join(workspaceRoot, 'a.txt'), 'keep\n');
+  await assert.rejects(
+    () => runWrite({ workspaceRoot, path: 'a.txt', content: 'x\n' }),
+    /already exists.*overwrite: true/
+  );
+  assert.equal(await fs.readFile(path.join(workspaceRoot, 'a.txt'), 'utf8'), 'keep\n');
+});
+
+test('write overwrite refuses symlinks and directories and never writes through a link', async () => {
+  const workspaceRoot = await tempDir('pi-overwrite-unsafe-');
+  const outside = await tempDir('pi-overwrite-outside-');
+  await fs.writeFile(path.join(outside, 'victim.txt'), 'victim\n');
+  await fs.symlink(path.join(outside, 'victim.txt'), path.join(workspaceRoot, 'link.txt'));
+  await fs.mkdir(path.join(workspaceRoot, 'dir'));
+  await assert.rejects(
+    () => runWrite({ workspaceRoot, path: 'link.txt', content: 'pwn\n', overwrite: true }),
+    /regular file/
+  );
+  await assert.rejects(
+    () => runWrite({ workspaceRoot, path: 'dir', content: 'x\n', overwrite: true }),
+    /regular file/
+  );
+  assert.equal(await fs.readFile(path.join(outside, 'victim.txt'), 'utf8'), 'victim\n');
+  assert.equal((await fs.readdir(workspaceRoot)).sort().join(','), 'dir,link.txt');
+});
+
+test('concurrent overwrites serialize and leave one complete winner', async () => {
+  const workspaceRoot = await tempDir('pi-overwrite-race-');
+  const target = path.join(workspaceRoot, 'a.txt');
+  await fs.writeFile(target, 'seed\n');
+  const bodies = Array.from({ length: 8 }, (_, index) => `${String(index).repeat(5000)}\n`);
+  await Promise.all(bodies.map(content => runWrite({ workspaceRoot, path: 'a.txt', content, overwrite: true })));
+  assert.ok(bodies.includes(await fs.readFile(target, 'utf8')));
+  assert.deepEqual(await fs.readdir(workspaceRoot), ['a.txt']);
+});
+
+
+test('user-mode write supports overwrite and keeps create-only as the default', async () => {
+  const defaultCwd = await tempDir('pi-user-write-');
+  await runWrite({ pathMode: 'user', defaultCwd, path: 'f.txt', content: '1\n' });
+  await assert.rejects(
+    () => runWrite({ pathMode: 'user', defaultCwd, path: 'f.txt', content: '2\n' }),
+    /already exists.*overwrite: true/
+  );
+  const replaced = await runWrite({ pathMode: 'user', defaultCwd, path: 'f.txt', content: '2\n', overwrite: true });
+  assert.equal(replaced.replaced, true);
+  assert.equal(await fs.readFile(path.join(defaultCwd, 'f.txt'), 'utf8'), '2\n');
+  await assert.rejects(
+    () => runWrite({ pathMode: 'user', defaultCwd, path: 'missing/dir/f.txt', content: '3\n' }),
+    /ENOENT|no such file|not exist|parent/i
+  );
 });

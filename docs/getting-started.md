@@ -94,7 +94,9 @@ Smaller authority examples use the same operator command:
 ./bin/webharness setup --profile trusted-dev
 ```
 
-Read [Security](security.md) before granting `trusted-dev` or `personal` authority.
+For a separate Linux server without desktop providers, use `--profile server` and follow [Headless Server](headless-server.md).
+
+Read [Security](security.md) before granting `trusted-dev`, `personal`, or `server` authority.
 
 ## 4. Operate the runtime
 

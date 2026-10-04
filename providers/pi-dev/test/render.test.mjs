@@ -1,8 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  countDiffLines,
   renderBashText,
   renderEditPartial,
+  renderEditSummary,
   renderEditText,
   renderFileOpsPartial,
   renderFileOpsText,
@@ -26,18 +28,18 @@ function record(overrides = {}) {
   };
 }
 
-test('successful terminal output remains plain terminal text', () => {
-  assert.equal(renderBashText(record({ output: ' M src/foo.ts\n' })), ' M src/foo.ts\n');
+test('successful command keeps terminal output and appends status', () => {
+  assert.equal(renderBashText(record({ output: ' M src/foo.ts\n' })), ' M src/foo.ts\n[exit 0 · 0.0s]');
 });
 
 test('empty successful command gets a minimal acknowledgement', () => {
-  assert.equal(renderBashText(record()), 'Command completed.');
+  assert.equal(renderBashText(record()), '[exit 0 · 0.0s]');
 });
 
 test('non-zero exit appends only the meaningful status', () => {
   assert.equal(
     renderBashText(record({ exit_code: 1, output: 'Tests: 1 failed, 83 passed\n' })),
-    'Tests: 1 failed, 83 passed\n[exit 1]'
+    'Tests: 1 failed, 83 passed\n[exit 1 · 0.0s]'
   );
 });
 
@@ -48,7 +50,7 @@ test('truncation points to the full output handle', () => {
       truncated: true,
       full_output_path: '/state/dev/bash-a82f.log'
     })),
-    'tail\n[truncated · full: /state/dev/bash-a82f.log]'
+    'tail\n[truncated · 0 bytes total · full: /state/dev/bash-a82f.log]\n[exit 0 · 0.0s]'
   );
 });
 
@@ -60,14 +62,14 @@ test('capped retained output is labeled as partial rather than full', () => {
       spool_truncated: true,
       full_output_path: '/state/dev/bash-capped.log'
     })),
-    'tail\n[truncated · retained output capped · file: /state/dev/bash-capped.log]'
+    'tail\n[truncated · 0 bytes total · retained output capped · file: /state/dev/bash-capped.log]\n[exit 0 · 0.0s]'
   );
 });
 
 test('timeout is rendered as a native exceptional annotation', () => {
   assert.equal(
     renderBashText(record({ timed_out: true, exit_code: null, timeout_seconds: 30 })),
-    '[timed out after 30s]'
+    '[timed out after 30s · 0.0s]'
   );
 });
 
@@ -134,6 +136,31 @@ test('file_ops partial renderer preserves completed failed uncertain and unattem
 test('signal termination renders a meaningful native annotation', () => {
   assert.equal(
     renderBashText(record({ exit_code: null })),
-    '[terminated]'
+    '[terminated · 0.0s]'
   );
+});
+
+test('edit summary is the quiet default: path plus added and removed line counts only', () => {
+  const diff = ' 1 keep\n-2 old a\n-3 old b\n+2 new a\n+3 new b\n+4 new c\n 5 keep';
+  assert.deepEqual(countDiffLines(diff), { added: 3, removed: 2 });
+  assert.equal(renderEditSummary('repo/src/foo.ts', diff), 'M repo/src/foo.ts (+3 -2)');
+  assert.equal(renderEditSummary('x.txt', ''), 'M x.txt (+0 -0)');
+  assert.equal(renderEditSummary('x.txt', undefined), 'M x.txt (+0 -0)');
+});
+
+test('write renderer distinguishes created from replaced', () => {
+  assert.equal(renderWriteText('a.txt'), 'Created a.txt');
+  assert.equal(renderWriteText('a.txt', { replaced: true }), 'Replaced a.txt');
+  assert.equal(renderWriteText('a.txt', { replaced: false }), 'Created a.txt');
+});
+
+test('elapsed time is compact for both fast and slow commands', () => {
+  assert.equal(renderBashText(record({ output: 'ok\n', duration_ms: 4999 })), 'ok\n[exit 0 · 5.0s]');
+  assert.equal(renderBashText(record({ output: 'ok\n', duration_ms: 5000 })), 'ok\n[exit 0 · 5.0s]');
+  assert.equal(renderBashText(record({ duration_ms: 12345 })), '[exit 0 · 12.3s]');
+  assert.equal(
+    renderBashText(record({ output: 'boom\n', exit_code: 2, duration_ms: 9000 })),
+    'boom\n[exit 2 · 9.0s]'
+  );
+  assert.equal(renderBashText(record({ output: 'x', duration_ms: undefined })), 'x\n[exit 0]');
 });

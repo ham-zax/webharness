@@ -9,23 +9,45 @@ export function renderBashText(result) {
   const annotations = [];
   if (result.truncated && result.full_output_path) {
     annotations.push(result.spool_truncated
-      ? `[truncated · retained output capped · file: ${result.full_output_path}]`
-      : `[truncated · full: ${result.full_output_path}]`);
+      ? `[truncated · ${result.output_bytes} bytes total · retained output capped · file: ${result.full_output_path}]`
+      : `[truncated · ${result.output_bytes} bytes total · full: ${result.full_output_path}]`);
   }
+  let status;
   if (result.timed_out) {
-    annotations.push(`[timed out after ${result.timeout_seconds}s]`);
+    status = `timed out after ${result.timeout_seconds}s`;
   } else if (result.cancelled) {
-    annotations.push('[cancelled]');
+    status = 'cancelled';
   } else if (result.exit_code === null) {
-    annotations.push('[terminated]');
-  } else if (result.exit_code !== 0) {
-    annotations.push(`[exit ${result.exit_code}]`);
+    status = 'terminated';
+  } else {
+    status = `exit ${result.exit_code}`;
   }
+  if (Number.isFinite(result.duration_ms)) {
+    status += ` · ${(result.duration_ms / 1000).toFixed(1)}s`;
+  }
+  annotations.push(`[${status}]`);
   return appendLines(result.output, annotations);
 }
 
 export function renderEditText(relativePath, diff) {
   return diff ? `${relativePath}\n${diff}` : `Updated ${relativePath}`;
+}
+
+/** Added and removed line counts from a Pi unified diff (+/- prefixed lines). */
+export function countDiffLines(diff) {
+  let added = 0;
+  let removed = 0;
+  for (const line of String(diff ?? '').split('\n')) {
+    if (line.startsWith('+')) added += 1;
+    else if (line.startsWith('-')) removed += 1;
+  }
+  return { added, removed };
+}
+
+/** Quiet default for edit: confirms what changed and how much, without echoing the diff. */
+export function renderEditSummary(relativePath, diff) {
+  const { added, removed } = countDiffLines(diff);
+  return `M ${relativePath} (+${added} -${removed})`;
 }
 
 
@@ -39,8 +61,8 @@ export function renderEditPartial({ applied = [], failed = [], uncertain = [], u
   return lines.join('\n');
 }
 
-export function renderWriteText(relativePath) {
-  return `Created ${relativePath}`;
+export function renderWriteText(relativePath, { replaced = false } = {}) {
+  return `${replaced ? 'Replaced' : 'Created'} ${relativePath}`;
 }
 
 export function renderImportFileText(result) {

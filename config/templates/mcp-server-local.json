@@ -1,0 +1,15 @@
+{
+  "version": "1.0.0",
+  "mcpServers": {
+    "terminal": {
+      "command": "node",
+      "args": [
+        "__REPO_ROOT__/providers/terminal/mcp-server.mjs"
+      ],
+      "env": {
+        "MCP_TERMINAL_SOCKET": "__TERMINAL_SOCKET__",
+        "MCP_TERMINAL_READ_MAX_BYTES": "65536"
+      }
+    }
+  }
+}

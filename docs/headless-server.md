@@ -1,0 +1,61 @@
+# Headless Server
+
+Use the `server` profile for a trusted owner's Linux server. It publishes the same Dev and Local broker surfaces as Personal, but Local contains Terminal and the hidden Dev recovery mirror only. Browser and Host providers, WSLg, and desktop launchers are excluded. Owner-added Local stdio servers remain an explicit capability grant.
+
+## Install
+
+Prerequisites: Linux with systemd user services, Node.js 24+, npm, tmux, git, curl, flock, and cloudflared. Install a native binary for the host architecture. The server profile does not need the legacy shell provider or uv.
+
+Clone the same WebHarness revision used on the workstation. Copy `.env.example` to a private `.env` and set a separate public HTTPS origin, tunnel name, and existing workspace directory. Use a separate machine account and retain that account's state across upgrades.
+
+```bash
+./bin/webharness doctor --profile server
+./bin/webharness setup --profile server --enable-startup
+./bin/webharness status
+```
+
+Startup enables lingering user services and starts the bridge and Terminal core. tmux owns terminal processes independently of the bridge. Keep the loopback listener private; Cloudflare is the HTTPS ingress. An existing API gateway on ports 80/443 can remain alongside this outbound tunnel.
+
+## Independent connection
+
+Create a separate Cloudflare tunnel on the server and give it a distinct hostname, such as `mcp-server.example.com`. Register `https://mcp-server.example.com/mcp` as a separate app in the client. Its OAuth grants and runtime state must be separate from the workstation's. Give the app a recognizable machine name so either connection can be disabled independently.
+
+Copy only that tunnel's credential to the server, with mode 0600. Keep the account-wide Cloudflare certificate on the owner's machine. Do not attach different MCP deployments to the same tunnel UUID as replicas: a client must reach the deployment that issued its OAuth grant. Cloudflare explains tunnel routing and replicas in its [routing documentation](https://developers.cloudflare.com/tunnel/concepts/routing/).
+
+## Private owner approval
+
+The pinned 1MCP consent form is an authorization decision, not an owner login. On an internet-facing server, keep consent submission and management private rather than allowing any visitor to approve a new client.
+
+A narrowly allowed Cloudflare ingress can expose discovery, client registration, authorization, token exchange, revocation, health, and MCP while refusing every other path:
+
+```yaml
+tunnel: YOUR_SEPARATE_TUNNEL_UUID
+credentials-file: /home/user/.cloudflared/YOUR_SEPARATE_TUNNEL_UUID.json
+ingress:
+  - hostname: mcp-server.example.com
+    path: '^/(mcp/?|health/ready|\.well-known/oauth-(authorization-server|protected-resource)(/mcp)?|authorize|token|register|revoke)$'
+    service: http://127.0.0.1:3050
+  - service: http_status:403
+```
+
+Use the configured `MCP_ONE_MCP_PORT` in place of 3050. Validate ingress rules with `cloudflared tunnel ingress validate`. Do not put an interactive login gate over all MCP traffic: the cloud client needs to call these protocol endpoints directly.
+
+To approve an app from the owner's local browser:
+
+1. Start an SSH forward to the server's loopback origin:
+
+   ```bash
+   ssh -N -o ExitOnForwardFailure=yes -L 127.0.0.1:43070:127.0.0.1:3050 user@server
+   ```
+
+2. Start connection setup in the client. When its public `/authorize?...` consent page opens, replace only the URL origin with `http://127.0.0.1:43070`. Keep the entire path and query unchanged, including the client ID, redirect URI, PKCE challenge, state, resource, and requested scopes.
+3. Inspect the client and requested scopes, then approve through that local page. The form submits through SSH and redirects back to the registered client callback.
+4. Close the SSH forward when setup finishes. Normal MCP calls and token refresh use the public URL; the forward is needed only for a new owner approval.
+
+Keep `MCP_PUBLIC_URL` set to the public HTTPS origin throughout. Changing the issuer to localhost would break client discovery and token validation. Each client and each machine receives its own grant. An unauthenticated public `/mcp` call must fail, and public `/oauth/consent` must remain refused.
+
+## Upgrade
+
+Update the committed source, rerender the same `server` profile, and restart the bridge and Terminal broker. Preserve the state root, `.env`, tunnel credentials, and tmux service. Do not regenerate OAuth state or restart tmux just to upgrade MCP providers.
+
+Qualification is limited to the headless Dev/Local/Terminal path. This profile does not imply browser parity with the Personal workstation.

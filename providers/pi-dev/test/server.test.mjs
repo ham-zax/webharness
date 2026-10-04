@@ -64,7 +64,7 @@ function withClient(env, fn) {
 }
 
 function assertEditV2Schema(tool) {
-  assert.deepEqual(Object.keys(tool.inputSchema.properties), ['targets']);
+  assert.deepEqual(Object.keys(tool.inputSchema.properties), ['targets', 'diff']);
   assert.deepEqual(tool.inputSchema.required, ['targets']);
   assert.equal(tool.inputSchema.properties.path, undefined);
   assert.equal(tool.inputSchema.properties.edits, undefined);
@@ -214,7 +214,7 @@ test('trusted-dev exposes structured exec alongside Bash and minimal schemas', a
     assert.match(exec.description, /no shell parsing/i);
     assert.deepEqual(Object.keys(exec.inputSchema.properties).sort(), ['argv', 'cwd', 'timeout_seconds']);
     const bash = listed.tools.find(x => x.name === 'bash');
-    assert.match(bash.description, /bounded retained-output path/i);
+    assert.match(bash.description, /output is bounded/i);
     assert.match(bash.description, /prefer exec/i);
     assert.deepEqual(Object.keys(bash.inputSchema.properties).sort(), ['command', 'cwd', 'timeout_seconds']);
     const read = listed.tools.find(x => x.name === 'read');
@@ -249,7 +249,6 @@ test('personal user mode exposes file_ops alongside edit with user-path descript
     assert.match(read.description, /UTF-8|text/i);
     assert.match(read.description, /1-based/i);
     assert.match(read.description, /truncat|bounded/i);
-    assert.match(read.description, /cat|sed/i);
     assert.match(read.inputSchema.properties.path.description, /relative.*default.*absolute/i);
     assert.equal(read.annotations.readOnlyHint, true);
     assert.equal(read.annotations.destructiveHint, false);
@@ -259,18 +258,16 @@ test('personal user mode exposes file_ops alongside edit with user-path descript
     assert.match(exec.inputSchema.properties.cwd.description, /relative.*default.*absolute/i);
     const bash = listed.tools.find(x => x.name === 'bash');
     assert.match(bash.description, /bounded.*noninteractive|noninteractive.*bounded/i);
-    assert.match(bash.description, /30.*300/i);
-    assert.match(bash.description, /Terminal.*persist|persist.*Terminal/i);
-    assert.match(exec.description, /rg/i);
-    assert.match(bash.description, /tool_batch/i);
+    assert.match(bash.inputSchema.properties.timeout_seconds.description, /30.*300/i);
+    assert.match(bash.description, /persistent.*Local terminal_open/i);
+    assert.match(exec.description, /45s.*Local terminal_open/i);
     assert.match(bash.inputSchema.properties.cwd.description, /relative.*default.*absolute/i);
     const edit = listed.tools.find(x => x.name === 'edit');
     assertEditV2Schema(edit);
-    assert.match(edit.description, /fallback matching|toleran/i);
+    assert.match(edit.description, /fallback.*tolerat/i);
     assert.match(edit.description, /exact.*always wins|always wins.*exact/i);
     assert.match(edit.description, /unique/i);
-    assert.match(edit.description, /file_ops/i);
-    assert.match(edit.description, /not transactional.*partial|partial.*not transactional/i);
+    assert.match(edit.description, /Multi-file batches.*partially apply/i);
     assert.doesNotMatch(edit.description, /apply_patch/i);
     const write = listed.tools.find(x => x.name === 'write');
     assert.match(write.description, /create-only|create.*new/i);
@@ -808,11 +805,11 @@ test('personal bash uses stable default cwd and accepts relative or absolute cwd
   await fs.mkdir(path.join(defaultCwd, 'repo'));
   await withClient(env, async client => {
     const base = await client.callTool({ name: 'bash', arguments: { command: 'pwd' } });
-    assert.equal(textOf(base).trim(), await fs.realpath(defaultCwd));
+    assert.equal(textOf(base).split('\n')[0], await fs.realpath(defaultCwd));
     const relative = await client.callTool({ name: 'bash', arguments: { command: 'pwd', cwd: 'repo' } });
-    assert.equal(textOf(relative).trim(), await fs.realpath(path.join(defaultCwd, 'repo')));
+    assert.equal(textOf(relative).split('\n')[0], await fs.realpath(path.join(defaultCwd, 'repo')));
     const absolute = await client.callTool({ name: 'bash', arguments: { command: 'pwd', cwd: '/tmp' } });
-    assert.equal(textOf(absolute).trim(), await fs.realpath('/tmp'));
+    assert.equal(textOf(absolute).split('\n')[0], await fs.realpath('/tmp'));
   });
 });
 
@@ -871,7 +868,7 @@ test('read returns plain text and rejects absolute paths', async () => {
   });
 });
 
-test('edit returns one diff artifact without generic success prose', async () => {
+test('edit is quiet by default: path and line counts, no diff echo', async () => {
   const { workspaceRoot, env } = await fixture();
   await fs.writeFile(path.join(workspaceRoot, 'x.txt'), 'alpha\nbeta\n');
   await withClient(env, async client => {
@@ -879,10 +876,35 @@ test('edit returns one diff artifact without generic success prose', async () =>
       name: 'edit',
       arguments: { targets: [{ path: 'x.txt', edits: [{ oldText: 'alpha', newText: 'ALPHA' }] }] }
     });
-    const text = textOf(result);
+    assert.equal(textOf(result), 'M x.txt (+1 -1)');
+    assert.equal(await fs.readFile(path.join(workspaceRoot, 'x.txt'), 'utf8'), 'ALPHA\nbeta\n');
+  });
+});
+
+test('edit with diff: true returns each target diff without generic success prose', async () => {
+  const { workspaceRoot, env } = await fixture();
+  await fs.writeFile(path.join(workspaceRoot, 'x.txt'), 'alpha\nbeta\n');
+  await fs.writeFile(path.join(workspaceRoot, 'y.txt'), 'gamma\n');
+  await withClient(env, async client => {
+    const single = await client.callTool({
+      name: 'edit',
+      arguments: { diff: true, targets: [{ path: 'x.txt', edits: [{ oldText: 'alpha', newText: 'ALPHA' }] }] }
+    });
+    const text = textOf(single);
     assert.match(text, /^x\.txt\n/);
     assert.match(text, /ALPHA/);
     assert.doesNotMatch(text, /Successfully replaced|Done!/);
+    const multi = await client.callTool({
+      name: 'edit',
+      arguments: { diff: true, targets: [
+        { path: 'x.txt', edits: [{ oldText: 'beta', newText: 'BETA' }] },
+        { path: 'y.txt', edits: [{ oldText: 'gamma', newText: 'GAMMA' }] }
+      ] }
+    });
+    const blocks = textOf(multi).split('\n\n');
+    assert.equal(blocks.length, 2);
+    assert.match(blocks[0], /^x\.txt\n[\s\S]*BETA/);
+    assert.match(blocks[1], /^y\.txt\n[\s\S]*GAMMA/);
   });
 });
 
@@ -900,7 +922,7 @@ test('edit v2 multi-target success returns compact path summaries instead of rep
         { path: 'b.txt', edits: [{ oldText: 'beta', newText: 'BETA' }] }
       ] }
     });
-    assert.equal(textOf(result), 'M a.txt\nM b.txt');
+    assert.equal(textOf(result), 'M a.txt (+1 -1)\nM b.txt (+1 -1)');
   });
 });
 
@@ -967,7 +989,7 @@ test('bash returns terminal text rather than JSON record', async () => {
       arguments: { cwd: 'repo', command: "printf ' M src/foo.ts\\n'; exit 1" }
     });
     const text = textOf(result);
-    assert.equal(text, ' M src/foo.ts\n[exit 1]');
+    assert.match(text, /^ M src\/foo\.ts\n\[exit 1 · \d+\.\ds\]$/);
     assert.throws(() => JSON.parse(text));
   });
 });
@@ -1005,7 +1027,7 @@ test('deployment output limit is applied without appearing in schema', async () 
       arguments: { command: `node -e "process.stdout.write('x'.repeat(5000))"` }
     });
     const text = textOf(result);
-    assert.match(text, /\[truncated · full: .*\]/);
+    assert.match(text, /\[truncated · \d+ bytes total · full: .*\]/);
     assert.ok(Buffer.byteLength(text) < 1300);
   });
 });
@@ -1087,5 +1109,80 @@ test('edit diagnostics keep model-facing paths workspace-relative', async () => 
     const text = textOf(result);
     assert.match(text, /overlap.*x\.txt/i);
     assert.doesNotMatch(text, new RegExp(workspaceRoot.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  });
+});
+
+test('read caps output at the default line limit and says how to continue; explicit limit overrides', async () => {
+  const { workspaceRoot, env } = await fixture();
+  const lines = Array.from({ length: 800 }, (_, index) => `line ${index + 1}`);
+  await fs.writeFile(path.join(workspaceRoot, 'big.txt'), `${lines.join('\n')}\n`);
+  await withClient(env, async client => {
+    const capped = textOf(await client.callTool({ name: 'read', arguments: { path: 'big.txt' } }));
+    assert.match(capped, /line 500\b/);
+    assert.doesNotMatch(capped, /line 501\b/);
+    assert.match(capped, /offset=501/);
+    const wide = textOf(await client.callTool({ name: 'read', arguments: { path: 'big.txt', limit: 800 } }));
+    assert.match(wide, /line 800\b/);
+    const tools = await client.listTools();
+    const read = tools.tools.find(tool => tool.name === 'read');
+    assert.match(read.description, /at most 500 lines/);
+  });
+});
+
+test('MCP_DEV_READ_DEFAULT_LINES tunes or disables the default and rejects nonsense', async () => {
+  const { workspaceRoot, env } = await fixture();
+  const lines = Array.from({ length: 800 }, (_, index) => `line ${index + 1}`);
+  await fs.writeFile(path.join(workspaceRoot, 'big.txt'), `${lines.join('\n')}\n`);
+  await withClient({ ...env, MCP_DEV_READ_DEFAULT_LINES: '50' }, async client => {
+    const text = textOf(await client.callTool({ name: 'read', arguments: { path: 'big.txt' } }));
+    assert.match(text, /line 50\b/);
+    assert.doesNotMatch(text, /line 51\b/);
+  });
+  await withClient({ ...env, MCP_DEV_READ_DEFAULT_LINES: '0' }, async client => {
+    const text = textOf(await client.callTool({ name: 'read', arguments: { path: 'big.txt' } }));
+    assert.match(text, /line 800\b/);
+    const tools = await client.listTools();
+    assert.doesNotMatch(tools.tools.find(tool => tool.name === 'read').description, /at most \d+ lines/);
+  });
+  for (const bad of ['-1', 'abc', '1.5', '100001']) {
+    const result = await runServerProcess({ ...env, MCP_DEV_READ_DEFAULT_LINES: bad });
+    assert.equal(result.code, 2, bad);
+    assert.match(result.stderr, /MCP_DEV_READ_DEFAULT_LINES/);
+  }
+});
+
+
+test('write overwrite works through the MCP boundary and reports what happened', async () => {
+  const { workspaceRoot, env } = await fixture();
+  await withClient(env, async client => {
+    const created = await client.callTool({ name: 'write', arguments: { path: 'c.txt', content: '1\n' } });
+    assert.equal(textOf(created), 'Created c.txt');
+    const refused = await client.callTool({ name: 'write', arguments: { path: 'c.txt', content: '2\n' } });
+    assert.equal(refused.isError, true);
+    assert.match(textOf(refused), /overwrite: true/);
+    const replaced = await client.callTool({
+      name: 'write', arguments: { path: 'c.txt', content: '2\n', overwrite: true }
+    });
+    assert.equal(textOf(replaced), 'Replaced c.txt');
+    assert.equal(await fs.readFile(path.join(workspaceRoot, 'c.txt'), 'utf8'), '2\n');
+    const missingParent = await client.callTool({ name: 'write', arguments: { path: 'no/such/c.txt', content: '3\n' } });
+    assert.equal(missingParent.isError, true);
+    assert.match(textOf(missingParent), /parent must already exist/);
+  });
+});
+
+test('command output defaults to a 64 KiB tail with the full output retained, not a 1 MiB dump', async () => {
+  const { env } = await fixture();
+  const withoutExplicitCap = { ...env };
+  delete withoutExplicitCap.MCP_DEV_MAX_OUTPUT_BYTES;
+  await withClient(withoutExplicitCap, async client => {
+    const result = await client.callTool({
+      name: 'bash',
+      arguments: { command: "head -c 300000 /dev/zero | tr '\\0' 'a'; printf END" }
+    });
+    const text = textOf(result);
+    assert.match(text, /\[truncated · 300003 bytes total · full: .+\]\n\[exit 0 · \d+\.\ds\]$/);
+    assert.ok(text.length > 60_000 && text.length < 70_000, `unexpected result size ${text.length}`);
+    assert.match(text, /aEND\n/);
   });
 });

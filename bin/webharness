@@ -9,8 +9,8 @@ usage() {
 WebHarness operator CLI
 
 Usage:
-  webharness setup --profile restricted|trusted-dev|personal [--enable-startup] [--env-file PATH] [--state-dir PATH]
-  webharness doctor [--profile restricted|trusted-dev|personal] [--env-file PATH] [--state-dir PATH]
+  webharness setup --profile restricted|trusted-dev|personal|server [--enable-startup] [--env-file PATH] [--state-dir PATH]
+  webharness doctor [--profile restricted|trusted-dev|personal|server] [--env-file PATH] [--state-dir PATH]
   webharness start
   webharness stop
   webharness restart
@@ -95,7 +95,7 @@ setup_command() {
     restricted|trusted-dev)
       "$ROOT/scripts/setup.sh" "${args[@]}"
       ;;
-    personal)
+    personal|server)
       local forwarded=()
       for ((i = 0; i < ${#args[@]}; i += 1)); do
         if [ "${args[$i]}" = "--profile" ]; then
@@ -104,10 +104,14 @@ setup_command() {
         fi
         forwarded+=("${args[$i]}")
       done
-      "$ROOT/scripts/bootstrap-personal.sh" "${forwarded[@]}"
+      if [ "$profile" = server ]; then
+        "$ROOT/scripts/bootstrap-server.sh" "${forwarded[@]}"
+      else
+        "$ROOT/scripts/bootstrap-personal.sh" "${forwarded[@]}"
+      fi
       ;;
     "")
-      echo "setup requires --profile restricted, --profile trusted-dev, or --profile personal" >&2
+      echo "setup requires --profile restricted, --profile trusted-dev, --profile personal, or --profile server" >&2
       usage >&2
       return 2
       ;;

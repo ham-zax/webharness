@@ -243,3 +243,5 @@ See [Security](docs/security.md) for the full trust model.
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+For an independently selectable connection to a Linux server, see [Headless Server](docs/headless-server.md).

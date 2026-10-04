@@ -17,6 +17,12 @@ PATH_VALUE="${TERMINAL_SYSTEMD_PATH:-$PATH}"
 OWNER_ENV_FILE="${TERMINAL_OWNER_ENV_FILE:-$STATE_BASE/mcp-dev-bridge/owner.env}"
 [[ "$OWNER_ENV_FILE" = /* ]] || { echo "TERMINAL_OWNER_ENV_FILE must be absolute" >&2; exit 1; }
 
+case "${TERMINAL_HEADLESS:-0}" in
+  0) GUI_ENV=$'Environment=WAYLAND_DISPLAY=wayland-0\nEnvironment=DISPLAY=:0\nEnvironment=PULSE_SERVER=unix:/mnt/wslg/PulseServer\nEnvironmentFile=-@OWNER_ENV_FILE@' ;;
+  1) GUI_ENV="" ;;
+  *) echo "TERMINAL_HEADLESS must be 0 or 1" >&2; exit 1 ;;
+esac
+
 TMUX_UNIT="wsl-agent-tmux.service"
 BROKER_UNIT="wsl-agent-terminal-broker.service"
 TMUX_SOURCE="$ROOT/systemd/$TMUX_UNIT.in"
@@ -40,6 +46,7 @@ render_unit() {
   template="${template//@TMUX_BIN@/$TMUX_BIN}"
   template="${template//@NODE_BIN@/$NODE_BIN}"
   template="${template//@PATH@/$PATH_VALUE}"
+  template="${template//@GUI_ENV@/$GUI_ENV}"
   template="${template//@OWNER_ENV_FILE@/$OWNER_ENV_FILE}"
   if grep -q '@[A-Z_][A-Z_]*@' <<<"$template"; then
     echo "unresolved placeholder while rendering $source" >&2

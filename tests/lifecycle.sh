@@ -21,7 +21,7 @@ contains() { grep -Eq "$2" "$1"; }
 
 test_scripts_are_executable() {
   local script
-  for script in setup.sh install-bridge-runtime.sh bootstrap-personal.sh start.sh stop.sh status.sh tunnel-up.sh tunnel-down.sh; do
+  for script in setup.sh install-bridge-runtime.sh bootstrap-personal.sh bootstrap-server.sh start.sh stop.sh status.sh tunnel-up.sh tunnel-down.sh; do
     [ -x "$ROOT/scripts/$script" ] || return 1
   done
   [ -x "$ROOT/bin/start" ] && [ -x "$ROOT/bin/status" ] && [ -x "$ROOT/bin/stop" ] && \
@@ -88,8 +88,11 @@ test_shared_bridge_runtime_installer_is_used() {
   [ -x "$helper" ] && \
   contains "$ROOT/scripts/setup.sh" 'install-bridge-runtime\.sh' && \
   contains "$ROOT/scripts/bootstrap-personal.sh" 'install-bridge-runtime\.sh' && \
+  contains "$ROOT/scripts/bootstrap-server.sh" 'install-bridge-runtime\.sh" --headless' && \
   contains "$helper" 'npm install -g "@1mcp/agent@\$ONE_MCP_VERSION"' && \
-  contains "$helper" 'for cmd in node npm npx uv uvx cloudflared curl flock'
+  contains "$helper" '"--headless"' && \
+  contains "$helper" 'REQUIRED_CMDS=\(node npm npx cloudflared curl flock\)' && \
+  contains "$helper" 'REQUIRED_CMDS\+=\(uv uvx\)'
 }
 
 test_cloudflare_oauth_is_canonical() {
@@ -171,8 +174,11 @@ test_terminal_systemd_owner_env_handoff() {
   : > "$owner_env"
   HOME="$sandbox/home" TERMINAL_SYSTEMD_TARGET_DIR="$target" TERMINAL_OWNER_ENV_FILE="$owner_env" \
     TERMINAL_SYSTEMD_DRY_RUN=1 "$ROOT/scripts/install-terminal-broker-user.sh" >/dev/null || return 1
-  grep -Fq "EnvironmentFile=-$owner_env" "$target/wsl-agent-tmux.service" && \
-    grep -Fq "EnvironmentFile=-$owner_env" "$target/wsl-agent-terminal-broker.service"
+  grep -Fq "EnvironmentFile=-$owner_env" "$target/wsl-agent-tmux.service" || return 1
+  grep -Fq "EnvironmentFile=-$owner_env" "$target/wsl-agent-terminal-broker.service" || return 1
+  HOME="$sandbox/home" TERMINAL_SYSTEMD_TARGET_DIR="$target" TERMINAL_HEADLESS=1 \
+    TERMINAL_SYSTEMD_DRY_RUN=1 "$ROOT/scripts/install-terminal-broker-user.sh" >/dev/null || return 1
+  ! grep -Eq 'WAYLAND_DISPLAY|DISPLAY=|PULSE_SERVER|EnvironmentFile=' "$target/"*.service
 }
 
 test_personal_bootstrap_startup_consent_contract() {
@@ -183,6 +189,17 @@ test_personal_bootstrap_startup_consent_contract() {
   contains "$script" 'loginctl enable-linger' && \
   contains "$script" 'systemctl --user enable --now' && \
   ! contains "$script" 'wsl\.exe|schtasks|Task Scheduler'
+}
+
+test_server_bootstrap_startup_consent_contract() {
+  local script="$ROOT/scripts/bootstrap-server.sh"
+  [ -x "$script" ] && \
+  contains "$script" '\-\-enable-startup' && \
+  contains "$script" 'startup services were not installed' && \
+  contains "$script" 'loginctl enable-linger' && \
+  contains "$script" 'systemctl --user enable --now' && \
+  contains "$script" '\-\-profile server' && \
+  ! contains "$script" 'browser-fast|browser-jev|clearcote|wsl-term|uv sync'
 }
 
 test_lifecycle_lock_is_used_everywhere() {
@@ -211,6 +228,7 @@ run_test 'systemd user unit autostarts the canonical bridge' test_systemd_user_a
 run_test 'systemd installer derives user home when HOME is missing' test_systemd_installer_handles_missing_home
 run_test 'Terminal systemd units consume the rendered owner environment' test_terminal_systemd_owner_env_handoff
 run_test 'personal bootstrap keeps startup behind explicit consent' test_personal_bootstrap_startup_consent_contract
+run_test 'server bootstrap keeps startup behind explicit consent' test_server_bootstrap_startup_consent_contract
 run_test 'manual lifecycle and watchdog share an exclusive lock' test_lifecycle_lock_is_used_everywhere
 
 test_status_reports_bounded_diagnostic_storage() {

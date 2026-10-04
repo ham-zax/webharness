@@ -625,3 +625,33 @@ test('runtime lease file protects the inner until its owner releases it', async 
   await new Promise(resolve => setTimeout(resolve, 65));
   assert.equal(created[0].closeCount, 1);
 });
+
+test('tool_list shows parameter names with required ones starred, and omits params when there are none', async t => {
+  const configPath = await configFile(t, ['terminal']);
+  const inner = fakeInner({ pages: {
+    FIRST: {
+      tools: [
+        {
+          name: 'terminal_1mcp_terminal_read',
+          description: 'read terminal output',
+          inputSchema: { type: 'object', properties: { name: { type: 'string' }, max_bytes: { type: 'number' } }, required: ['name'] }
+        },
+        {
+          name: 'terminal_1mcp_terminal_open',
+          description: 'open a terminal',
+          inputSchema: { type: 'object', properties: { command: { type: 'string' }, name: { type: 'string' } } }
+        },
+        { name: 'terminal_1mcp_terminal_list', description: 'list terminals', inputSchema: { type: 'object', properties: {} } },
+        { name: 'terminal_1mcp_terminal_noschema', description: 'no schema at all' }
+      ]
+    }
+  } });
+  const broker = new LocalToolBroker({ inner, configPath });
+
+  const { tools } = await broker.list({ server: 'terminal' });
+  const byName = Object.fromEntries(tools.map(tool => [tool.tool, tool]));
+  assert.equal(byName.terminal_read.params, 'name*, max_bytes');
+  assert.equal(byName.terminal_open.params, 'command, name');
+  assert.equal('params' in byName.terminal_list, false);
+  assert.equal('params' in byName.terminal_noschema, false);
+});

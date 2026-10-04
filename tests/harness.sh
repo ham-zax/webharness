@@ -11,7 +11,7 @@ run_test() { local name="$1"; shift; TESTS=$((TESTS + 1)); if "$@"; then pass "$
 test_raw_codedb_surface_removed() {
   [ ! -e "$ROOT/scripts/install-codedb.sh" ] &&
   [ ! -e "$ROOT/scripts/codedb-mcp.sh" ] &&
-  node - "$ROOT/config/templates/mcp.json" "$ROOT/config/templates/mcp-personal.json" "$ROOT/config/templates/mcp-local.json" <<'NODE'
+  node - "$ROOT/config/templates/mcp.json" "$ROOT/config/templates/mcp-personal.json" "$ROOT/config/templates/mcp-local.json" "$ROOT/config/templates/mcp-server.json" "$ROOT/config/templates/mcp-server-local.json" <<'NODE'
 const fs = require('fs');
 for (const file of process.argv.slice(2)) {
   const cfg = JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -27,6 +27,7 @@ test_final_rendered_composition() {
 MCP_WORKSPACE_ROOT=/tmp/example-workspace
 MCP_PUBLIC_URL=https://mcp.example.test
 MCP_TUNNEL_NAME=
+MCP_DEV_READ_DEFAULT_LINES=50
 MCP_DEV_MAX_SPOOL_BYTES=2048
 MCP_DEV_SPOOL_TTL_SECONDS=3600
 MCP_DEV_SPOOL_MAX_TOTAL_BYTES=8192
@@ -34,21 +35,24 @@ MCP_ONE_MCP_LOG_MAX_SIZE_BYTES=1048576
 MCP_ONE_MCP_LOG_MAX_FILES=3
 ENV
   mkdir -p "$tmp/runtime" "$tmp/home"
-  for profile in restricted trusted-dev personal; do
-    env -u MCP_DEV_MAX_SPOOL_BYTES -u MCP_DEV_SPOOL_TTL_SECONDS -u MCP_DEV_SPOOL_MAX_TOTAL_BYTES -u MCP_TERMINAL_FRONTEND \
+  for profile in restricted trusted-dev personal server; do
+    env -u MCP_DEV_READ_DEFAULT_LINES -u MCP_DEV_MAX_SPOOL_BYTES -u MCP_DEV_SPOOL_TTL_SECONDS -u MCP_DEV_SPOOL_MAX_TOTAL_BYTES -u MCP_TERMINAL_FRONTEND \
       HOME="$tmp/home" XDG_RUNTIME_DIR="$tmp/runtime" node "$ROOT/scripts/render-config.mjs" \
       --profile "$profile" \
       --env-file "$tmp/deployment.env" \
       --state-dir "$tmp/$profile" \
       --repo-root "$ROOT" >/dev/null || { rm -rf "$tmp"; return 1; }
   done
-  node - "$tmp/restricted/1mcp/mcp.json" "$tmp/trusted-dev/1mcp/mcp.json" "$tmp/personal/1mcp/mcp.json" "$tmp/personal/local-1mcp/mcp.json" "$tmp/personal/bridge.env" "$ROOT" "$tmp/runtime" "$tmp/home" <<'NODE2'
+  node - "$tmp/restricted/1mcp/mcp.json" "$tmp/trusted-dev/1mcp/mcp.json" "$tmp/personal/1mcp/mcp.json" "$tmp/personal/local-1mcp/mcp.json" "$tmp/server/1mcp/mcp.json" "$tmp/server/local-1mcp/mcp.json" "$tmp/server/bridge.env" "$tmp/personal/bridge.env" "$ROOT" "$tmp/runtime" "$tmp/home" <<'NODE2'
 const fs = require('fs');
-const [restrictedFile, trustedFile, personalFile, personalLocalFile, personalEnvFile, root, runtimeDir, personalHome] = process.argv.slice(2);
+const [restrictedFile, trustedFile, personalFile, personalLocalFile, serverFile, serverLocalFile, serverEnvFile, personalEnvFile, root, runtimeDir, personalHome] = process.argv.slice(2);
 const restricted = JSON.parse(fs.readFileSync(restrictedFile, 'utf8'));
 const trusted = JSON.parse(fs.readFileSync(trustedFile, 'utf8'));
 const personal = JSON.parse(fs.readFileSync(personalFile, 'utf8'));
 const personalLocal = JSON.parse(fs.readFileSync(personalLocalFile, 'utf8'));
+const server = JSON.parse(fs.readFileSync(serverFile, 'utf8'));
+const serverLocal = JSON.parse(fs.readFileSync(serverLocalFile, 'utf8'));
+const serverEnv = fs.readFileSync(serverEnvFile, 'utf8');
 const personalEnv = fs.readFileSync(personalEnvFile, 'utf8');
 const keys = cfg => Object.keys(cfg.mcpServers ?? {}).sort();
 if (JSON.stringify(keys(restricted)) !== JSON.stringify(['dev', 'shell'])) process.exit(1);
@@ -63,6 +67,9 @@ if (restricted.mcpServers?.codedb || trusted.mcpServers?.codedb || personal.mcpS
 if (restricted.mcpServers?.filesystem || trusted.mcpServers?.filesystem || personal.mcpServers?.filesystem) process.exit(1);
 if (restricted.mcpServers.dev.env.MCP_DEV_SHELL_MODE !== 'allowlist') process.exit(1);
 if (trusted.mcpServers.dev.env.MCP_DEV_SHELL_MODE !== 'unrestricted') process.exit(1);
+for (const config of [restricted, trusted, personal, personalLocal, server, serverLocal]) {
+  if (config.mcpServers.dev.env.MCP_DEV_READ_DEFAULT_LINES !== '50') process.exit(1);
+}
 if (restricted.mcpServers.dev.env.MCP_DEV_MAX_SPOOL_BYTES !== '2048') process.exit(1);
 if (trusted.mcpServers.dev.env.MCP_DEV_MAX_SPOOL_BYTES !== '2048') process.exit(1);
 if (personal.mcpServers.dev.env.MCP_DEV_MAX_SPOOL_BYTES !== '2048') process.exit(1);
@@ -119,11 +126,40 @@ if (personalLocal.mcpServers['browser-jev'].env.WAYLAND_DISPLAY !== 'wayland-0')
 if (personalLocal.mcpServers['browser-jev'].env.DISPLAY !== ':0') process.exit(1);
 if (personalLocal.mcpServers['browser-jev'].env.PULSE_SERVER !== 'unix:/mnt/wslg/PulseServer') process.exit(1);
 if (personalLocal.mcpServers['browser-jev'].tags !== undefined) process.exit(1);
+if (JSON.stringify(keys(server)) !== JSON.stringify(['dev', 'local'])) process.exit(1);
+if (JSON.stringify(keys(serverLocal)) !== JSON.stringify(['dev', 'terminal'])) process.exit(1);
+if (server.mcpServers.shell || serverLocal.mcpServers.shell) process.exit(1);
+for (const absent of ['browser-devtools', 'browser-fast', 'browser-jev', 'host', 'code', 'codedb']) {
+  if (serverLocal.mcpServers[absent] || server.mcpServers[absent]) process.exit(1);
+}
+if (server.mcpServers.dev.env.MCP_DEV_SHELL_MODE !== 'unrestricted') process.exit(1);
+if (server.mcpServers.dev.env.MCP_DEV_PATH_MODE !== 'user') process.exit(1);
+if (server.mcpServers.dev.env.MCP_DEV_DEFAULT_CWD !== personalHome) process.exit(1);
+if (server.mcpServers.dev.env.MCP_DEV_WORKSPACE_ROOT !== undefined) process.exit(1);
+if (server.mcpServers.dev.env.MCP_DEV_TERMINAL_SOCKET !== runtimeDir + '/wsl-agent-terminal.sock') process.exit(1);
+for (const env of [server.mcpServers.dev.env, serverLocal.mcpServers.terminal.env, serverLocal.mcpServers.dev.env]) {
+  for (const gui of ['WAYLAND_DISPLAY', 'DISPLAY', 'PULSE_SERVER', 'GALLIUM_DRIVER', 'MOZ_ENABLE_WAYLAND', 'MCP_TERMINAL_FRONTEND', 'MCP_OWNER_CONTEXT_FILE', 'MCP_BROWSER_JEV_ENV_FILE']) {
+    if (env[gui] !== undefined) process.exit(1);
+  }
+}
+if (serverLocal.mcpServers.terminal.command !== 'node') process.exit(1);
+if (!serverLocal.mcpServers.terminal.args.includes(root + '/providers/terminal/mcp-server.mjs')) process.exit(1);
+if (serverLocal.mcpServers.terminal.env.MCP_TERMINAL_SOCKET !== runtimeDir + '/wsl-agent-terminal.sock') process.exit(1);
+if (serverLocal.mcpServers.terminal.env.MCP_TERMINAL_READ_MAX_BYTES !== '65536') process.exit(1);
+if (server.mcpServers.local.env.MCP_LOCAL_FALLBACK_ONLY_SERVERS !== 'dev') process.exit(1);
+if (JSON.stringify(server.mcpServers.local.tags) !== JSON.stringify(['local'])) process.exit(1);
+if (serverLocal.mcpServers.dev.tags !== undefined) process.exit(1);
+if (server.mcpServers.local.env.MCP_LOCAL_INNER_CONFIG !== serverLocalFile) process.exit(1);
+if (!server.mcpServers.local.env.MCP_LOCAL_ONE_MCP_ENTRY.endsWith('/@1mcp/agent/build/index.js')) process.exit(1);
+if (server.mcpServers.local.env.MCP_LOCAL_INNER_IDLE_MS !== '1800000') process.exit(1);
+if (server.mcpServers.dev.env.MCP_DEV_WORKER_IDLE_MS !== '600000') process.exit(1);
+if (serverLocal.mcpServers.dev.env.MCP_DEV_WORKER_IDLE_MS !== '600000') process.exit(1);
+if (!serverEnv.includes("MCP_BRIDGE_PROFILE='server'")) process.exit(1);
 if (!personalEnv.includes("MCP_BRIDGE_PROFILE='personal'")) process.exit(1);
 NODE2
   local rc=$?
   if [ "$rc" -eq 0 ]; then
-    for profile in restricted trusted-dev personal; do
+    for profile in restricted trusted-dev personal server; do
       log_cfg="$tmp/$profile/1mcp/config.toml"
       grep -Fq '[auth]' "$log_cfg" || rc=1
       grep -Fq 'sessionTtl = 43200' "$log_cfg" || rc=1
@@ -168,6 +204,43 @@ if (supervised?.type !== 'stdio') process.exit(1);
 if (supervised?.restartOnExit !== true) process.exit(1);
 if (unsupervised?.type !== 'stdio') process.exit(1);
 if (unsupervised?.restartOnExit !== false) process.exit(1);
+NODE
+  local rc=$?
+  rm -rf "$tmp"
+  return "$rc"
+}
+
+test_server_owner_local_addons() {
+  local tmp
+  tmp="$(mktemp -d)" || return 1
+  mkdir -p "$tmp/workspace" "$tmp/runtime" "$tmp/home" || { rm -rf "$tmp"; return 1; }
+  cat > "$tmp/server" <<'SH'
+#!/bin/sh
+exit 0
+SH
+  chmod +x "$tmp/server" || { rm -rf "$tmp"; return 1; }
+  printf '{"version":"1.0.0","mcpServers":{"addon":{"command":"%s"}}}\n' \
+    "$tmp/server" > "$tmp/local.json"
+  cat > "$tmp/deployment.env" <<EOF
+MCP_WORKSPACE_ROOT=$tmp/workspace
+MCP_PUBLIC_URL=https://mcp.example.test
+MCP_TUNNEL_NAME=
+MCP_LOCAL_SERVERS_FILE=$tmp/local.json
+EOF
+  HOME="$tmp/home" XDG_RUNTIME_DIR="$tmp/runtime" node "$ROOT/scripts/render-config.mjs" \
+    --profile server \
+    --env-file "$tmp/deployment.env" \
+    --state-dir "$tmp/state" \
+    --repo-root "$ROOT" >/dev/null || { rm -rf "$tmp"; return 1; }
+  node - "$tmp/state/1mcp/mcp.json" "$tmp/state/local-1mcp/mcp.json" <<'NODE'
+const fs = require('fs');
+const outer = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+const inner = JSON.parse(fs.readFileSync(process.argv[3], 'utf8'));
+const keys = cfg => Object.keys(cfg.mcpServers ?? {}).sort();
+if (JSON.stringify(keys(outer)) !== JSON.stringify(['dev', 'local'])) process.exit(1);
+if (JSON.stringify(keys(inner)) !== JSON.stringify(['addon', 'dev', 'terminal'])) process.exit(1);
+if (inner.mcpServers.addon?.type !== 'stdio') process.exit(1);
+if (inner.mcpServers.addon?.restartOnExit !== true) process.exit(1);
 NODE
   local rc=$?
   rm -rf "$tmp"
@@ -815,6 +888,7 @@ run_test 'cold start policy renders, validates, and reserves removed CodeDB name
 run_test 'CodeDB provider and installation surface are removed' test_raw_codedb_surface_removed
 run_test 'final rendered composition places Browser behind Local only in personal mode' test_final_rendered_composition
 run_test 'owner Local stdio servers are supervised by default with an explicit opt-out' test_owner_local_stdio_supervision_defaults
+run_test 'server profile renders headless Dev plus Terminal-private Local with owner add-ons' test_server_owner_local_addons
 run_test 'Dev spool deployment override rejects invalid values' test_dev_spool_limit_validation
 run_test '1MCP rotating log deployment policy rejects invalid values' test_one_mcp_log_policy_validation
 run_test '1MCP loopback port renders and validates' test_one_mcp_port_rendering

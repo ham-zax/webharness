@@ -7,10 +7,7 @@ ConditionPathExists=@TMUX_BIN@
 Type=simple
 Environment=HOME=@USER_HOME@
 Environment=PATH=@PATH@
-Environment=WAYLAND_DISPLAY=wayland-0
-Environment=DISPLAY=:0
-Environment=PULSE_SERVER=unix:/mnt/wslg/PulseServer
-EnvironmentFile=-@OWNER_ENV_FILE@
+@GUI_ENV@
 ExecStart=@TMUX_BIN@ -D -L wsl-agent -f /dev/null
 Restart=on-failure
 RestartSec=2

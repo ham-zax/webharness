@@ -8,7 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 function usage() {
-  return `Usage: scripts/render-config.mjs --profile <restricted|trusted-dev|personal> [options]\n\nOptions:\n  --check           Validate without writing generated state\n  --env-file PATH   Deployment env file (default: <repo>/.env)\n  --state-dir PATH  Persistent state root\n  --repo-root PATH  Repository root override\n  --help            Show this help\n`;
+  return `Usage: scripts/render-config.mjs --profile <restricted|trusted-dev|personal|server> [options]\n\nOptions:\n  --check           Validate without writing generated state\n  --env-file PATH   Deployment env file (default: <repo>/.env)\n  --state-dir PATH  Persistent state root\n  --repo-root PATH  Repository root override\n  --help            Show this help\n`;
 }
 
 function parseArgs(argv) {
@@ -235,8 +235,8 @@ export async function renderConfig(options) {
   const repoRoot = path.resolve(options.repoRoot ?? path.join(scriptDir, '..'));
   const profile = options.profile;
   const checkOnly = options.check === true;
-  if (!['restricted', 'trusted-dev', 'personal'].includes(profile)) {
-    throw new Error('profile must be one of: restricted, trusted-dev, personal');
+  if (!['restricted', 'trusted-dev', 'personal', 'server'].includes(profile)) {
+    throw new Error('profile must be one of: restricted, trusted-dev, personal, server');
   }
 
   const home = process.env.HOME || os.homedir();
@@ -249,7 +249,7 @@ export async function renderConfig(options) {
   const deployment = {
     ...(await readEnvFile(envFile, { optional: true })),
     ...Object.fromEntries(
-      ['MCP_WORKSPACE_ROOT', 'MCP_PUBLIC_URL', 'MCP_TUNNEL_NAME', 'MCP_DEV_MAX_OUTPUT_BYTES', 'MCP_DEV_IMPORT_MAX_BYTES', 'MCP_DEV_MAX_SPOOL_BYTES', 'MCP_DEV_SPOOL_TTL_SECONDS', 'MCP_DEV_SPOOL_MAX_TOTAL_BYTES', 'MCP_ONE_MCP_PORT', 'MCP_ONE_MCP_LOG_MAX_SIZE_BYTES', 'MCP_ONE_MCP_LOG_MAX_FILES', 'MCP_PERSONAL_DEFAULT_CWD', 'MCP_TERMINAL_FRONTEND', 'MCP_OWNER_CONTEXT_FILE', 'MCP_OWNER_ENV_FILE', 'MCP_BROWSER_JEV_ENV_FILE', 'MCP_LOCAL_SERVERS_FILE', 'BRIDGE_ONE_MCP_ENTRY', 'BRIDGE_COLD_START', 'BRIDGE_BACKEND_PORT', 'BRIDGE_WAKE_IDLE_MS', 'MCP_LOCAL_INNER_IDLE_MS', 'MCP_DEV_WORKER_IDLE_MS', 'MCP_LIFECYCLE_LEASE_DIR'].filter((key) => process.env[key] !== undefined).map((key) => [key, process.env[key]]),
+      ['MCP_WORKSPACE_ROOT', 'MCP_PUBLIC_URL', 'MCP_TUNNEL_NAME', 'MCP_DEV_MAX_OUTPUT_BYTES', 'MCP_DEV_READ_DEFAULT_LINES', 'MCP_DEV_IMPORT_MAX_BYTES', 'MCP_DEV_MAX_SPOOL_BYTES', 'MCP_DEV_SPOOL_TTL_SECONDS', 'MCP_DEV_SPOOL_MAX_TOTAL_BYTES', 'MCP_ONE_MCP_PORT', 'MCP_ONE_MCP_LOG_MAX_SIZE_BYTES', 'MCP_ONE_MCP_LOG_MAX_FILES', 'MCP_PERSONAL_DEFAULT_CWD', 'MCP_TERMINAL_FRONTEND', 'MCP_OWNER_CONTEXT_FILE', 'MCP_OWNER_ENV_FILE', 'MCP_BROWSER_JEV_ENV_FILE', 'MCP_LOCAL_SERVERS_FILE', 'BRIDGE_ONE_MCP_ENTRY', 'BRIDGE_COLD_START', 'BRIDGE_BACKEND_PORT', 'BRIDGE_WAKE_IDLE_MS', 'MCP_LOCAL_INNER_IDLE_MS', 'MCP_DEV_WORKER_IDLE_MS', 'MCP_LIFECYCLE_LEASE_DIR'].filter((key) => process.env[key] !== undefined).map((key) => [key, process.env[key]]),
     ),
   };
   const profileValues = await readEnvFile(path.join(repoRoot, 'config', 'profiles', `${profile}.env`));
@@ -260,58 +260,64 @@ export async function renderConfig(options) {
   }
 
   const isPersonal = profile === 'personal';
+  const isServer = profile === 'server';
+  const isLocal = isPersonal || isServer;
   let personalDefaultCwd = null;
   let terminalFrontend = 'kitty';
   let ownerContextFile = null;
   let ownerEnv = {};
   let browserJevEnvFile = '';
   let localOwnerServers = {};
-  if (isPersonal) {
+  if (isLocal) {
     if (!runtimeDir || !path.isAbsolute(runtimeDir)) {
-      throw new Error('personal profile requires an absolute XDG_RUNTIME_DIR or a user runtime directory');
+      throw new Error(`${profile} profile requires an absolute XDG_RUNTIME_DIR or a user runtime directory`);
     }
     if (profileValues.MCP_DEV_PATH_MODE !== 'user') {
-      throw new Error('profile personal must set MCP_DEV_PATH_MODE=user');
+      throw new Error(`profile ${profile} must set MCP_DEV_PATH_MODE=user`);
     }
     personalDefaultCwd = deployment.MCP_PERSONAL_DEFAULT_CWD || home;
     if (typeof personalDefaultCwd !== 'string' || !path.isAbsolute(personalDefaultCwd)) {
       throw new Error('MCP_PERSONAL_DEFAULT_CWD must be an absolute path when set');
     }
-    terminalFrontend = String(deployment.MCP_TERMINAL_FRONTEND ?? '').trim() || 'kitty';
-    if (!['kitty', 'windows-terminal'].includes(terminalFrontend)) {
-      throw new Error('MCP_TERMINAL_FRONTEND must be one of: kitty, windows-terminal');
+    if (isPersonal) {
+      terminalFrontend = String(deployment.MCP_TERMINAL_FRONTEND ?? '').trim() || 'kitty';
+      if (!['kitty', 'windows-terminal'].includes(terminalFrontend)) {
+        throw new Error('MCP_TERMINAL_FRONTEND must be one of: kitty, windows-terminal');
+      }
     }
-    ownerContextFile = String(deployment.MCP_OWNER_CONTEXT_FILE ?? '').trim() || null;
+    ownerContextFile = isPersonal ? String(deployment.MCP_OWNER_CONTEXT_FILE ?? '').trim() || null : null;
     if (ownerContextFile && !path.isAbsolute(ownerContextFile)) {
       throw new Error('MCP_OWNER_CONTEXT_FILE must be an absolute path when set');
     }
-    const ownerEnvFile = String(deployment.MCP_OWNER_ENV_FILE ?? '').trim() || null;
-    if (ownerEnvFile) {
-      ownerEnv = parseOwnerEnv(
-        await readOwnedRegularTextFile(ownerEnvFile, 'MCP_OWNER_ENV_FILE', OWNER_ENV_MAX_BYTES),
-      );
-      const browserExecutable = ownerEnv.AGENT_BROWSER_EXECUTABLE_PATH;
-      if (browserExecutable !== undefined) {
-        const stat = await fs.stat(browserExecutable).catch(() => null);
-        if (!stat?.isFile()) {
-          throw new Error('AGENT_BROWSER_EXECUTABLE_PATH in MCP_OWNER_ENV_FILE must reference an existing regular file');
-        }
-        try {
-          await fs.access(browserExecutable, fsConstants.X_OK);
-        } catch {
-          throw new Error('AGENT_BROWSER_EXECUTABLE_PATH in MCP_OWNER_ENV_FILE must be executable');
+    if (isPersonal) {
+      const ownerEnvFile = String(deployment.MCP_OWNER_ENV_FILE ?? '').trim() || null;
+      if (ownerEnvFile) {
+        ownerEnv = parseOwnerEnv(
+          await readOwnedRegularTextFile(ownerEnvFile, 'MCP_OWNER_ENV_FILE', OWNER_ENV_MAX_BYTES),
+        );
+        const browserExecutable = ownerEnv.AGENT_BROWSER_EXECUTABLE_PATH;
+        if (browserExecutable !== undefined) {
+          const stat = await fs.stat(browserExecutable).catch(() => null);
+          if (!stat?.isFile()) {
+            throw new Error('AGENT_BROWSER_EXECUTABLE_PATH in MCP_OWNER_ENV_FILE must reference an existing regular file');
+          }
+          try {
+            await fs.access(browserExecutable, fsConstants.X_OK);
+          } catch {
+            throw new Error('AGENT_BROWSER_EXECUTABLE_PATH in MCP_OWNER_ENV_FILE must be executable');
+          }
         }
       }
-    }
-    browserJevEnvFile = String(deployment.MCP_BROWSER_JEV_ENV_FILE ?? '').trim();
-    if (browserJevEnvFile) {
-      parseBrowserJevEnv(
-        await readOwnedRegularTextFile(
-          browserJevEnvFile,
-          'MCP_BROWSER_JEV_ENV_FILE',
-          BROWSER_JEV_ENV_MAX_BYTES,
-        ),
-      );
+      browserJevEnvFile = String(deployment.MCP_BROWSER_JEV_ENV_FILE ?? '').trim();
+      if (browserJevEnvFile) {
+        parseBrowserJevEnv(
+          await readOwnedRegularTextFile(
+            browserJevEnvFile,
+            'MCP_BROWSER_JEV_ENV_FILE',
+            BROWSER_JEV_ENV_MAX_BYTES,
+          ),
+        );
+      }
     }
     const localServersFile = String(deployment.MCP_LOCAL_SERVERS_FILE ?? '').trim() || null;
     if (localServersFile) {
@@ -321,10 +327,14 @@ export async function renderConfig(options) {
     }
   }
 
-  const devMaxOutputBytesRaw = deployment.MCP_DEV_MAX_OUTPUT_BYTES ?? '1048576';
+  const devMaxOutputBytesRaw = deployment.MCP_DEV_MAX_OUTPUT_BYTES ?? '65536';
   const devMaxOutputBytes = Number(devMaxOutputBytesRaw);
   if (!Number.isInteger(devMaxOutputBytes) || devMaxOutputBytes <= 0 || devMaxOutputBytes > 16 * 1024 * 1024) {
     throw new Error('MCP_DEV_MAX_OUTPUT_BYTES must be an integer from 1 to 16777216');
+  }
+  const devReadDefaultLinesRaw = deployment.MCP_DEV_READ_DEFAULT_LINES ?? '500';
+  if (!/^\d+$/.test(devReadDefaultLinesRaw) || Number(devReadDefaultLinesRaw) > 100000) {
+    throw new Error('MCP_DEV_READ_DEFAULT_LINES must be an integer from 0 to 100000 (0 disables the default)');
   }
   const devImportMaxBytesRaw = deployment.MCP_DEV_IMPORT_MAX_BYTES ?? String(100 * 1024 * 1024);
   const devImportMaxBytes = Number(devImportMaxBytesRaw);
@@ -383,7 +393,7 @@ export async function renderConfig(options) {
     throw new Error('MCP_ONE_MCP_LOG_MAX_FILES must be an integer from 1 to 10');
   }
 
-  const workspaceRoot = isPersonal ? personalDefaultCwd : deployment.MCP_WORKSPACE_ROOT;
+  const workspaceRoot = isLocal ? personalDefaultCwd : deployment.MCP_WORKSPACE_ROOT;
   const publicUrl = deployment.MCP_PUBLIC_URL;
   const tunnelName = deployment.MCP_TUNNEL_NAME ?? '';
   if (!workspaceRoot) throw new Error(`MCP_WORKSPACE_ROOT is required in ${envFile} or the environment`);
@@ -397,8 +407,8 @@ export async function renderConfig(options) {
   }
   if (parsedUrl.protocol !== 'https:') throw new Error('MCP_PUBLIC_URL must use https');
 
-  const localInnerConfigPath = isPersonal ? path.join(stateDir, 'local-1mcp', 'mcp.json') : '';
-  const oneMcpEntry = isPersonal ? resolveOneMcpEntry(deployment.BRIDGE_ONE_MCP_ENTRY) : '';
+  const localInnerConfigPath = isLocal ? path.join(stateDir, 'local-1mcp', 'mcp.json') : '';
+  const oneMcpEntry = isLocal ? resolveOneMcpEntry(deployment.BRIDGE_ONE_MCP_ENTRY) : '';
   const replacements = {
     __WORKSPACE_ROOT__: workspaceRoot,
     __REPO_ROOT__: repoRoot,
@@ -419,27 +429,31 @@ export async function renderConfig(options) {
     __ONE_MCP_ENTRY__: oneMcpEntry,
     __BROWSER_JEV_ENV_FILE__: browserJevEnvFile,
   };
-  const templateName = isPersonal ? 'mcp-personal.json' : 'mcp.json';
+  const templateName = isPersonal ? 'mcp-personal.json' : isServer ? 'mcp-server.json' : 'mcp.json';
   const template = JSON.parse(await fs.readFile(path.join(repoRoot, 'config', 'templates', templateName), 'utf8'));
   const rendered = replaceStrings(template, replacements);
-  const localRendered = isPersonal
-    ? replaceStrings(JSON.parse(await fs.readFile(path.join(repoRoot, 'config', 'templates', 'mcp-local.json'), 'utf8')), replacements)
+  const localTemplateName = isPersonal ? 'mcp-local.json' : isServer ? 'mcp-server-local.json' : null;
+  const localRendered = localTemplateName
+    ? replaceStrings(JSON.parse(await fs.readFile(path.join(repoRoot, 'config', 'templates', localTemplateName), 'utf8')), replacements)
     : null;
 
   rendered.mcpServers.dev.env.MCP_LIFECYCLE_LEASE_DIR = lifecycleLeaseDir;
   rendered.mcpServers.dev.env.MCP_DEV_WORKER_IDLE_MS = String(devIdleMs);
-  if (isPersonal) {
+  rendered.mcpServers.dev.env.MCP_DEV_READ_DEFAULT_LINES = devReadDefaultLinesRaw;
+  if (isLocal) {
     rendered.mcpServers.local.env.MCP_LIFECYCLE_LEASE_DIR = lifecycleLeaseDir;
-    localRendered.mcpServers['browser-jev'].env.MCP_LIFECYCLE_LEASE_DIR = lifecycleLeaseDir;
     rendered.mcpServers.local.env.MCP_LOCAL_INNER_IDLE_MS = String(localIdleMs);
     rendered.mcpServers.dev.env.MCP_DEV_SHELL_MODE = shellMode;
     rendered.mcpServers.dev.env.MCP_DEV_PATH_MODE = profileValues.MCP_DEV_PATH_MODE;
     rendered.mcpServers.dev.env.MCP_DEV_DEFAULT_CWD = personalDefaultCwd;
-    if (ownerContextFile) rendered.mcpServers.dev.env.MCP_OWNER_CONTEXT_FILE = ownerContextFile;
-    for (const key of OWNER_RUNTIME_ENV_KEYS) {
-      if (ownerEnv[key] === undefined) continue;
-      rendered.mcpServers.dev.env[key] = ownerEnv[key];
-      localRendered.mcpServers.terminal.env[key] = ownerEnv[key];
+    if (isPersonal) {
+      localRendered.mcpServers['browser-jev'].env.MCP_LIFECYCLE_LEASE_DIR = lifecycleLeaseDir;
+      if (ownerContextFile) rendered.mcpServers.dev.env.MCP_OWNER_CONTEXT_FILE = ownerContextFile;
+      for (const key of OWNER_RUNTIME_ENV_KEYS) {
+        if (ownerEnv[key] === undefined) continue;
+        rendered.mcpServers.dev.env[key] = ownerEnv[key];
+        localRendered.mcpServers.terminal.env[key] = ownerEnv[key];
+      }
     }
     const mirrorFallbackServer = (server) => {
       const mirrored = structuredClone(server);
@@ -447,14 +461,16 @@ export async function renderConfig(options) {
       return mirrored;
     };
     localRendered.mcpServers.dev = mirrorFallbackServer(rendered.mcpServers.dev);
-    for (const key of OWNER_BROWSER_ENV_KEYS) {
-      if (ownerEnv[key] === undefined) continue;
-      localRendered.mcpServers['browser-devtools'].env[key] = ownerEnv[key];
-    }
-    for (const key of OWNER_BROWSER_FAST_ENV_KEYS) {
-      if (ownerEnv[key] === undefined) continue;
-      localRendered.mcpServers['browser-fast'].env[key] = ownerEnv[key];
-      localRendered.mcpServers['browser-jev'].env[key] = ownerEnv[key];
+    if (isPersonal) {
+      for (const key of OWNER_BROWSER_ENV_KEYS) {
+        if (ownerEnv[key] === undefined) continue;
+        localRendered.mcpServers['browser-devtools'].env[key] = ownerEnv[key];
+      }
+      for (const key of OWNER_BROWSER_FAST_ENV_KEYS) {
+        if (ownerEnv[key] === undefined) continue;
+        localRendered.mcpServers['browser-fast'].env[key] = ownerEnv[key];
+        localRendered.mcpServers['browser-jev'].env[key] = ownerEnv[key];
+      }
     }
     for (const [name, server] of Object.entries(localOwnerServers)) {
       if (['code', 'codedb'].includes(name)) throw new Error(`MCP_LOCAL_SERVERS_FILE server name is reserved after CodeDB removal: ${name}`);
@@ -472,7 +488,7 @@ export async function renderConfig(options) {
   }
 
   const oneMcpDir = path.join(stateDir, '1mcp');
-  const localOneMcpDir = isPersonal ? path.dirname(localInnerConfigPath) : null;
+  const localOneMcpDir = isLocal ? path.dirname(localInnerConfigPath) : null;
   const logDir = path.join(stateDir, 'logs');
   const oneMcpLogFile = path.join(logDir, 'one-mcp.log');
   const configPath = path.join(oneMcpDir, 'mcp.json');
@@ -480,7 +496,7 @@ export async function renderConfig(options) {
   const bridgeEnvPath = path.join(stateDir, 'bridge.env');
   const appConfig = [
     `port = ${coldStart === '1' ? backendPort : oneMcpPort}`,
-    ...(isPersonal ? ['[admin]', 'enabled = false', ''] : []),
+    ...(isLocal ? ['[admin]', 'enabled = false', ''] : []),
     '[auth]',
     'sessionTtl = 43200',
     '',
@@ -543,7 +559,7 @@ async function main() {
     return;
   }
   if (!args.profile) {
-    console.error('A trust profile is required. Choose --profile restricted, --profile trusted-dev, or --profile personal.');
+    console.error('A trust profile is required. Choose --profile restricted, --profile trusted-dev, --profile personal, or --profile server.');
     console.error(usage());
     process.exitCode = 2;
     return;

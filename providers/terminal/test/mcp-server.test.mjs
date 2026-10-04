@@ -108,10 +108,11 @@ test('Terminal MCP exposes exactly seven public tools with the frozen schemas', 
     assert.match(send.description, /do not.*bypass|must not.*bypass/i);
 
     const read = tools.find((tool) => tool.name === 'terminal_read');
-    assert.deepEqual(Object.keys(read.inputSchema.properties).sort(), ['cursor', 'name', 'snapshot']);
+    assert.deepEqual(Object.keys(read.inputSchema.properties).sort(), ['cursor', 'max_bytes', 'name', 'snapshot']);
     assert.match(read.description, /persisted.*unread|persisted.*position/i);
     assert.match(read.description, /explicit.*cursor.*replay|replay.*cursor/i);
     assert.match(read.description, /snapshot.*without.*advanc|without.*advanc.*snapshot/i);
+    assert.match(read.description, /max_bytes/i);
 
     const resize = tools.find((tool) => tool.name === 'terminal_resize');
     assert.deepEqual(Object.keys(resize.inputSchema.properties).sort(), ['cols', 'name', 'rows']);
@@ -191,7 +192,7 @@ test('Terminal MCP maps public calls to private broker operations and returns na
 
     assert.deepEqual(calls, [
       { op: 'session.open', params: { name: 'demo', command: 'cat', cwd: '/tmp', cols: 90, rows: 31 } },
-      { op: 'model.read', params: { name: 'demo' } },
+      { op: 'model.read', params: { name: 'demo', maxBytes: 16384 } },
       { op: 'model.read', params: { name: 'demo', snapshot: true } },
       { op: 'session.send', params: { name: 'demo', text: 'SECRET_MODEL_TEXT' } },
       { op: 'session.send', params: { name: 'demo', key: 'C-c' } },
@@ -199,6 +200,138 @@ test('Terminal MCP maps public calls to private broker operations and returns na
       { op: 'session.list', params: {} },
       { op: 'session.close', params: { name: 'demo', force: true } },
     ]);
+  });
+});
+
+test('terminal_read maps max_bytes to broker maxBytes and defaults to a 16384-byte budget', async (t) => {
+  const { client: broker, calls } = recordingBroker();
+  await withInMemoryServer(t, broker, async (client) => {
+    await client.callTool({ name: 'terminal_read', arguments: { name: 'demo', max_bytes: 512 } });
+    await client.callTool({ name: 'terminal_read', arguments: { name: 'demo', cursor: 7 } });
+    await client.callTool({
+      name: 'terminal_read', arguments: { name: 'demo', cursor: 7, max_bytes: 512 },
+    });
+  });
+  assert.deepEqual(calls, [
+    { op: 'model.read', params: { name: 'demo', maxBytes: 512 } },
+    { op: 'model.read', params: { name: 'demo', cursor: 7, maxBytes: 16384 } },
+    { op: 'model.read', params: { name: 'demo', cursor: 7, maxBytes: 512 } },
+  ]);
+});
+
+test('repeated ordinary terminal_read calls retrieve all unread bytes without gaps or duplicates', async (t) => {
+  const full = `${'A'.repeat(10)}${'B'.repeat(10)}`;
+  const calls = [];
+  let modelCursor = 0;
+  const broker = {
+    async request(op, params) {
+      assert.equal(op, 'model.read');
+      calls.push({ op, params });
+      const cursor = params.cursor ?? modelCursor;
+      const text = full.slice(cursor, cursor + params.maxBytes);
+      modelCursor = cursor + text.length;
+      return { text, cursor, nextCursor: modelCursor, baseOffset: 0, endOffset: full.length };
+    },
+  };
+  await withInMemoryServer(t, broker, async (client) => {
+    const first = await client.callTool({
+      name: 'terminal_read', arguments: { name: 'demo', max_bytes: 10 },
+    });
+    assert.equal(first.isError, undefined);
+    assert.ok(textOf(first).startsWith('A'.repeat(10)));
+    assert.match(textOf(first), /\[more output: nextCursor=10 endOffset=20 \(10 bytes remain\)/);
+
+    const second = await client.callTool({ name: 'terminal_read', arguments: { name: 'demo' } });
+    assert.equal(second.isError, undefined);
+    assert.equal(textOf(second), 'B'.repeat(10));
+
+    const transcriptOf = (result) => textOf(result).split('\n[more output')[0];
+    assert.equal(transcriptOf(first) + transcriptOf(second), full);
+  });
+  assert.deepEqual(calls, [
+    { op: 'model.read', params: { name: 'demo', maxBytes: 10 } },
+    { op: 'model.read', params: { name: 'demo', maxBytes: 16384 } },
+  ]);
+});
+
+test('terminal_read surfaces UTF-8 no-progress instead of returning a silent empty read', async (t) => {
+  const broker = {
+    async request(op) {
+      assert.equal(op, 'model.read');
+      // Broker aligned the end backward past a multi-byte character, so no
+      // bytes fit this explicit budget even though output remains.
+      return { text: '', cursor: 5, nextCursor: 5, baseOffset: 0, endOffset: 8 };
+    },
+  };
+  await withInMemoryServer(t, broker, async (client) => {
+    const read = await client.callTool({
+      name: 'terminal_read', arguments: { name: 'demo', max_bytes: 1 },
+    });
+    assert.equal(read.isError, undefined);
+    assert.match(textOf(read), /no progress/);
+    assert.match(textOf(read), /larger max_bytes/);
+    assert.match(textOf(read), /nextCursor=5 endOffset=8/);
+  });
+});
+
+test('terminal_read snapshot truncates at the facade with a marker and never consumes cursor', async (t) => {
+  const calls = [];
+  let modelCursor = 0;
+  const screen = 'S'.repeat(20);
+  const broker = {
+    async request(op, params) {
+      calls.push({ op, params });
+      if (params.snapshot === true) return { snapshot: true, text: screen };
+      const cursor = params.cursor ?? modelCursor;
+      const text = 'UNREAD'.slice(cursor, cursor + params.maxBytes);
+      modelCursor = cursor + text.length;
+      return { text, cursor, nextCursor: modelCursor, baseOffset: 0, endOffset: 6 };
+    },
+  };
+  await withInMemoryServer(t, broker, async (client) => {
+    // A consuming transcript read first, then a snapshot: the snapshot must
+    // be bounded locally with a marker, not silently truncated by the read.
+    const consumed = await client.callTool({ name: 'terminal_read', arguments: { name: 'demo' } });
+    assert.equal(textOf(consumed), 'UNREAD');
+
+    const snapshot = await client.callTool({
+      name: 'terminal_read', arguments: { name: 'demo', snapshot: true, max_bytes: 10 },
+    });
+    assert.equal(snapshot.isError, undefined);
+    assert.ok(textOf(snapshot).startsWith('S'.repeat(10)));
+    assert.match(textOf(snapshot), /\[snapshot truncated: showing 10 of 20 bytes \(max_bytes=10\)/);
+    assert.match(textOf(snapshot), /does not advance the transcript cursor/);
+
+    // Snapshot with an explicit cursor still forwards neither cursor nor
+    // maxBytes, and the persisted model cursor is untouched by snapshots.
+    const cursorSnapshot = await client.callTool({
+      name: 'terminal_read', arguments: { name: 'demo', cursor: 0, snapshot: true },
+    });
+    assert.equal(textOf(cursorSnapshot), screen);
+    assert.equal(modelCursor, 6);
+  });
+  assert.deepEqual(calls, [
+    { op: 'model.read', params: { name: 'demo', maxBytes: 16384 } },
+    { op: 'model.read', params: { name: 'demo', snapshot: true } },
+    { op: 'model.read', params: { name: 'demo', snapshot: true } },
+  ]);
+});
+
+test('terminal_read snapshot truncation never splits a UTF-8 character', async (t) => {
+  const broker = {
+    async request(op, params) {
+      assert.equal(op, 'model.read');
+      assert.equal(params.snapshot, true);
+      return { snapshot: true, text: 'éé' };
+    },
+  };
+  await withInMemoryServer(t, broker, async (client) => {
+    const read = await client.callTool({
+      name: 'terminal_read', arguments: { name: 'demo', snapshot: true, max_bytes: 3 },
+    });
+    const [shown] = textOf(read).split('\n[snapshot truncated');
+    assert.equal(shown, 'é');
+    assert.doesNotMatch(textOf(read), /�/);
   });
 });
 

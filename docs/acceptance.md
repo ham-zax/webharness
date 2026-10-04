@@ -95,3 +95,9 @@ Qualification is complete only when:
 - no OAuth state, browser profile, state root, tmux namespace, or service name was migrated merely to change source checkout.
 
 See [Development](development.md) for the public classifier/staging workflow and [Operations](operations.md#safe-source-cutover) for source-path cutover mechanics.
+
+## Headless Server qualification
+
+For `server`, run doctor and status on that host. Require Dev and Local outer surfaces, with Terminal as the only built-in public Local server. The hidden Dev mirror remains reachable only through the recovery route. Desktop/browser/Host dependencies and GUI environment must be absent. Reuse the harmless Terminal and restart-persistence checks above without restarting tmux.
+
+Require the separate public issuer in OAuth discovery, an unauthenticated MCP refusal, and public consent/management refusal. Approve only through the private local forward described in [Headless Server](headless-server.md). Preserve existing application services and routes during deployment. Final client registration and owner approval are operator actions.

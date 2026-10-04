@@ -33,8 +33,12 @@ An explicit Browser Fast or Browser Jev `browser_profile` uses a separate persis
 
 On Linux/WSLg, `browser-fast`, `browser-jev`, and `browser-devtools` resolve the same backend/profile policy from `~/.config/mcp-dev-bridge/browser-fast.json`. The maintained Personal Workstation defaults to managed Clearcote `x-main`; browser-jev and browser-devtools attach to that running profile's ephemeral loopback CDP endpoint instead of launching a second browser. Browser-jev deliberately fails when the selected Clearcote profile is inactive, so initialize it through browser-fast. Explicit Chrome profile names persist beneath `~/.local/state/mcp-dev-bridge/chrome-profiles/` unless `XDG_STATE_HOME` changes the state root; explicit Clearcote names select configured persistent profiles. Use `browser_backend="chrome"` when a standalone Linux Chrome profile is intentionally required.
 
+## Headless Server profile
+
+The `server` profile targets Linux with systemd user services, Node.js 24+, tmux, and Cloudflare Tunnel. It reuses Dev, Local, and Terminal without desktop, WSLg, Browser, or Host providers. Use [Headless Server](headless-server.md) for the separate machine, tunnel, OAuth state, and private approval procedure. This narrower profile does not claim Personal workstation parity.
+
 ## What is not qualified
 
-The current repository does not claim native macOS support, native Windows-host deployment, non-WSL Linux parity, ARM64 parity, or universal distro/package-manager support. A fork can adapt those choices, but it should re-qualify lifecycle, browser ownership, Terminal persistence, transport, and dependency installation rather than treating this document as a compatibility guarantee.
+The current repository does not claim native macOS support, native Windows-host deployment, Personal-profile non-WSL Linux parity, Personal-profile ARM64 parity, or universal distro/package-manager support. A fork can adapt those choices, but it should re-qualify lifecycle, browser ownership, Terminal persistence, transport, and dependency installation rather than treating this document as a compatibility guarantee.
 
 Optional Windows Chrome integration also depends on WSL-to-Windows process/filesystem interop. WSLg is required only for the headed Linux browser path; it is not required for the dedicated Windows Chrome path.
