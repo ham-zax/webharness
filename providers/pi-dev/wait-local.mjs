@@ -277,6 +277,11 @@ export class LocalWaitSources {
     const resolved = await resolveUserPath(this.defaultCwd, validated.path, { mustExist: false });
     throwIfAborted(signal);
     if (validated.kind === 'file_exists') {
+      const current = await fingerprint(resolved);
+      throwIfAborted(signal);
+      if (current.exists) {
+        return { status: 'matched', baseline: { path: resolved }, evidence: `file=${resolved} exists` };
+      }
       return { status: 'pending', baseline: { path: resolved } };
     }
     return { status: 'pending', baseline: { path: resolved, fingerprint: await fingerprint(resolved) } };

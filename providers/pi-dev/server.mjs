@@ -218,7 +218,7 @@ async function invokeWait(fn) {
 
 function renderWaitResult(result) {
   if (result.status === 'pending') {
-    return `pending ${result.name} deadline=${new Date(result.deadlineAtMs).toISOString()} resume_required=true no_model_push=true`;
+    return `pending ${result.name} deadline=${new Date(result.deadlineAtMs).toISOString()} resume_required=true no_model_push=true poll_again_with=name-only wait`;
   }
   if (result.status === 'matched') {
     return `matched ${result.name}${result.evidence === undefined ? '' : ` ${String(result.evidence)}`}`;
@@ -329,7 +329,7 @@ if (pathMode === 'user') {
   }));
 
   registerTool('wait', {
-    description: 'Create, resume, or cancel one durable named condition/timer wait. Prefer this over polling or sleep loops. Arm with name+condition and resume later with name only. A pending wait stays durable and must be resumed by a later active model turn; it does not start one. For long-running commands, start the process through Local server="terminal" with terminal_open, then use terminal_exit or terminal_output waits across short RPCs and inspect final output with terminal_read. timeout_seconds is the durable deadline (default 300s, max 24h); hold_seconds bounds only this invocation (default 10s, max 15s). Supports timer, Terminal output/exit, process exit, TCP listen, file exists/change, HTTP readiness, and user-systemd conditions. Terminal-output waits observe only output produced after arming and do not consume the Terminal model cursor.',
+    description: 'Create, resume, or cancel one durable named condition/timer wait. Prefer this over polling or sleep loops. Arm with name+condition and resume later with name only. A pending wait stays durable and must be resumed by a later active model turn; it does not start one. A matched wait reports its evidence in the same call, including an already-satisfied condition at arm time. For long-running commands, start the process through Local server="terminal" with terminal_open, then use terminal_exit or terminal_output waits across short RPCs and inspect final output with terminal_read. timeout_seconds is the durable deadline (default 300s, max 24h); hold_seconds bounds only this invocation (default 10s, max 45s). Supports timer, Terminal output/exit, process exit, TCP listen, file exists/change, HTTP readiness, and user-systemd conditions. Terminal-output waits observe only output produced after arming and do not consume the Terminal model cursor.',
     inputSchema: waitInputSchema,
   }, async (args, extra) => invokeWait(async () => {
     const result = await waitEngine.run(args, extra.signal);

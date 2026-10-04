@@ -1,0 +1,12 @@
+interface:
+  display_name: X Content
+  short_description: Create X posts, Articles, replies, and opportunity-driven content
+  icon_small: assets/icon.svg
+  icon_large: assets/icon.svg
+policy:
+  products:
+  - chatgpt
+  - codex
+  - api
+  - atlas
+  allow_implicit_invocation: true

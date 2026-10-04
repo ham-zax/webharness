@@ -3,9 +3,12 @@
 ## Contents
 
 - Session Ledger
+- Handoff Inbox
 - Blocker Ledger
 - Review Gate state
+- Strategic reassessment state
 - Frontier transition receipt
+- Strategic Reassessment receipt
 - Canonical automatic Progress Snapshot
 - Review-loop snapshots
 - Execution Board escalation
@@ -16,13 +19,30 @@ Use these formats when an effort has enough moving parts that state can otherwis
 
 ## Session Ledger
 
-| Agent | Mission | Status | Role | Workspace | Disposition | Reusable |
-| --- | --- | --- | --- | --- | --- | --- |
-| A | A1 | COMPLETE | implement | main | REUSE AS A2 | yes |
-| G | G1 | ACTIVE | implement | isolated worktree | CONTINUE | not yet |
-| R | R1 | ACTIVE | independent review | read-only | CONTINUE | re-review as R2 |
+| Agent | Mission | Status | Role | Workspace | Handoff receipt | Disposition | Reusable |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| A | A1 | COMPLETE | implement | main | `<path/to/A1 receipt>` | REUSE AS A2 | yes |
+| G | G1 | ACTIVE | implement | isolated worktree | pending | CONTINUE | not yet |
+| R | R1 | ACTIVE | independent review | read-only | pending | CONTINUE | re-review as R2 |
 
 Statuses must reflect known evidence only.
+
+
+## Handoff Inbox
+
+When sessions share a filesystem, record one repository-level disposable handoff root and one mission subdirectory per delegated mission. Prefer the cache protocol in `handoff-artifacts.md` over repository-resident files for lightweight orchestration.
+
+Track at least:
+
+| Field | Value |
+| --- | --- |
+| Repository key | `<stable key derived from Git common dir>` |
+| Handoff root | `<cache path>` |
+| Mission inbox | `<handoff root>/<mission>` |
+| Latest receipt | `<timestamped receipt path | pending>` |
+| Receipt state | `<current | stale | missing | malformed>` |
+
+A discovered receipt may transition a mission from `UNKNOWN/ACTIVE` to a candidate `COMPLETE/BLOCKED` state, but verify consequential Git/workspace facts before using it to discharge integration/review blockers. If the user asks to `check Agent X`, inspect the assigned inbox first instead of asking for copied chat text.
 
 Reserve Agent R for independent review. Do not reuse R as the implementation owner of findings it discovers.
 
@@ -40,10 +60,15 @@ When review is required, integration must have an explicit review-blocker row.
 
 ## Review Gate state
 
-Use this normal review loop for substantial work when independent review is warranted:
+Use review gates on **stable implementation batches**, not automatically after each mission. A healthy default for substantial work is:
 
 ```text
-A1 implementation COMPLETE
+A1 COMPLETE
+-> A2 READY — SAME SESSION
+-> no review yet when A2 is a planned same-area continuation and early feedback would not change direction
+
+A2 COMPLETE
+-> review batch A1+A2 is stable
 -> R1 READY — NEW SESSION
 -> Integration BLOCKED by R1
 
@@ -51,18 +76,41 @@ R1 PASS
 -> Integration READY — PLANNER OWNED
 
 R1 BLOCKING FINDINGS
--> A2 READY — SAME SESSION
--> R2 BLOCKED by A2
--> Integration BLOCKED by R2
+-> group all material in-scope findings from the pass
+-> planner-owned tiny fixes OR B1/A3 repair batch as justified
+-> R2 BLOCKED by repair batch
 
-A2 COMPLETE
+Repair batch COMPLETE
 -> R2 READY — SAME REVIEWER SESSION
 
 R2 PASS
 -> Integration READY — PLANNER OWNED
 ```
 
-Do not let Agent R repair the implementation and then approve its own repair.
+A topology such as `A1 -> A2 -> R1 -> B1 -> R2` is often preferable to `A1 -> R1 -> A2 -> R2 -> A3 -> R3` when the early review boundaries would not change implementation direction.
+
+Do not let Agent R repair the implementation and then approve its own repair. Do not optimize for minimum agent passes by making missions incoherent; optimize for balanced mission size and fewer feedback cycles.
+
+## Strategic reassessment state
+
+For long-running plans, track the deep-review cadence separately from ordinary progress. The default threshold is two material frontier transitions; one major/high-impact transition may trigger immediately.
+
+Lightweight state may be a single line:
+
+```text
+Strategic reassessment: 1/2 material transitions since last deep review
+```
+
+Durable coordination may track:
+
+| Field | Value |
+| --- | --- |
+| Last reassessment | `<event/commit/report>` |
+| Material transitions since | `0 | 1 | 2` |
+| Trigger reason | `<cadence | major event | user request | other>` |
+| Last outcome | `<kept DAG | replanned: ...>` |
+
+Reset the transition count after a completed Strategic Reassessment Gate. Status-only/no-op updates do not increment it.
 
 ## Frontier transition receipt
 
@@ -86,6 +134,23 @@ Review Gate: independent review required
 R1 READY — NEW SESSION
 Integration BLOCKED -> R1
 ```
+
+## Strategic Reassessment receipt
+
+When the cadence or an immediate trigger fires, report the deep-review result before the Progress Snapshot:
+
+```text
+Strategic Reassessment
+Trigger: 2 material frontier transitions since last deep review
+Objective rechecked: ship an autonomous target-mode client, not merely pass search tests
+Challenged: runtime configuration fidelity, experiment confounds, DAG ordering, readiness gates
+New finding: one target setting is propagated as metadata but behavior remains approximate
+Plan impact: add a read-only fidelity audit in parallel; narrow the current experiment claim
+Preserved: completed execution and hidden-information repairs remain closed
+Next reassessment: after ~2 material frontier transitions or sooner on a major trigger
+```
+
+A valid receipt may say `New finding: none` and `Plan impact: keep` when the DAG survives the challenge.
 
 ## Canonical automatic Progress Snapshot
 
@@ -147,6 +212,8 @@ Useful status/ownership labels:
 
 Same-session reuse must say where to paste the prompt. Fresh sessions must explicitly say to open a new chat.
 
+For long-running plans, include the reassessment cadence line when it is nonzero or due, so the planner does not silently lose the deep-review trigger. Omit it when that state would add no useful information.
+
 Do not permanently carry irrelevant historical completions. Once a completed mission no longer affects current decisions, collapse it into a compact fact such as:
 
 ```text
@@ -155,7 +222,7 @@ Integrated base: main @ 725fb49
 
 ## Review-loop snapshots
 
-When a substantial implementation reaches review:
+When a substantial **implementation batch** reaches a stable review boundary:
 
 ```text
 Progress Snapshot
@@ -265,6 +332,7 @@ Emit or refresh the snapshot after:
 - mission cancellation/supersession;
 - material contract or workspace change;
 - planner-owned action affecting readiness;
-- a status request during an active plan.
+- a status request during an active plan;
+- a Strategic Reassessment Gate result or reset.
 
 Do not fabricate state to fill the snapshot. Use `UNKNOWN` when necessary.

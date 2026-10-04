@@ -1,6 +1,9 @@
 interface:
   display_name: Agent Browser
-  short_description: Route local browser work through Local, including managed Clearcote, or the isolated CLI.
+  short_description: Route local browser work through Local, including managed Clearcote,
+    or the isolated CLI.
+  icon_small: assets/icon.svg
+  icon_large: assets/icon.svg
 policy:
   products:
   - chatgpt

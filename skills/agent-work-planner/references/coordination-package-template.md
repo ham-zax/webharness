@@ -4,6 +4,7 @@
 
 - README.md
 - Mission files
+- Strategic reassessment state
 - Launcher prompts
 
 Use durable coordination only when repository-resident orchestration state materially helps.
@@ -22,10 +23,17 @@ Use durable coordination only when repository-resident orchestration state mater
 
 <Use the canonical Current frontier tree from orchestration-state.md>
 
+## Strategic reassessment
+
+Last deep review: <event/commit/report or none yet>
+Material frontier transitions since: <0/2 | 1/2 | DUE>
+Last trigger: <cadence | major event | user request | other>
+Last outcome: <kept DAG | concise replan>
+
 ## Session Ledger
 
-| Agent | Mission | Status | Role | Workspace | Disposition | Reusable |
-| --- | --- | --- | --- | --- | --- | --- |
+| Agent | Mission | Status | Role | Workspace | Handoff receipt | Disposition | Reusable |
+| --- | --- | --- | --- | --- | --- | --- | --- |
 
 ## Blocker Ledger
 
@@ -34,7 +42,7 @@ Use durable coordination only when repository-resident orchestration state mater
 
 ## Review Gate
 
-<Record which completed implementation missions require independent review before integration, the R1/R2 mission, and the exact review-blocker discharge condition. State `not required` when review does not earn its overhead.>
+<Record which stable implementation batches/candidates require independent review before integration, which missions are intentionally accumulated before R1, the R1/R2 mission, and the exact review-blocker discharge condition. State `not required` when review does not earn its overhead.>
 
 ## Dependency map
 
@@ -50,7 +58,7 @@ Use durable coordination only when repository-resident orchestration state mater
 
 ## Review / integration policy
 
-<Identify Agent R review requirements, implementer repair ownership, re-review requirements, and who performs bounded integration after review passes.>
+<Identify Agent R review requirements, the intended review-batch boundary, repair ownership, re-review requirements, and who performs bounded integration after review passes. Prefer fewer meaningful feedback cycles over review after every mission.>
 
 ## Testing / validation authority
 
@@ -64,12 +72,19 @@ Use durable coordination only when repository-resident orchestration state mater
 
 - Wave <N> - <purpose> - blocked by <condition> - ~<effort>% - <PLANNED | CONDITIONAL>
 
+## Handoff inbox
+
+Repository-level disposable handoff root: `<path>`
+
+Use the shared cache protocol from `references/handoff-artifacts.md` when lightweight file-backed handoffs are enabled. Repository-resident coordination remains authoritative only when durable orchestration explicitly requires it.
+
 ## Transition log
 
 - <event> -> <blocker/session/review/frontier state change>
+- <strategic reassessment> -> <assumptions challenged + keep/replan result>
 ```
 
-Update the README after frontier-invalidating events. Do not rewrite it for trivial elapsed time.
+Update the README after frontier-invalidating events. Increment the strategic-reassessment cadence only for material transitions, reset it after the gate, and do not rewrite the file for trivial elapsed time.
 
 ## Mission files
 
@@ -89,6 +104,7 @@ Record:
 - role/review independence;
 - wave/track and effort;
 - workspace;
+- handoff inbox and latest receipt path when shared filesystem handoffs are enabled;
 - dependencies/blockers;
 - objective/ownership;
 - success conditions;

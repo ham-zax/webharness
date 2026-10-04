@@ -86,7 +86,7 @@ export const waitInputSchema = z.object({
   name: z.string().regex(WAIT_NAME_RE, 'name must match ^[A-Za-z0-9._-]{1,64}$'),
   condition: waitConditionSchema.optional(),
   timeout_seconds: z.number().int().min(1).max(86400).optional(),
-  hold_seconds: z.number().int().min(0).max(15).optional(),
+  hold_seconds: z.number().int().min(0).max(45).optional(),
   cancel: z.boolean().optional(),
 }).strict().superRefine((value, ctx) => {
   if (value.cancel === true) {

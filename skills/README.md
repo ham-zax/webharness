@@ -4,69 +4,48 @@ This directory tracks the Skills that were exposed or invoked in ChatGPT and kee
 
 ## Included skills
 
-1. `agent-work-planner`
-2. `brainstorming`
-3. `context-audit`
-4. `dispatching-parallel-agents`
-5. `executing-plans`
-6. `finishing-a-development-branch`
-7. `mcp-harness-router`
-8. `moyu`
-9. `persistent-agent-loop`
-10. `receiving-code-review`
-11. `reflexion`
-12. `requesting-code-review`
-13. `skill-creator`
-14. `subagent-driven-development`
-15. `superpowers-web-adapter`
-16. `systematic-debugging`
-17. `test-driven-development`
-18. `using-git-worktrees`
-19. `using-superpowers`
-20. `verification-before-completion`
+1. `agent-browser`
+2. `agent-work-planner`
+3. `causal-coding`
+4. `clean-migration`
+5. `code-review`
+6. `docx`
+7. `frontend-design`
+8. `job-application`
+9. `lateral-thinking`
+10. `learning-os-teacher`
+11. `lingua-os-teacher`
+12. `mcp-harness-router`
+13. `pdfs`
+14. `persistent-agent-loop`
+15. `ponytail`
+16. `reflexion`
+17. `skill-creator`
+18. `slides`
+19. `spreadsheets`
+20. `systematic-debugging`
 21. `writing-plans`
-22. `writing-skills`
-23. `agent-browser`
-24. `causal-coding`
+22. `x-content`
 
 ## Provenance
 
-- The 14 Superpowers skills are synchronized to the current session-exposed `superpowers` 6.3.0 bundle (tag `v6.3.0`, peeled commit `b36e0829c6d0140e93cfef2ca599b1b07d4a7797`). The session `brainstorming` entrypoint was matched against that immutable release before synchronization; the complete upstream skill directories are retained so helper/reference files omitted by the ChatGPT resource listing are preserved along with executable permissions.
-- `agent-work-planner` is materialized from the currently installed ChatGPT Skill, including its UI metadata, icon, agent prompt template, and coordination-package template.
-- `agent-browser` is materialized from the installed ChatGPT browser Skill with harness routing for two Local browser surfaces: routine Windows/WSLg interaction uses experimental `browser-fast` `observe`/`execute`, including bounded read-only site/platform/policy memory returned by observation; DevTools diagnostics use `browser-devtools`, and isolated/Electron automation keeps the existing `agent-browser` CLI workflow.
-- `causal-coding` mirrors the currently installed ChatGPT implementation-mutation policy bundle, including its UI metadata and icon.
-- `job-application` and `x-content` are intentionally excluded from the tracked snapshot and ignored by Git. They may exist locally for ChatGPT-side/private workflow synchronization, but canonical Git history does not carry those private bundles.
-- `mcp-harness-router` mirrors the currently installed ChatGPT router bundle and is maintained alongside harness behavior such as the installed `wsl-term` handoff path, the durable wait/RPC boundary, and Local fallback routing including explicit Dev recovery inspection and same-operation Browser DevTools fallback.
-- `persistent-agent-loop` mirrors the currently installed ChatGPT bundle. Its compact `SKILL.md` directly references `references/protocol.md` so ChatGPT can load the detailed mission/checkpoint/recovery protocol only when needed. It composes with `agent-work-planner` when planning/replanning is needed, understands native timer versus event waits, preserves in-mission steering without accidental termination, and treats Kitty presentation as optional visibility over the same tmux-owned Terminal process.
-- `superpowers-web-adapter`, `context-audit`, `moyu`, and `reflexion` were materialized from the session-exposed resources. Their resource reader exposes the instruction body without YAML frontmatter, so valid `name`/`description` frontmatter was added without changing the body.
-- `skill-creator` is the one deliberate non-byte-sync exception. The current ChatGPT session exposes a newer textual bundle, but its resource view is not byte-preserving for executable Python: escaped newlines inside string/regex literals are rendered as literal line breaks. The installed WSL system copy also does not match the current session entrypoint, so this synchronization does not overwrite the tracked executable bundle with either unsafe or stale bytes. Update it only when a byte-preserving current-session export/source is available.
-- `agents/openai.yaml` files for the Superpowers bundles are local ChatGPT UI metadata added for installability; their upstream `SKILL.md` and helper files are otherwise copied unchanged.
-- `LICENSES/superpowers-LICENSE.txt` preserves the license shipped with the copied Superpowers package. Skills with their own session-exposed licenses keep those licenses inside their directories.
+The current ChatGPT runtime is the sole upstream for the 22 skill directories listed above. On an explicit synchronization request, each complete `/home/oai/skills/<name>` directory is copied byte-for-byte into `skills/<name>`, including helper scripts, references, binary assets, and executable modes. Downstream-only first-level skill directories are removed in the same synchronization so the repository skill set matches the session skill set exactly.
+
+`README.md` and `SNAPSHOT_SHA256.txt` are repository snapshot metadata, not upstream skill payloads. No skill-specific files are synthesized, omitted, or locally patched during synchronization.
 
 ## Validation
 
-Every first-level skill directory must contain:
-
-- `SKILL.md` with valid YAML frontmatter;
-- `agents/openai.yaml` with a display name and short description.
-
-Validate each Skill with the installed OpenAI Skill Creator validator, then verify that the checksum manifest exactly covers the current tracked Skill tree:
+Do not add local installability metadata or normalize an upstream skill directory: byte identity with the current session copy is the invariant. Verify the synchronized directory set and contents against the imported upstream snapshot, then regenerate the tracked checksum manifest deterministically:
 
 ```bash
-VALIDATOR="$HOME/.codex/skills/.system/skill-creator/scripts/quick_validate.py"
-for dir in skills/*/; do
-  [ -f "$dir/SKILL.md" ] || continue
-  python3 "$VALIDATOR" "$dir"
-done
+bash scripts/skill-snapshot.sh write
 bash scripts/skill-snapshot.sh check
 ```
 
-After an intentional tracked Skill change, regenerate the manifest deterministically with `bash scripts/skill-snapshot.sh write`, then rerun the check. The repository publication policy treats all `skills/*` paths as private-only.
+The checksum manifest covers regular files under `skills/` except the manifest itself. The repository publication policy treats all `skills/*` paths as private-only.
 
 ## Fresh ChatGPT installation
 
-The WSL bootstrap does not and cannot silently install these Skills into a new ChatGPT account/workspace. ChatGPT owns its installed-Skill state and is upstream for the harness bundles synchronized here; this repository is a portable WSL snapshot and changes only when explicitly synchronized.
+The WSL bootstrap does not silently install Skills into a ChatGPT account or workspace. ChatGPT owns its installed-Skill state and remains upstream; this repository is only a portable downstream snapshot that changes on explicit synchronization.
 
-For a new ChatGPT environment, install the desired bundles from this directory through ChatGPT's Skills UI (`Plugins` -> `Skills` -> `Create` -> upload from your computer). Package/upload one skill directory at a time so its `SKILL.md`, `agents/openai.yaml`, and supporting resources remain together. Validate the directory first with the command above.
-
-At minimum, install `mcp-harness-router` when you want the direct Dev plus Local Code/Terminal/Host/Browser routing policy from this repository, and install the tracked `agent-browser` replacement when you want browser requests to choose fast resource-local interaction, DevTools diagnostics, or the isolated `agent-browser` CLI correctly. `job-application` and `x-content` remain separately managed private ChatGPT-side skills and are not sourced from this Git snapshot. Removing a local extension does not remove its ChatGPT Skill automatically, so uninstall that Skill separately when retiring the domain workflow. Also install `persistent-agent-loop` when conversations should run long-lived, steerable missions across durable waits, native timers/event wakeups, checkpoints, optional live Kitty/tmux observation, and repeated tool work. Install `agent-work-planner` when you want human-launched multi-session planning and coordination; it hands long-lived execution to `persistent-agent-loop` rather than duplicating lifecycle mechanics. Supporting files such as `persistent-agent-loop/references/protocol.md` and `agent-work-planner/references/*.md` must stay in their uploaded Skill directories so ChatGPT can load them progressively when referenced. The other tracked Skills are reusable workflow/process bundles and may be installed as desired. ChatGPT-side Skill installation is separate from connecting the MCP endpoint and completing OAuth.
+When reusing a bundle elsewhere, keep each skill directory intact so its `SKILL.md` and every supporting file travel together. ChatGPT-side Skill installation remains separate from connecting the MCP endpoint and completing OAuth.

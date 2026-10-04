@@ -1,6 +1,6 @@
 ---
 name: agent-work-planner
-description: Plan engineering work across human-launched AI coding sessions and follow-up missions. Use when splitting work into agents/sessions, deciding whether the planner should act directly, continue an existing session as A2/B2, open a fresh implementation session, or create an independent Agent R review lane; tracking review gates, blockers, waves, relative effort, progress, integration readiness, workspace topology, prompts, and replanning after reports, integrations, commits, or other frontier-changing events.
+description: Plan engineering work across human-launched AI coding sessions and follow-up missions. Use when splitting work into reasonably sized agent goals, balancing implementation iterations against review cycles, deciding whether the planner should act directly, continue an existing session as A2/B2, open a fresh implementation session, or create an independent Agent R review lane; batching review at coherent stable milestones; tracking blockers, waves, progress, integration readiness, workspace topology, prompts, replanning after frontier-changing events, and periodically performing a deep strategic reassessment of the objective, assumptions, target configuration, model fidelity, experiment validity, and remaining DAG.
 ---
 
 # Agent Work Planner
@@ -27,14 +27,20 @@ Never claim an agent/session is launched, active, or running unless the user or 
 ## Core invariants
 
 - **Coordination must earn its overhead.** Use the cheapest correct execution owner.
+- **Optimize feedback cycles, not agent count.** Give each implementation session a reasonably sized coherent goal and allow multiple implementation missions before review when they build one stable candidate. Minimize reviewer/implementer ping-pong, not productive implementation passes. Do not force a review merely because `A1` ended if `A2` is a natural same-area continuation and early review would not materially change direction.
+- **Size missions for useful progress.** A mission should be large enough to justify the session's context and produce a meaningful artifact, but small enough to own, verify, and hand off clearly. Do not create microscopic missions just to manufacture checkpoints, and do not overpack unrelated work into one mission merely to reduce the number of agents.
+- **Planner absorbs bounded friction.** Small causally clear repairs, deterministic metadata/version closure, trivial integration conflicts, and clean integration work should be planner-owned when authorized and cheaper than another feedback cycle. Delegate only when substantial design, rediscovery, or subsystem ownership makes another session earn its cost.
+- **Batch review, not risk.** When independent review is required, prefer one review of the largest coherent stable candidate, including directly related contracts and post-rebase/integration effects, instead of serial reviews after each implementation mission. Do not batch unrelated missions or defer an early review that is needed to prevent expensive downstream work.
+- **Prefer file-backed handoffs on shared filesystems.** When delegated agents and the planner can access the same filesystem, assign a disposable handoff inbox and require each completed/blocked mission to write a timestamped receipt there before replying. Treat the receipt as coordination metadata, not repository truth; verify consequential Git/repository claims independently. Do not make the user copy summaries between chats when the planner can discover the receipt directly.
 - **Blockers do not disappear implicitly.** A blocker is discharged only by evidence satisfying its recorded discharge condition.
 - **READY implies action.** When work becomes READY, either execute planner-owned work, issue a same-session continuation prompt, issue a fresh-session prompt, or explicitly defer it with a reason.
 - **Active sessions never disappear silently.** Reconcile every known active or unresolved session before advancing the frontier.
 - **Progress is automatic.** During an ongoing plan, every orchestration response after a frontier-affecting event ends with a compact Progress Snapshot unless the user explicitly asks to suppress it.
+- **Progress tracking is not strategic review.** After roughly two material frontier transitions, or immediately after one major/high-impact transition, run a deep Strategic Reassessment Gate that re-derives the remaining plan from the end objective, verified repository/product state, and current evidence instead of merely advancing the existing DAG.
 - **Forecast the DAG; materialize the frontier.** Keep future waves visible at low resolution without freezing details that depend on current work.
 - **Reuse context aggressively, preserve independence more strongly.** Prefer A2/B2 when existing context helps, except when a fresh independent perspective is required.
 - **Review must earn its overhead, then block integration when required.** Substantial or integration-sensitive changes must pass an explicit Review Gate; when independent review is warranted, create Agent R and keep integration blocked until the review discharge condition is satisfied.
-- **Reviewer and implementer stay separate.** Agent R identifies findings; the original implementer normally repairs them via A2/B2; Agent R re-reviews via R2.
+- **Reviewer and repairer stay separate.** Agent R identifies findings and never repairs the production target. Small bounded findings may be repaired by the planner; larger same-area findings normally return to the original implementer. Agent R re-reviews the repaired target in the same reviewer session.
 - **Isolation must earn its cost.** Current checkout is the default; branches/worktrees require a concrete need.
 - **Planning does not broaden implementation authority.** Preserve Causal Coding authority for implementation mutation, testing, verification, continuation, and stopping.
 - **Separate planning from execution lifetime.** Use `persistent-agent-loop` for long-lived continuity, not for decomposition or next-wave planning.
@@ -50,6 +56,7 @@ Agent Work Planner owns:
 - dependencies and blockers;
 - waves and readiness;
 - prompts and handoffs;
+- shared handoff-inbox assignment, discovery, and cleanup;
 - workspace assignment;
 - review-gate and integration ordering;
 - progress state;
@@ -143,6 +150,35 @@ Group work into **waves**. A wave is a readiness frontier: missions that may sta
 
 Use optional **phases** only when several waves benefit from a higher-level grouping.
 
+### 4.5 Balance mission size and review cadence
+
+Treat **mission boundaries** and **review boundaries** as different things. A session may complete more than one bounded mission before independent review when those missions compose one coherent candidate and the later mission does not depend on reviewer feedback.
+
+Prefer a topology like:
+
+```text
+A1 -> A2 -> R1 -> B1 -> R2
+```
+
+when `A1` and `A2` are coherent implementation work that can safely accumulate before review, `R1` reviews the combined stable candidate, and `B1` is a substantial repair or follow-up justified by that review before one bounded re-review.
+
+Avoid review ping-pong like:
+
+```text
+A1 -> R1 -> A2 -> R2 -> A3 -> R3 -> B1 -> R4 -> A4 -> R5
+```
+
+unless each early review is independently justified by a high-cost architecture, security, migration, public-contract, or other direction-setting risk.
+
+Before opening Agent R, ask:
+
+- Is the current candidate stable enough that review findings will be actionable rather than immediately invalidated by the next planned implementation mission?
+- Can the current implementer complete the next same-area mission first without materially increasing risk?
+- Would early reviewer feedback change architecture or prevent expensive rework?
+- Is the review target coherent enough that the reviewer can inspect all directly related surfaces in one pass?
+
+Do not chase a minimum number of agent passes. Optimize for a small number of **meaningful implementation batches and review cycles**.
+
 ### 5. Choose the execution owner
 
 For each newly READY action, decide in this order:
@@ -156,8 +192,13 @@ Typical examples:
 - clean cherry-pick/integration;
 - bounded coordination-file update;
 - small deterministic metadata alignment;
+- a small review finding whose causal owner and repair are already clear;
+- trivial rebase/merge conflict resolution after a candidate is otherwise complete;
+- version/freshness closure directly required by a bounded repair;
 - branch/worktree/status inspection;
 - preparing prompts/handoffs.
+
+Prefer planner-owned execution when the repair is cheaper to prove directly than to explain, hand off, rediscover, and review as a separate implementation mission. Preserve Causal Coding authority for any implementation-affecting mutation.
 
 Do not merely tell the user planner-owned work is ready when the current mission authorizes doing it.
 
@@ -205,13 +246,19 @@ Do not reuse an implementation session for an independent review merely because 
 
 Reserve **Agent R** as the normal independent-review lane. Keep R read-only by default and do not let R repair the production changes it is reviewing.
 
-If R1 finds blocking defects, route the repair back to the original implementer as A2/B2/etc. when same-session reuse remains the cheapest correct owner. Then issue R2 into the existing Agent R chat for re-review.
+If Agent R finds blocking defects, choose the repair owner in this order:
+
+1. **Planner-owned** for a small, causally clear, bounded repair that does not require substantial implementer context or redesign;
+2. **same implementation session** for a medium/substantial same-area repair where prior context materially helps;
+3. **fresh implementation session** only when ownership changes, context is stale, or independent diagnosis/implementation separation materially helps.
+
+Then issue the narrow re-review into the existing Agent R chat. A planner-owned repair does not compromise review independence because Agent R remains read-only and did not author the fix.
 
 Do not reuse R for implementation when doing so would destroy the independence required for the resulting repair.
 
 ### 7. Apply the Review Gate before integration
 
-Before integrating a completed implementation mission, decide whether independent review materially reduces integration risk. Review must earn its overhead; do not create Agent R for every tiny change.
+Before integrating a completed **review batch/candidate**, decide whether independent review materially reduces integration risk. A mission completion alone is not a review trigger. Review must earn its overhead; do not create Agent R after every implementation mission when more planned same-area work should reasonably join the same stable candidate.
 
 Default toward an Agent R review when one or more materially apply:
 
@@ -225,15 +272,31 @@ Default toward an Agent R review when one or more materially apply:
 
 Usually skip Agent R for clean cherry-picks, small deterministic integrations, tiny localized changes, or docs/metadata where independent review cost clearly exceeds plausible integration risk.
 
+### Review batching policy
+
+Target the **largest sensible stable boundary** that is still coherent and reviewable. That boundary may intentionally contain multiple implementation missions such as `A1 + A2`; review gates belong to stable integration candidates, not automatically to individual missions. Prefer to let the planned same-area implementation batch finish, update/rebase it onto the intended integration baseline, and refresh the directly affected validation before opening the review gate when earlier review would not change implementation direction.
+
+Batch directly related surfaces into one review when they belong to the same integration decision, for example:
+
+- core implementation + public handler/schema + exports for one feature;
+- candidate + trivial post-rebase adaptation;
+- implementation + freshness/version closure caused by the same semantic change;
+- one feature's correctness, scope, and integration interaction with the current baseline.
+
+Do **not** batch unrelated missions, a change set too large for one reviewer to reason about reliably, or an early architecture/security/public-contract decision whose review is needed before downstream implementation becomes expensive. Review count is not a quality metric; evidence and independence are.
+
 When review is required:
 
-1. create `R1` as a **NEW SESSION** if no suitable independent Agent R session exists;
-2. record `Integration of <mission>` as BLOCKED by R1 in the Blocker Ledger;
-3. define the discharge condition as `R1 reports no blocking findings`;
-4. if R1 finds blockers, mark the implementer repair mission A2/B2/etc. READY and keep integration blocked;
-5. after repair, issue `R2` into the **same Agent R chat** unless independence/context has materially broken;
-6. discharge the review blocker only when the required review/re-review passes;
-7. then let the planner perform bounded integration when authorized.
+1. first confirm the planned implementation batch is at a sensible stable milestone; do not open R1 merely because the latest mission ended;
+2. create `R1` as a **NEW SESSION** if no suitable independent Agent R session exists;
+3. record `Integration of <review batch>` as BLOCKED by R1 in the Blocker Ledger;
+4. define the discharge condition as `R1 reports no blocking findings`;
+5. instruct R1 to inspect the whole assigned batch and report **all material in-scope blocking findings it can substantiate in that pass**, rather than intentionally stopping after the first finding;
+6. if R1 finds blockers, keep integration blocked and group directly related repair obligations into the smallest sensible repair batch. Use planner-owned work for tiny bounded fixes; otherwise use the same implementation session or a justified fresh implementation session;
+7. after the repair batch is complete, issue `R2` into the **same Agent R chat** unless independence/context has materially broken;
+8. keep R2 bounded to all repaired findings plus directly related regression/integration effects, and ask it to report all remaining material in-scope blockers in one pass;
+9. discharge the review blocker only when the required review/re-review passes;
+10. then let the planner perform bounded integration when authorized.
 
 Do not let `implementation complete` silently mean `integration ready` when the Review Gate requires independent review.
 
@@ -267,9 +330,10 @@ For each mission record when relevant:
 - testing/validation authority;
 - workspace;
 - execution lifetime;
-- out of scope.
+- out of scope;
+- handoff inbox path when a shared filesystem is available.
 
-Size missions for coherent ownership, not arbitrary task counts.
+Size missions for coherent ownership and a **reasonable amount of useful work**, not arbitrary task counts or a desire to minimize agent passes. Prefer several meaningful same-session implementation missions before the first review when they naturally form one candidate. Split earlier only when dependencies, ownership, context limits, or a direction-setting risk make the boundary useful.
 
 ### 10. Preserve testing and mutation authority
 
@@ -284,6 +348,19 @@ When Causal Coding applies, preserve its distinctions among workflow execution, 
 ### 11. Generate the correct prompt type
 
 Use `references/agent-prompt-template.md`.
+
+
+### 11.1 Use file-backed mission handoffs
+
+When the planner and delegated sessions share the connected filesystem, use `references/handoff-artifacts.md`.
+
+Default to a disposable cache outside the repository so coordination does not dirty the working tree. Derive one stable repository key from the canonical Git common directory so all worktrees for the same repository share the same inbox. Assign each mission an exact inbox path in its launcher/continuation/review prompt.
+
+Before a delegated mission returns its chat finish report, require it to write one timestamped handoff receipt containing its status, workspace/branch/HEAD, concise outcome, validation actually performed, deviations, blockers, and downstream facts. The planner should discover and read these receipts when the user says things like `check Agent A`, `check their work`, or `continue from the latest agent result`; do not ask the user to copy/paste a report that already exists in the shared inbox.
+
+A handoff receipt is advisory coordination state. Repository/Git/process facts still require authoritative verification before integration, review, or readiness claims. If the receipt is absent, stale, malformed, or refers to a different repository/worktree state, fall back to direct repository inspection and only ask the user for missing context when it cannot be reconstructed.
+
+Treat handoff files as disposable cache. Preserve receipts for active/unresolved missions and the latest completed review/integration boundary; prune older stale receipts opportunistically after integration or during orientation according to the retention guidance in `references/handoff-artifacts.md`. Never delete source, branches, worktrees, or user artifacts as part of handoff cleanup.
 
 For a **fresh session**, provide the full launcher prompt and say to open a new chat.
 
@@ -305,7 +382,7 @@ Tell that session to load `persistent-agent-loop`. Do not duplicate its timer/wa
 
 Run this gate after every frontier-invalidating event, including:
 
-- returned mission report;
+- returned mission report or newly discovered mission handoff receipt;
 - cherry-pick/merge/integration;
 - planner-owned repository change that affects readiness;
 - blocker confirmation/refutation;
@@ -331,7 +408,36 @@ Before declaring any mission or wave READY:
 
 Never end a frontier transition with only `Wave X can start`.
 
-### 14. Require finish reports
+### 14. Apply the Strategic Reassessment Gate
+
+Frontier bookkeeping is necessary but insufficient. Periodically challenge whether the current plan is still the right plan.
+
+Default cadence:
+
+- run after **two material frontier transitions** since the last reassessment;
+- treat one major/high-impact transition as sufficient to trigger immediately;
+- run immediately when the user asks to rethink/reflect/audit, evidence contradicts a planning premise, the target configuration changes, an independent review exposes cross-cutting risk, an experiment may be measuring the wrong thing, or the plan is about to make a high-level readiness/live-validation claim;
+- do not count status-only, elapsed-time, or no-op updates.
+
+Read `references/strategic-reassessment.md` and apply its checklist. For connected repositories, ground the reassessment in targeted **read-only authoritative inspection**, not only prior reports or conversational summaries.
+
+At minimum challenge:
+
+- the end objective and non-negotiable target configuration;
+- hidden assumptions and configuration-fidelity gaps;
+- whether captured/serialized metadata actually changes runtime behavior where the claim requires it;
+- experiment validity and confounds;
+- DAG ordering, blockers, parallelism, and execution ownership;
+- iteration topology: whether missions are too small, whether the next planned same-session implementation mission should finish before review, and whether planner-owned bounded work can remove unnecessary repair ping-pong;
+- handoff topology: whether agent state is being copied manually through chat even though a shared handoff inbox could make the planner discover completion state directly;
+- Review Gate placement: whether review is being triggered by mission completion instead of candidate stability, whether related review surfaces can be batched at a larger stable boundary, and validation depth;
+- the distinction among implementation correctness, model fidelity, operational readiness, and outcome/strength claims.
+
+Prefer the smallest evidence-backed replan. Explicitly preserve areas that remain valid rather than reopening them reflexively. If the reassessment discovers implementation-affecting work, route it through the correct mission owner and review path; do not opportunistically patch production merely because the planner found the issue.
+
+After the gate, emit a concise **Strategic Reassessment receipt** and reset the reassessment cadence. If nothing changes, say that the current DAG remains valid and why.
+
+### 15. Require finish reports
 
 Every delegated mission returns:
 
@@ -345,7 +451,7 @@ Every delegated mission returns:
 8. information dependent missions need;
 9. unresolved blockers/decisions.
 
-### 15. Report progress automatically
+### 16. Report progress automatically
 
 When an orchestration plan is active, append a **Progress Snapshot** after every response that performs or processes an orchestration action, including status-only updates when the planner has enough state to report meaningfully.
 
@@ -379,10 +485,11 @@ Use the lightest useful structure, but during an ongoing plan the Progress Snaps
 Typical order:
 
 1. Frontier transition / decision
-2. Missions or integration action
-3. Copy/paste prompt(s), when newly actionable
-4. Review/integration note, including Agent R state when relevant
-5. **Progress Snapshot — Current frontier tree**
+2. Strategic Reassessment receipt, when the gate is due
+3. Missions or integration action
+4. Copy/paste prompt(s), when newly actionable
+5. Review/integration note, including Agent R state when relevant
+6. **Progress Snapshot — Current frontier tree**
 
 For a newly READY mission:
 
@@ -399,6 +506,11 @@ For a newly READY mission:
 - Never let an active/unresolved agent disappear from the plan without a disposition.
 - Never end with only `Wave X can start` when action can be assigned now.
 - Never open a fresh session when an A2/B2 continuation is the cheaper correct owner.
+- Never create an A2/B2 handoff for a tiny bounded repair the planner can safely and cheaply own under the active mutation authority.
+- Never treat every implementation mission boundary as a review boundary. Allow multiple coherent missions to accumulate before R1 when early review would not change direction.
+- Never optimize for the fewest agent passes by making missions oversized, mixing unrelated ownership, or delaying a genuinely direction-setting review. Optimize for balanced mission size and fewer feedback cycles.
+- Never fragment one coherent reviewable candidate into multiple review waves merely because its implementation has layers; batch at the largest sensible stable boundary unless early review materially reduces risk.
+- Never instruct Agent R to stop after the first blocker by default. Within the assigned review boundary, collect all material findings that can be substantiated in the same pass unless an early blocker makes the remaining review genuinely unobservable or meaningless.
 - Never use A2/B2 when required independence would be compromised.
 - Never equate self-review with independent review.
 - Never let Agent R implement the production repair it is independently reviewing.
@@ -410,3 +522,6 @@ For a newly READY mission:
 - Never present relative effort as elapsed-time progress.
 - Never copy secrets/credentials into prompts or coordination files.
 - Never let stale planning state outrank current user direction or verified repository evidence.
+- Never let repeated frontier updates substitute for the Strategic Reassessment Gate once its cadence or trigger condition is met.
+- Never ask the user to relay a delegated agent's finish report when a valid file-backed handoff receipt is discoverable from the assigned shared inbox.
+- Never replan for novelty: a deep reassessment may conclude that the current DAG remains correct, but it must show what was challenged and why the plan still holds.

@@ -29,6 +29,7 @@ This is a fresh human-launched coding session. Own only this mission through its
 ## Repository
 Repository: <absolute repository path>
 Workspace: <current checkout | branch/worktree path | read-only>
+Handoff inbox: <exact shared path | unavailable>
 Can start: <now | after dependency>
 Depends on: <mission/blocker/contract/none>
 
@@ -69,6 +70,17 @@ If `persistent-agent-loop` is specified, load it for execution continuity. Do no
 ## Out of scope
 - <adjacent work>
 
+
+## File-backed handoff
+
+If `Handoff inbox` is available, before your final chat reply write one timestamped Markdown receipt into that directory using the assigned mission ID. Include structured frontmatter plus: status, repository/workspace, branch and HEAD when relevant, concise outcome, validation actually performed, deviations, unresolved blockers/decisions, and facts downstream missions need. Do not include secrets. This receipt is disposable coordination state outside the repository; the planner will verify consequential repository facts independently.
+
+Use a filename shaped like:
+
+`<UTC-YYYYMMDDTHHMMSSZ>-<MISSION>-<status>.md`
+
+If the filesystem write is unavailable, say so in the chat finish report; do not fail an otherwise complete mission solely because the receipt could not be written.
+
 ## Finish report
 Return:
 1. status: complete / blocked / needs decision;
@@ -106,6 +118,7 @@ Mission <X1> is <complete / otherwise resolved>. Do not reopen or expand it unle
 Repository: <path>
 Workspace: <same assigned workspace or updated assignment>
 Current HEAD/artifact: <when relevant>
+Handoff inbox: <exact shared path | unavailable>
 Depends on: <none / discharged blocker evidence>
 
 ## What changed since <X1>
@@ -128,6 +141,17 @@ Review independence: <none | self-review sufficient | independent review require
 
 When Causal Coding applies, preserve its mutation/testing/verification authority.
 
+
+## File-backed handoff
+
+If `Handoff inbox` is available, before your final chat reply write one timestamped Markdown receipt into that directory using the assigned mission ID. Include structured frontmatter plus: status, repository/workspace, branch and HEAD when relevant, concise outcome, validation actually performed, deviations, unresolved blockers/decisions, and facts downstream missions need. Do not include secrets. This receipt is disposable coordination state outside the repository; the planner will verify consequential repository facts independently.
+
+Use a filename shaped like:
+
+`<UTC-YYYYMMDDTHHMMSSZ>-<MISSION>-<status>.md`
+
+If the filesystem write is unavailable, say so in the chat finish report; do not fail an otherwise complete mission solely because the receipt could not be written.
+
 ## Finish report
 Return:
 1. status: complete / blocked / needs decision;
@@ -145,7 +169,7 @@ Use when the Review Gate requires independent review. Always precede this prompt
 > **Open a NEW chat for Agent R. Do not use the implementation agent for this review.**
 
 ```markdown
-You are Agent R, Mission R1, the independent reviewer for **<implementation mission>**.
+You are Agent R, Mission R1, the independent reviewer for **<implementation batch / stable candidate>**.
 
 ## Role
 Role: independent review
@@ -159,16 +183,17 @@ Repository: <absolute repository path>
 Review target: <branch/commit/range/worktree>
 Authoritative base: <base commit/branch>
 Workspace: read-only review of the assigned target
+Handoff inbox: <exact shared path | unavailable>
 
 ## Read first
 - <source plan/spec/mission>
 - <implementer finish report>
 - <repository instructions>
 
-Inspect the actual implementation and surrounding contracts. Do not rely only on the implementer's summary.
+Inspect the actual implementation and surrounding contracts. Do not rely only on the implementer's summary. The assigned target may intentionally contain multiple implementation missions such as `A1 + A2`; treat it as one batched integration boundary. Do not demand separate review waves for internal layers unless evidence shows that the target is too broad, mixes unrelated risk, or an earlier direction-setting gate was required.
 
 ## Review objective
-Determine whether <implementation mission> satisfies its mission and integration contract without merge-blocking defects.
+Determine whether <implementation batch / stable candidate> satisfies its integration contract without merge-blocking defects.
 
 Focus on:
 - mission correctness and affected contracts;
@@ -177,13 +202,24 @@ Focus on:
 - explicit user/spec/repository requirements;
 - authorized verification evidence relevant to the review.
 
-Do not manufacture findings merely because the change is large.
+Do not manufacture findings merely because the change is large. Do not intentionally stop after the first blocker: continue through the assigned review boundary and report all material in-scope blocking findings you can substantiate in this pass, unless an early blocker makes the remaining review genuinely unobservable or meaningless.
 
 ## Independence boundary
 - Do not implement fixes.
 - Do not broaden into unrelated repository cleanup.
 - Separate merge-blocking findings from non-blocking notes/questions.
 - If a finding depends on unavailable evidence, state that uncertainty rather than guessing.
+
+
+## File-backed handoff
+
+If `Handoff inbox` is available, before your final chat reply write one timestamped Markdown receipt into that directory using the assigned mission ID. Include structured frontmatter plus: status, repository/workspace, branch and HEAD when relevant, concise outcome, validation actually performed, deviations, unresolved blockers/decisions, and facts downstream missions need. Do not include secrets. This receipt is disposable coordination state outside the repository; the planner will verify consequential repository facts independently.
+
+Use a filename shaped like:
+
+`<UTC-YYYYMMDDTHHMMSSZ>-<MISSION>-<status>.md`
+
+If the filesystem write is unavailable, say so in the chat finish report; do not fail an otherwise complete mission solely because the receipt could not be written.
 
 ## Finish report
 Return:
@@ -200,20 +236,21 @@ Return:
 
 ## Agent R re-review launcher
 
-Use after the original implementer repairs R1 findings. Always precede this prompt with:
+Use after the assigned repair owner completes the R1 repair batch. The repair owner may be the planner, the same implementation session, or a justified fresh implementation session. Always precede this prompt with:
 
 > **Paste this into the existing Agent R chat. Do not open a new reviewer session.**
 
 ```markdown
 Agent R — Mission R2
 
-Re-review the repair for your R1 blocking findings. Maintain the same independent-review role; do not implement fixes.
+Re-review the complete repair batch for your R1 blocking findings. Maintain the same independent-review role; do not implement fixes.
 
 ## Current authoritative state
 Repository: <path>
 Original reviewed target: <R1 target>
 Repair target: <new commit/range/worktree>
-Implementer repair mission: <A2/B2/G2/...>
+Repair batch owner/mission: <planner-owned | A2/B2/G2/B1/...>
+Handoff inbox: <exact shared path | unavailable>
 
 ## What changed since R1
 - <implementer-reported repairs>
@@ -225,7 +262,18 @@ Verify that:
 - the repair did not introduce a directly related new blocking defect;
 - the relevant integration contract now holds.
 
-Do not restart a full repository review unless the repair materially widened the changed surface or evidence requires it.
+Do not restart a full repository review unless the repair materially widened the changed surface or evidence requires it. Keep the re-review limited to all repaired R1 findings plus directly related regression/integration effects. Report all remaining material in-scope blockers observable in this pass rather than intentionally serializing them across R3/R4. A small planner-owned repair is valid as long as reviewer independence remains intact.
+
+
+## File-backed handoff
+
+If `Handoff inbox` is available, before your final chat reply write one timestamped Markdown receipt into that directory using the assigned mission ID. Include structured frontmatter plus: status, repository/workspace, branch and HEAD when relevant, concise outcome, validation actually performed, deviations, unresolved blockers/decisions, and facts downstream missions need. Do not include secrets. This receipt is disposable coordination state outside the repository; the planner will verify consequential repository facts independently.
+
+Use a filename shaped like:
+
+`<UTC-YYYYMMDDTHHMMSSZ>-<MISSION>-<status>.md`
+
+If the filesystem write is unavailable, say so in the chat finish report; do not fail an otherwise complete mission solely because the receipt could not be written.
 
 ## Finish report
 Return:

@@ -61,6 +61,10 @@ The durable wait still exists, but its current source cannot be observed (for ex
 
 The first durable baseline could not be committed within the positive call hold. No durable wait was created. Retry with the condition to establish a fresh boundary. Name-only resume should return `WAIT_NOT_FOUND`.
 
+## `pkill -f` killed the calling command
+
+`pkill -f <pattern>` matches the runner's own `bash -c` command line, so it can terminate the calling RPC itself. Inspect with `pgrep -f "[p]attern"` first, or list with `ps -o pid= -o args=` and exclude the caller PID before signalling.
+
 
 ## ChatGPT shows an old action catalog
 

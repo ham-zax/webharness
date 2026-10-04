@@ -1,0 +1,12 @@
+interface:
+  display_name: Clean Migration
+  short_description: Migrate callers and remove obsolete internal APIs
+  icon_small: assets/icon.svg
+  icon_large: assets/icon.svg
+policy:
+  products:
+  - chatgpt
+  - codex
+  - api
+  - atlas
+  allow_implicit_invocation: true

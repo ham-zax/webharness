@@ -1,6 +1,8 @@
 interface:
-  display_name: "Systematic Debugging"
-  short_description: "Investigate bugs and unexpected behavior before proposing fixes."
+  display_name: Systematic Debugging
+  short_description: Investigate bugs and unexpected behavior before proposing fixes.
+  icon_small: assets/icon.svg
+  icon_large: assets/icon.svg
 policy:
   products:
   - chatgpt

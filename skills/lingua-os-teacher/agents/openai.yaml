@@ -1,0 +1,12 @@
+interface:
+  display_name: Lingua OS Teacher
+  short_description: Teach through Lingua OS learner state safely
+  icon_small: assets/icon.svg
+  icon_large: assets/icon.svg
+policy:
+  products:
+  - chatgpt
+  - codex
+  - api
+  - atlas
+  allow_implicit_invocation: true

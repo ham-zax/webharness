@@ -3,7 +3,7 @@ import { WaitError } from './wait-state.mjs';
 export const DEFAULT_WAIT_TIMEOUT_SECONDS = 300;
 export const MAX_WAIT_TIMEOUT_SECONDS = 86400;
 export const DEFAULT_HOLD_SECONDS = 10;
-export const MAX_HOLD_SECONDS = 15;
+export const MAX_HOLD_SECONDS = 45;
 export const MIN_POLL_MS = 250;
 export const WAIT_LOCK_ACQUIRE_MS = 250;
 export const COMPLETED_RETENTION_MS = 24 * 60 * 60 * 1000;

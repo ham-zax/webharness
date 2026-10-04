@@ -178,6 +178,8 @@ Use `--3way` only when the user explicitly requests merge-style recovery. Do not
 
 Native Dev execution output remains the source of truth for short work; prefer `exec` unless the command genuinely requires Bash semantics. For long or duration-uncertain work, the mandatory Personal Workstation path is `terminal_open` -> Dev `wait` (`terminal_exit`/`terminal_output` or another readiness condition) -> `terminal_read`.
 
+Never use bare `pkill -f <pattern>` from Dev: the pattern matches the runner's own `bash -c` command line and can kill the calling RPC. Use `pgrep -f "[p]attern"` to inspect first, or filter the caller PID (e.g. `ps -o pid= -o args= | grep "[p]attern"`).
+
 ### `wait`
 
 `wait` creates durable named observations. First-phase condition kinds are:

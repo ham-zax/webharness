@@ -6,11 +6,10 @@ MANIFEST="$ROOT/skills/SNAPSHOT_SHA256.txt"
 MODE="${1:-check}"
 
 snapshot() {
-  git -C "$ROOT" ls-files -- skills \
-    | grep -v '^skills/SNAPSHOT_SHA256\.txt$' \
+  find "$ROOT/skills" -type f ! -path "$MANIFEST" ! -name '.SNAPSHOT_SHA256.*' -printf '%P\n' \
     | LC_ALL=C sort \
     | while IFS= read -r file; do
-        (cd "$ROOT" && sha256sum -- "$file")
+        (cd "$ROOT" && sha256sum -- "skills/$file")
       done
 }
 
