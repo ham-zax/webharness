@@ -17,6 +17,7 @@ const { runReviewChanges } = executionWorker ? await import('./review-changes.mj
 const { runBash, runExec } = executionWorker ? await import('./shell.mjs') : {};
 import {
   renderBashText,
+  renderDetachedText,
   renderEditPartial,
   renderEditSummary,
   renderEditText,
@@ -283,11 +284,14 @@ registerTool('edit', {
 }));
 
 registerTool('write', {
-  description: 'Create-only UTF-8 write; parent must exist. overwrite=true atomically replaces an existing regular file. Symlinks and directories are refused.',
+  description: 'Create-only write; parent must exist unless mkdir_parents=true. overwrite=true atomically replaces an existing regular file. Symlinks and directories are refused. encoding=base64 writes binary content; for many files, write one base64 tar archive and extract it with exec. Content passes through model context, so keep it to small files.',
   inputSchema: {
     path: modelPath,
     content: z.string(),
-    overwrite: z.boolean().optional().describe('Atomically replace an existing regular file')
+    overwrite: z.boolean().optional().describe('Atomically replace an existing regular file'),
+    encoding: z.enum(['utf8', 'base64']).optional().describe('Content encoding: utf8 (default) or base64 for binary'),
+    mode: z.string().regex(/^0?[0-7]{3}$/).optional().describe('Octal permissions such as "755"; default keeps the replaced file mode or uses the umask'),
+    mkdir_parents: z.boolean().optional().describe('Create missing parent directories')
   }
 }, async (args, extra) => invoke(async () => {
   const result = await runWrite({ ...pathPolicy, ...args }, extra.signal);
@@ -381,13 +385,18 @@ if (pathMode === 'user') {
 
 if (mode === 'unrestricted') {
   registerTool('exec', {
-    description: 'Run structured argv with no shell parsing; arguments are passed literally. Prefer for ordinary commands. Use only when runtime is known and comfortably below 45s. For uncertain, longer or persistent work use Local terminal_open, Dev wait, then terminal_read. Output is bounded; truncated output has a retained-file path.',
+    description: 'Run structured argv with no shell parsing; arguments are passed literally. Prefer for ordinary commands. Use only when runtime is known and comfortably below 45s. For longer noninteractive work (installs, builds) pass detach=true: it returns at once with a log path and an exit file to wait on with Dev wait file_exists, then read the log. For interactive or human-watched work use Local terminal_open, Dev wait, then terminal_read. Output is bounded; truncated output has a retained-file path.',
   inputSchema: {
       argv: z.array(z.string()).min(1).max(256).describe('Executable name/path followed by literal arguments. Do not add shell quoting around individual elements.'),
       cwd: cwdPath.optional(),
-      timeout_seconds: z.number().positive().max(300).optional().describe('Execution deadline: default 30s, max 300s; does not extend the connector window.')
+      timeout_seconds: z.number().positive().max(300).optional().describe('Execution deadline: default 30s, max 300s; does not extend the connector window. Not allowed with detach.'),
+      detach: z.boolean().optional().describe('Start in the background with stdin closed and output to a log; returns job_id, pid, log_path and exit_path. Survives the call but not a WebHarness service restart.')
     }
   }, async (args, extra) => invoke(async () => {
+    if (args.detach) {
+      const result = await runExec({ ...pathPolicy, ...args, spoolTtlSeconds, stateDir }, extra.signal);
+      return { content: [{ type: 'text', text: renderDetachedText(result) }], structuredContent: result };
+    }
     const result = await runExec({
       ...pathPolicy,
       ...args,

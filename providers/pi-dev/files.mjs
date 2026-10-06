@@ -9,6 +9,7 @@ import {
 import {
   canonicalDefaultCwd,
   canonicalWorkspaceRoot,
+  createParents,
   resolveExistingWorkspacePath,
   resolveNewWorkspacePath,
   resolveUserPath
@@ -511,17 +512,48 @@ export async function runEdit({ pathMode = 'workspace', defaultCwd, workspaceRoo
   }, { signal });
 }
 
+function decodeWriteContent(content, encoding) {
+  if (encoding === undefined || encoding === 'utf8') return content;
+  if (encoding !== 'base64') throw new Error('encoding must be utf8 or base64');
+  const compact = content.replace(/\s+/g, '');
+  if (compact.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(compact)) {
+    throw new Error('content is not valid base64');
+  }
+  return Buffer.from(compact, 'base64');
+}
+
+function parseWriteMode(mode) {
+  if (mode === undefined) return undefined;
+  if (typeof mode !== 'string' || !/^0?[0-7]{3}$/.test(mode)) {
+    throw new Error('mode must be an octal permission string such as "644" or "0755"');
+  }
+  return Number.parseInt(mode, 8);
+}
+
 export async function runWrite({
-  pathMode = 'workspace', defaultCwd, workspaceRoot, path, content, overwrite = false
+  pathMode = 'workspace', defaultCwd, workspaceRoot, path, content, overwrite = false,
+  encoding, mode, mkdir_parents: mkdirParents = false
 }, signal) {
+  const data = decodeWriteContent(content, encoding);
+  const fileMode = parseWriteMode(mode);
   const policy = await resolveFilePolicy({ pathMode, workspaceRoot, defaultCwd });
+  if (mkdirParents) await createParents({ pathMode: policy.pathMode, root: policy.root, value: path });
   const target = policy.pathMode === 'user'
     ? await resolveUserPath(policy.root, path, { mustExist: false })
     : await resolveNewWorkspacePath(policy.root, path);
-  if (overwrite) return replaceFile(target, path, content, signal);
-  const tool = createWriteTool(policy.root, { operations: exclusiveWriteOperations });
+  if (overwrite) return replaceFile(target, path, data, fileMode, signal);
   try {
-    await tool.execute(randomUUID(), { path: target, content }, signal);
+    if (typeof data === 'string' && fileMode === undefined) {
+      const tool = createWriteTool(policy.root, { operations: exclusiveWriteOperations });
+      await tool.execute(randomUUID(), { path: target, content: data }, signal);
+    } else {
+      await withMutationPath(target, async () => {
+        throwIfAborted(signal);
+        await fs.writeFile(target, data, { flag: 'wx', mode: fileMode ?? 0o666 });
+        // The open mode is filtered by umask; an explicit mode is applied as given.
+        if (fileMode !== undefined) await fs.chmod(target, fileMode);
+      }, { signal });
+    }
     return { replaced: false };
   } catch (error) {
     if (error?.code === 'EEXIST' || /EEXIST/.test(error?.message ?? '')) {
@@ -533,7 +565,7 @@ export async function runWrite({
 
 // Explicit whole-file replacement: temp file in the same directory, then atomic rename,
 // under the same per-path lease as edit so it cannot interleave with a guarded edit.
-async function replaceFile(target, requestedPath, content, signal) {
+async function replaceFile(target, requestedPath, content, fileMode, signal) {
   return withMutationPath(target, async () => {
     throwIfAborted(signal);
     let existing = null;
@@ -550,7 +582,8 @@ async function replaceFile(target, requestedPath, content, signal) {
     try {
       handle = await fs.open(temp, 'wx', existing ? 0o600 : 0o666);
       await handle.writeFile(content, 'utf8');
-      if (existing) await handle.chmod(existing.mode & 0o7777);
+      if (fileMode !== undefined) await handle.chmod(fileMode);
+      else if (existing) await handle.chmod(existing.mode & 0o7777);
       await handle.sync();
       await handle.close();
       handle = null;

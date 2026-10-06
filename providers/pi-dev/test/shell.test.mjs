@@ -488,3 +488,53 @@ test('truncated multibyte output remains valid UTF-8 within the byte limit', asy
   assert.doesNotMatch(result.output, /�/);
   assert.equal(result.output, 'δε');
 });
+
+test('detached exec returns at once and records output and exit code', async () => {
+  const workspaceRoot = await tempDir('pi-exec-detach-root-');
+  const stateDir = await tempDir('pi-exec-detach-state-');
+  const started = Date.now();
+  const result = await runExec({
+    workspaceRoot,
+    argv: [process.execPath, '-e', "setTimeout(() => { console.log('out', process.argv[1]); console.error('err'); process.exit(3) }, 300)", 'a b'],
+    detach: true,
+    stateDir,
+  });
+  assert.ok(Date.now() - started < 250);
+  assert.equal(path.dirname(result.log_path), path.join(stateDir, 'jobs'));
+  assert.ok(Number.isSafeInteger(result.pid));
+  await waitFor(async () => fs.access(result.exit_path).then(() => true, () => false), 5000);
+  assert.equal(await fs.readFile(result.exit_path, 'utf8'), '3\n');
+  assert.equal(await fs.readFile(result.log_path, 'utf8'), 'out a b\nerr\n');
+});
+
+test('detached exec reports a missing executable through the exit file', async () => {
+  const result = await runExec({
+    workspaceRoot: await tempDir('pi-exec-detach-missing-'),
+    argv: ['definitely-not-a-command-xyz'],
+    detach: true,
+    stateDir: await tempDir('pi-exec-detach-missing-state-'),
+  });
+  await waitFor(async () => fs.access(result.exit_path).then(() => true, () => false));
+  assert.equal(await fs.readFile(result.exit_path, 'utf8'), '127\n');
+});
+
+test('detached exec rejects timeout_seconds and prunes expired finished jobs', async () => {
+  const workspaceRoot = await tempDir('pi-exec-detach-prune-');
+  const stateDir = await tempDir('pi-exec-detach-prune-state-');
+  await assert.rejects(
+    runExec({ workspaceRoot, argv: ['true'], detach: true, timeout_seconds: 5, stateDir }),
+    /timeout_seconds does not apply/,
+  );
+  const jobsDir = path.join(stateDir, 'jobs');
+  await fs.mkdir(jobsDir, { recursive: true });
+  const old = new Date(Date.now() - 120_000);
+  for (const name of ['old.log', 'old.exit', 'running.log']) {
+    await fs.writeFile(path.join(jobsDir, name), '0\n');
+    await fs.utimes(path.join(jobsDir, name), old, old);
+  }
+  const result = await runExec({ workspaceRoot, argv: ['true'], detach: true, spoolTtlSeconds: 60, stateDir });
+  const names = await fs.readdir(jobsDir);
+  assert.ok(!names.includes('old.log') && !names.includes('old.exit'));
+  assert.ok(names.includes('running.log'));
+  assert.ok(names.includes(path.basename(result.log_path)));
+});

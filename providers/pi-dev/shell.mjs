@@ -6,6 +6,7 @@ import {
   unlinkSync,
   writeSync
 } from 'node:fs';
+import fs from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
@@ -329,9 +330,73 @@ export async function runBash({
   }));
 }
 
+// Runs argv with stdout+stderr in the log; the exit code is written to <exit>.tmp and
+// renamed into place, so the exit file existing means the job finished and is readable.
+const DETACHED_WRAPPER = 'log=$1; exitf=$2; shift 2; "$@" >"$log" 2>&1 </dev/null; '
+  + 'code=$?; printf "%s\\n" "$code" >"$exitf.tmp" && mv -f "$exitf.tmp" "$exitf"';
+
+async function pruneFinishedJobs(jobsDir, ttlSeconds, nowMs = Date.now()) {
+  let entries;
+  try {
+    entries = await fs.readdir(jobsDir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    if (!entry.isFile() || !entry.name.endsWith('.exit')) continue;
+    const exitPath = path.join(jobsDir, entry.name);
+    try {
+      const stats = await fs.lstat(exitPath);
+      if (nowMs - stats.mtimeMs < ttlSeconds * 1000) continue;
+      await fs.rm(`${exitPath.slice(0, -'.exit'.length)}.log`, { force: true });
+      await fs.rm(exitPath, { force: true });
+    } catch {
+      // Another call pruned it first.
+    }
+  }
+}
+
+async function runDetached({
+  argv,
+  pathMode = 'workspace',
+  defaultCwd,
+  workspaceRoot,
+  cwd,
+  spoolTtlSeconds = DEFAULT_SPOOL_TTL_SECONDS,
+  stateDir,
+}) {
+  positiveNumber('MCP_DEV_SPOOL_TTL_SECONDS', spoolTtlSeconds, MAX_SPOOL_TTL_SECONDS);
+  if (typeof stateDir !== 'string' || !path.isAbsolute(stateDir)) {
+    throw new Error('MCP_DEV_STATE_DIR must be an absolute path');
+  }
+  const resolvedCwd = await resolveExecutionCwd({ pathMode, defaultCwd, workspaceRoot, cwd });
+  const jobsDir = path.join(stateDir, 'jobs');
+  mkdirSync(jobsDir, { recursive: true, mode: 0o700 });
+  await pruneFinishedJobs(jobsDir, spoolTtlSeconds);
+
+  const jobId = `${Date.now()}-${randomUUID().slice(0, 8)}`;
+  const logPath = path.join(jobsDir, `${jobId}.log`);
+  const exitPath = path.join(jobsDir, `${jobId}.exit`);
+  closeSync(openSync(logPath, 'wx', 0o600));
+  const child = spawn('/bin/sh', ['-c', DETACHED_WRAPPER, 'sh', logPath, exitPath, ...argv], {
+    cwd: resolvedCwd,
+    shell: false,
+    detached: true,
+    windowsHide: true,
+    stdio: 'ignore',
+  });
+  await new Promise((resolve, reject) => {
+    child.once('spawn', resolve);
+    child.once('error', reject);
+  });
+  child.unref();
+  return { cwd: resolvedCwd, job_id: jobId, pid: child.pid, log_path: logPath, exit_path: exitPath };
+}
+
 export async function runExec({
   argv,
-  timeout_seconds = DEFAULT_TIMEOUT_SECONDS,
+  timeout_seconds,
+  detach = false,
   ...options
 }, signal) {
   if (!Array.isArray(argv) || argv.length < 1 || argv.length > 256) {
@@ -340,6 +405,11 @@ export async function runExec({
   if (argv.some(value => typeof value !== 'string' || value.includes('\0')) || argv[0].length === 0) {
     throw new Error('argv must contain strings without null bytes and argv[0] must be non-empty');
   }
+  if (detach) {
+    if (timeout_seconds !== undefined) throw new Error('timeout_seconds does not apply to detach: true');
+    return runDetached({ argv, ...options });
+  }
+  timeout_seconds ??= DEFAULT_TIMEOUT_SECONDS;
   const [file, ...args] = argv;
   return runCaptured({
     ...options,

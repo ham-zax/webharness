@@ -61,6 +61,15 @@ export function renderEditPartial({ applied = [], failed = [], uncertain = [], u
   return lines.join('\n');
 }
 
+export function renderDetachedText(result) {
+  return [
+    `Started job ${result.job_id} (pid ${result.pid}) in ${result.cwd}`,
+    `log: ${result.log_path}`,
+    `exit: ${result.exit_path} (appears with the exit code when the job ends)`,
+    `Next: wait {"name":"job-${result.job_id}","condition":{"kind":"file_exists","path":"${result.exit_path}"}}, then read the log.`,
+  ].join('\n');
+}
+
 export function renderWriteText(relativePath, { replaced = false } = {}) {
   return `${replaced ? 'Replaced' : 'Created'} ${relativePath}`;
 }

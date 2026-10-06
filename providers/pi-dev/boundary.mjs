@@ -117,6 +117,31 @@ export async function resolveNewWorkspacePath(root, relativePath) {
   return path.join(parent, path.basename(unresolved));
 }
 
+// Creates missing parents of a new file. In workspace mode the deepest existing ancestor
+// must resolve inside the workspace, so symlinked ancestors cannot route new dirs outside it.
+export async function createParents({ pathMode, root, value }) {
+  const unresolved = pathMode === 'workspace'
+    ? (requireRelative(value, 'path'), path.resolve(root, value))
+    : (path.isAbsolute(value) ? value : path.resolve(root, value));
+  requirePiStablePath(unresolved, 'path');
+  const missing = [];
+  let ancestor = path.dirname(unresolved);
+  for (;;) {
+    try {
+      ancestor = await fs.realpath(ancestor);
+      break;
+    } catch (error) {
+      if (error?.code !== 'ENOENT') throw error;
+      missing.unshift(path.basename(ancestor));
+      ancestor = path.dirname(ancestor);
+    }
+  }
+  if (pathMode === 'workspace' && !isWithin(await canonicalWorkspaceRoot(root), ancestor)) {
+    throw new Error('write parent resolves outside workspace');
+  }
+  if (missing.length > 0) await fs.mkdir(path.join(ancestor, ...missing), { recursive: true });
+}
+
 export async function resolveWorkspaceCwd(root, relativeCwd) {
   const canonicalRoot = await canonicalWorkspaceRoot(root);
   if (relativeCwd === undefined || relativeCwd === '') return canonicalRoot;

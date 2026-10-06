@@ -950,3 +950,58 @@ test('user-mode write supports overwrite and keeps create-only as the default', 
     /ENOENT|no such file|not exist|parent/i
   );
 });
+
+test('write decodes base64 content, applies an explicit mode, and creates parents', async () => {
+  const workspaceRoot = await tempDir('pi-write-binary-');
+  const bytes = Buffer.from([0, 1, 2, 255, 10, 0xc3]);
+  const result = await runWrite({
+    workspaceRoot,
+    path: 'bin/sub/tool',
+    content: bytes.toString('base64'),
+    encoding: 'base64',
+    mode: '0755',
+    mkdir_parents: true,
+  });
+  assert.equal(result.replaced, false);
+  const target = path.join(workspaceRoot, 'bin', 'sub', 'tool');
+  assert.deepEqual(await fs.readFile(target), bytes);
+  assert.equal((await fs.stat(target)).mode & 0o777, 0o755);
+
+  await runWrite({ workspaceRoot, path: 'bin/sub/tool', content: 'echo hi\n', overwrite: true, mode: '600' });
+  assert.equal(await fs.readFile(target, 'utf8'), 'echo hi\n');
+  assert.equal((await fs.stat(target)).mode & 0o777, 0o600);
+});
+
+test('write rejects invalid base64 and modes before touching the filesystem', async () => {
+  const workspaceRoot = await tempDir('pi-write-invalid-');
+  await assert.rejects(
+    () => runWrite({ workspaceRoot, path: 'x/a.bin', content: 'not base64!', encoding: 'base64', mkdir_parents: true }),
+    /not valid base64/,
+  );
+  await assert.rejects(
+    () => runWrite({ workspaceRoot, path: 'x/a.bin', content: 'x', mode: '4755', mkdir_parents: true }),
+    /mode must be/,
+  );
+  assert.deepEqual(await fs.readdir(workspaceRoot), []);
+});
+
+test('write mkdir_parents refuses parents routed outside the workspace', async () => {
+  const workspaceRoot = await tempDir('pi-write-parents-root-');
+  const outside = await tempDir('pi-write-parents-outside-');
+  await fs.symlink(outside, path.join(workspaceRoot, 'link'));
+  await assert.rejects(
+    () => runWrite({ workspaceRoot, path: 'link/new/a.txt', content: 'x', mkdir_parents: true }),
+    /outside workspace/,
+  );
+  await assert.rejects(
+    () => runWrite({ workspaceRoot, path: '../escape/a.txt', content: 'x', mkdir_parents: true }),
+  );
+  assert.deepEqual(await fs.readdir(outside), []);
+});
+
+test('user write mkdir_parents creates absolute parents', async () => {
+  const defaultCwd = await tempDir('pi-write-user-parents-');
+  const target = path.join(defaultCwd, 'deep', 'er', 'a.txt');
+  await runWrite({ pathMode: 'user', defaultCwd, path: target, content: 'ok\n', mkdir_parents: true });
+  assert.equal(await fs.readFile(target, 'utf8'), 'ok\n');
+});

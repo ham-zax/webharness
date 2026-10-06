@@ -212,7 +212,7 @@ test('trusted-dev exposes structured exec alongside Bash and minimal schemas', a
     const exec = listed.tools.find(x => x.name === 'exec');
     assert.match(exec.description, /structured argv/i);
     assert.match(exec.description, /no shell parsing/i);
-    assert.deepEqual(Object.keys(exec.inputSchema.properties).sort(), ['argv', 'cwd', 'timeout_seconds']);
+    assert.deepEqual(Object.keys(exec.inputSchema.properties).sort(), ['argv', 'cwd', 'detach', 'timeout_seconds']);
     const bash = listed.tools.find(x => x.name === 'bash');
     assert.match(bash.description, /output is bounded/i);
     assert.match(bash.description, /prefer exec/i);
@@ -272,6 +272,10 @@ test('personal user mode exposes file_ops alongside edit with user-path descript
     const write = listed.tools.find(x => x.name === 'write');
     assert.match(write.description, /create-only|create.*new/i);
     assert.match(write.description, /parent.*exist/i);
+    assert.deepEqual(write.inputSchema.properties.encoding.enum, ['utf8', 'base64']);
+    assert.ok(write.inputSchema.properties.mode && write.inputSchema.properties.mkdir_parents);
+    assert.equal(exec.inputSchema.properties.detach.type, 'boolean');
+    assert.match(exec.description, /detach=true.*wait file_exists/i);
     const wait = listed.tools.find(x => x.name === 'wait');
     assert.match(wait.description, /durable named.*wait/i);
     assert.match(wait.description, /timer/i);
@@ -1184,5 +1188,33 @@ test('command output defaults to a 64 KiB tail with the full output retained, no
     assert.match(text, /\[truncated · 300003 bytes total · full: .+\]\n\[exit 0 · \d+\.\ds\]$/);
     assert.ok(text.length > 60_000 && text.length < 70_000, `unexpected result size ${text.length}`);
     assert.match(text, /aEND\n/);
+  });
+});
+
+test('user exec detach runs through the worker and completes a file_exists wait', async () => {
+  const { defaultCwd, env } = await userFixture();
+  await withClient(env, async client => {
+    const started = await client.callTool({
+      name: 'exec',
+      arguments: { argv: ['/bin/sh', '-c', 'sleep 0.3; echo done; exit 4'], detach: true },
+    });
+    assert.equal(started.isError, undefined);
+    const job = started.structuredContent;
+    assert.equal(job.cwd, await fs.realpath(defaultCwd));
+    assert.match(started.content[0].text, /Next: wait .*file_exists/);
+    const waited = await client.callTool({
+      name: 'wait',
+      arguments: { name: `job-${job.job_id}`, condition: { kind: 'file_exists', path: job.exit_path }, hold_seconds: 10 },
+    });
+    assert.match(waited.content[0].text, /matched|exists/i);
+    assert.equal(await fs.readFile(job.exit_path, 'utf8'), '4\n');
+    assert.equal(await fs.readFile(job.log_path, 'utf8'), 'done\n');
+
+    const wrote = await client.callTool({
+      name: 'write',
+      arguments: { path: 'a/b/c.bin', content: Buffer.from([0, 255]).toString('base64'), encoding: 'base64', mkdir_parents: true },
+    });
+    assert.equal(wrote.isError, undefined);
+    assert.deepEqual(await fs.readFile(path.join(defaultCwd, 'a/b/c.bin')), Buffer.from([0, 255]));
   });
 });

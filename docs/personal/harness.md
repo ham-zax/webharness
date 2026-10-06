@@ -144,11 +144,11 @@ For multiple existing text files, add more target records to the same request ra
 
 ### `write`
 
-Use only for new text-file creation. It refuses to overwrite an existing path.
+Creates a new file and refuses an existing path unless `overwrite: true`, which atomically replaces a regular file. `encoding: "base64"` writes binary content, `mode` (octal string such as `"755"`) sets permissions, and `mkdir_parents: true` creates missing parent directories. Content passes through model context, so use it for small files; for many files, write one base64 tar archive and extract it with `exec`. ChatGPT-native attachments should still use `import_file`.
 
 ### `import_file`
 
-Use when ChatGPT supplies or generates a native file that does not yet exist on the WSL host. The tool streams the file directly to a requested WSL destination, refuses to overwrite an existing path, requires the parent directory to exist, enforces the deployment byte limit, and accepts only trusted OpenAI file-download hosts. Do not recreate binary files with `write`, base64, or shell download commands. Importing a file does not add it to the Browser artifact upload allowlist.
+Use when ChatGPT supplies or generates a native file that does not yet exist on the WSL host. The tool streams the file directly to a requested WSL destination, refuses to overwrite an existing path, requires the parent directory to exist, enforces the deployment byte limit, and accepts only trusted OpenAI file-download hosts. Do not recreate a ChatGPT-native file with `write` base64 or shell download commands. Importing a file does not add it to the Browser artifact upload allowlist.
 
 ### `file_ops`
 
@@ -161,6 +161,8 @@ Use once after the final related file mutation when you need the aggregate curre
 ### `exec`
 
 Runs one bounded executable directly from a structured `argv[]` with no shell parser. Treat it as **short-RPC execution only**: use it when completion is expected comfortably inside the model-facing connector window, with 45 seconds as the routing target. If runtime is uncertain, may approach a minute, or must survive the call, do not start it with `exec`; use Local `server="terminal"`/`terminal_open`, observe completion or readiness with Dev `wait`, then use `terminal_read`. Use `exec` for short Git, builds, tests, `rg`, repository inspection, and other commands that do not require shell semantics. `argv[0]` is the executable and later elements are passed literally. The provider may accept a timeout up to 300 seconds, but that does not extend the connector request lifetime. There is no hidden mutable global cwd; use `cwd` explicitly when needed.
+
+For long noninteractive work such as installs and builds, `detach: true` starts the command in the background and returns at once with `job_id`, `pid`, `log_path` and `exit_path`. Wait on it with Dev `wait` `{kind:"file_exists", path:exit_path}`; the exit file holds the exit code once the job ends, and the log holds combined stdout and stderr. Detached jobs have stdin closed, have no timeout, and stop if the WebHarness service restarts. Use Terminal instead when the work is interactive or a human should watch it.
 
 ### `bash`
 
