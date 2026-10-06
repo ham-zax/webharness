@@ -170,9 +170,10 @@ else
 
   OUTER="$STATE_DIR/1mcp/mcp.json"
   INNER="$STATE_DIR/local-1mcp/mcp.json"
-  if node - "$PROFILE" "$OUTER" "$INNER" <<'NODE' >/dev/null 2>&1
+  OWNER_LOCAL_SERVERS="$(sed -n 's/^MCP_LOCAL_SERVERS_FILE=//p' "$ENV_FILE" 2>/dev/null | tail -n1)"
+  if node - "$PROFILE" "$OUTER" "$INNER" "$OWNER_LOCAL_SERVERS" <<'NODE' >/dev/null 2>&1
 const fs = require('fs');
-const [profile, outerFile, innerFile] = process.argv.slice(2);
+const [profile, outerFile, innerFile, ownerLocalServers] = process.argv.slice(2);
 const keys = value => Object.keys(value?.mcpServers ?? {}).sort();
 const outer = JSON.parse(fs.readFileSync(outerFile, 'utf8'));
 const expectedOuter = profile === 'restricted' ? ['dev', 'shell'] : profile === 'trusted-dev' ? ['dev'] : ['dev', 'local'];
@@ -192,7 +193,10 @@ if (profile === 'server') {
   for (const required of ['terminal', 'dev']) {
     if (!innerKeys.includes(required)) process.exit(1);
   }
-  for (const excluded of ['browser-devtools', 'browser-fast', 'browser-jev', 'host', 'code', 'codedb']) {
+  // An owner-added headless browser-fast (docs/headless-server.md) is allowed only via MCP_LOCAL_SERVERS_FILE.
+  const excludedServers = ['browser-devtools', 'browser-jev', 'host', 'code', 'codedb'];
+  if (!ownerLocalServers) excludedServers.push('browser-fast');
+  for (const excluded of excludedServers) {
     if (innerKeys.includes(excluded)) process.exit(1);
   }
   if (inner.mcpServers.terminal.env.MCP_TERMINAL_FRONTEND !== undefined) process.exit(1);

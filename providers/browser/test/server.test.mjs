@@ -92,6 +92,28 @@ test('browser router defaults to Windows, resolves Linux through the shared back
   assert.ok(children.every(child => child.alive === false));
 });
 
+test('browser router attaches to a V1 external CDP endpoint without resolving a managed profile', async () => {
+  const calls = [];
+  const childFactory = async (target, config) => ({
+    alive: true,
+    async callTool(name, args) {
+      calls.push({ target, config, name, args });
+      return { content: [] };
+    },
+    async listTools() { return [{ name: 'list_pages', inputSchema: { type: 'object', properties: {} } }]; },
+    async close() { this.alive = false; }
+  });
+  const router = new BrowserRouter({
+    childFactory,
+    env: { DISPLAY: ':99' },
+    linuxBackendResolve: async () => ({ browser: 'clearcote', cdp: '9222', session: 'mcp-browser-fast-linux-clearcote-9222' }),
+    clearcoteEndpointResolve: async () => { throw new Error('managed endpoint must not be resolved for external CDP'); }
+  });
+  await router.call({ tool: 'list_pages', arguments: { browser_target: 'linux' } });
+  assert.deepEqual(calls.at(-1).config, childConfig('linux', { DISPLAY: ':99' }, [], { browserUrl: 'http://127.0.0.1:9222' }));
+  await router.shutdown();
+});
+
 test('browser router supports explicit Linux Chrome profiles and rejects ambiguous selectors', async () => {
   const calls = [];
   const childFactory = async (target, config) => ({

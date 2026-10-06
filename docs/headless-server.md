@@ -68,6 +68,50 @@ Update the committed source, rerender the same `server` profile, and restart the
 
 Qualification is limited to the headless Dev/Local/Terminal path. This profile does not imply browser parity with the Personal workstation.
 
+## Optional headless Browser Fast (aarch64 or x86_64, no GPU)
+
+The `server` profile excludes browser providers. An owner can add `browser-fast` alone through `MCP_LOCAL_SERVERS_FILE`; `scripts/doctor.sh` accepts it in the `server` profile only when that variable is set in `.env`. Clearcote is x64-only and is not used. `browser-fast` stays the Linux-target `observe`/`execute` pair, so pass `browser_target: "linux"` on every call.
+
+Requirements: `xvfb` plus fonts, a Chromium build for the host architecture (for example `npx playwright install chromium`), and `pnpm`/`npm install` in `providers/browser-fast`.
+
+The provider runs one Agent Browser session per tab. Without `--cdp` each session launches its own Chrome and a pinned tab then fails with `No tab with target id ...`. Run one persistent Chromium and attach every session to it:
+
+```ini
+# ~/.config/systemd/user/webharness-xvfb.service
+[Service]
+ExecStart=/usr/bin/Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp
+Restart=always
+[Install]
+WantedBy=default.target
+
+# ~/.config/systemd/user/webharness-chrome.service
+[Unit]
+Requires=webharness-xvfb.service
+After=webharness-xvfb.service
+[Service]
+Environment=DISPLAY=:99
+ExecStart=/path/to/chrome --remote-debugging-port=9222 --remote-debugging-address=127.0.0.1 --user-data-dir=%h/.local/state/mcp-dev-bridge/chrome-profile --no-sandbox --use-gl=angle --use-angle=swiftshader --disable-dev-shm-usage --no-first-run --no-default-browser-check about:blank
+Restart=always
+[Install]
+WantedBy=default.target
+```
+
+`~/.config/mcp-dev-bridge/browser-fast.json` selects the external endpoint (the `clearcote` label only means "external CDP port" in version 1):
+
+```json
+{"version":1,"linux":{"browser":"clearcote","cdpPort":9222}}
+```
+
+`MCP_LOCAL_SERVERS_FILE` points at a JSON file with absolute paths:
+
+```json
+{"version":"1.0.0","mcpServers":{"browser-fast":{"type":"stdio","command":"/usr/local/bin/node","args":["/abs/path/webharness/providers/browser-fast/server.mjs"],"env":{"XDG_RUNTIME_DIR":"/run/user/UID"}}}}
+```
+
+To also add `browser-devtools`, register `providers/browser/server.mjs` the same way (`command` an absolute `node`, `env` with `XDG_RUNTIME_DIR`, `DISPLAY=:99` and a `PATH` that includes `npx`). With the version 1 config above it attaches to `http://127.0.0.1:9222` instead of launching a browser, so it sees the same tabs as `browser-fast`. `browser-jev` is not part of this setup: it needs the Python worker plus model credentials in `MCP_BROWSER_JEV_ENV_FILE`.
+
+Re-run setup so `local-1mcp/mcp.json` is re-rendered, then restart the bridge. The CDP port is loopback-only; never expose it. Verify with `observe` then a `navigate` through `execute`.
+
 ## Troubleshooting
 
 ### Approval shows HTTP 403

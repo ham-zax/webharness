@@ -288,6 +288,15 @@ export class BrowserRouter {
     }
 
     const selected = await this.linuxBackendResolve({ browser: browserBackend, profile });
+    if (selected.browser === 'clearcote' && selected.cdp !== undefined) {
+      // V1 external CDP endpoint (e.g. the headless server's persistent Chromium): attach, never launch.
+      const browserUrl = `http://127.0.0.1:${selected.cdp}`;
+      return {
+        key: `linux:cdp:${selected.cdp}`,
+        identity: browserUrl,
+        config: childConfig('linux', this.env, [], { browserUrl })
+      };
+    }
     if (selected.browser === 'clearcote') {
       const endpoint = await this.clearcoteEndpointResolve(selected.profileName);
       return {
