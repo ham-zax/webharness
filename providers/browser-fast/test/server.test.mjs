@@ -7,7 +7,7 @@ import test from 'node:test';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { resolveBrowserMemory } from '../browser-memory.mjs';
-import { resolveLinuxBrowserBackend } from '../browser-backend-config.mjs';
+import { defaultBrowserTarget, resolveLinuxBrowserBackend } from '../browser-backend-config.mjs';
 import { ManagedClearcoteRuntime } from '../clearcote-runtime.mjs';
 import { ensureWindowsChrome } from '../../browser/windows-chrome-runtime.mjs';
 import { readTargetInfo } from '../target-info.mjs';
@@ -1139,4 +1139,17 @@ test('uncertain mutating failures are never reported as safe failures', async ()
   });
   assert.equal(result.outcome, 'unknown');
   assert.equal(result.steps[0].status, 'unknown');
+});
+
+test('default browser target is windows only on WSL hosts unless overridden', () => {
+  const linuxKernel = () => '6.8.0-1012-oracle';
+  const wslKernel = () => '6.18.40.1-microsoft-standard-WSL2';
+  assert.equal(defaultBrowserTarget({ env: {}, readOsRelease: linuxKernel }), 'linux');
+  assert.equal(defaultBrowserTarget({ env: {}, readOsRelease: wslKernel }), 'windows');
+  assert.equal(defaultBrowserTarget({ env: { WSL_DISTRO_NAME: 'Ubuntu' }, readOsRelease: linuxKernel }), 'windows');
+  assert.equal(defaultBrowserTarget({ env: { MCP_BROWSER_DEFAULT_TARGET: 'linux' }, readOsRelease: wslKernel }), 'linux');
+  assert.throws(
+    () => defaultBrowserTarget({ env: { MCP_BROWSER_DEFAULT_TARGET: 'mac' }, readOsRelease: linuxKernel }),
+    /INVALID_BROWSER_TARGET/,
+  );
 });

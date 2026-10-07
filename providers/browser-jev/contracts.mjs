@@ -1,3 +1,5 @@
+import { defaultBrowserTarget } from '../browser-fast/browser-backend-config.mjs';
+
 const START_KEYS = new Set(['url', 'goal', 'scenario']);
 const SCENARIO_KEYS = new Set(['browser_target', 'browser_backend', 'browser_profile', 'collection', 'success']);
 const SUCCESS_KEYS = new Set(['url_contains', 'title_contains', 'text_contains', 'required_operations', 'collection_complete', 'scroll_exhausted']);
@@ -141,7 +143,7 @@ export function validateStartArguments(value) {
 
   const scenario = requireObject(args.scenario, 'scenario');
   rejectUnknownKeys(scenario, SCENARIO_KEYS, 'scenario');
-  const browserTarget = scenario.browser_target ?? 'windows';
+  const browserTarget = scenario.browser_target ?? defaultBrowserTarget();
   if (!['windows', 'linux'].includes(browserTarget)) {
     throw invalid('browser_target must be windows or linux');
   }

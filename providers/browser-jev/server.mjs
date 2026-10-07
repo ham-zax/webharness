@@ -83,7 +83,7 @@ const START_INPUT_SCHEMA = {
     scenario: {
       type: 'object',
       properties: {
-        browser_target: { type: 'string', enum: ['windows', 'linux'], description: 'Omit for Windows Chrome; use linux for managed Linux Chrome or Clearcote.' },
+        browser_target: { type: 'string', enum: ['windows', 'linux'], description: 'Omit for the host default: windows on WSL, linux elsewhere. Use linux for managed Linux Chrome or Clearcote.' },
         browser_backend: { type: 'string', enum: ['chrome', 'clearcote'], description: 'Linux browser backend. Windows accepts only chrome.' },
         browser_profile: { type: 'string', minLength: 1, maxLength: 64, pattern: '^[A-Za-z0-9._-]+$', description: 'Optional managed browser profile name.' },
         collection: { ...COLLECTION_SCHEMA, description: 'Optional bounded cross-observation text-record collection. Requires at least one url_contains, title_contains, or text_contains success check to identify the intended document; collection_complete is then enforced automatically.' },

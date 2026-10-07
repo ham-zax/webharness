@@ -6,7 +6,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
-import { resolveLinuxBrowserBackend } from '../browser-fast/browser-backend-config.mjs';
+import { defaultBrowserTarget, resolveLinuxBrowserBackend } from '../browser-fast/browser-backend-config.mjs';
 import { DEFAULT_CLEARCOTE_STATE_ROOT, readClearcoteEndpoint } from '../browser-fast/clearcote-runtime.mjs';
 import { ensureWindowsChrome } from './windows-chrome-runtime.mjs';
 
@@ -152,7 +152,7 @@ export function addBrowserTarget(tool) {
         [BROWSER_TARGET_FIELD]: {
           type: 'string',
           enum: ['windows', 'linux'],
-          description: 'Browser locality. Omit for the dedicated persistent Windows MCP Chrome profile; use linux for the configured Linux browser.'
+          description: 'Browser locality. Omit for the host default: the persistent Windows MCP Chrome profile on WSL, the configured Linux browser elsewhere.'
         },
         [BROWSER_BACKEND_FIELD]: {
           type: 'string',
@@ -346,7 +346,7 @@ export class BrowserRouter {
     if (args === null || typeof args !== 'object' || Array.isArray(args)) throw new TypeError('tool arguments must be an object');
 
     const upstreamArgs = { ...args };
-    const target = upstreamArgs[BROWSER_TARGET_FIELD] ?? 'windows';
+    const target = upstreamArgs[BROWSER_TARGET_FIELD] ?? defaultBrowserTarget();
     const browserBackend = upstreamArgs[BROWSER_BACKEND_FIELD];
     const browserProfile = upstreamArgs[BROWSER_PROFILE_FIELD];
     delete upstreamArgs[BROWSER_TARGET_FIELD];
@@ -386,7 +386,7 @@ export function createBrowserFacadeServer({ router } = {}) {
     { name: 'browser', version: '0.1.0' },
     {
       capabilities: { tools: {} },
-      instructions: 'One resource-local DevTools surface. Tools default to the dedicated persistent Windows MCP Chrome profile. Pass browser_target=linux to use the configured Linux browser; browser_backend and browser_profile select the same Linux identity used by browser-fast. Managed Clearcote is attached through its live CDP endpoint. Path arguments are OS-temp-only.'
+      instructions: 'One resource-local DevTools surface. On WSL, tools default to the dedicated persistent Windows MCP Chrome profile; on other hosts they default to the configured Linux browser. Pass browser_target to choose explicitly; browser_backend and browser_profile select the same Linux identity used by browser-fast. Managed Clearcote is attached through its live CDP endpoint. Path arguments are OS-temp-only.'
     }
   );
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: await router.listTools() }));

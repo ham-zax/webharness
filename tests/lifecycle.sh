@@ -209,6 +209,42 @@ test_lifecycle_lock_is_used_everywhere() {
   contains "$ROOT/lib/bridge/watchdog.sh" 'bridge_lock_acquire'
 }
 
+test_restart_wait_blocks_until_new_invocation_is_active() {
+  local sandbox="$TMP/restart-wait"
+  mkdir -p "$sandbox/fakebin" "$sandbox/run"
+  python3 -c 'import socket,sys; socket.socket(socket.AF_UNIX).bind(sys.argv[1])' "$sandbox/run/bus" || return 1
+  cat >"$sandbox/fakebin/systemctl" <<'SH'
+#!/usr/bin/env bash
+d="$FAKE_SYSTEMD_DIR"
+case " $* " in
+  *" restart "*) echo restart >>"$d/log"; echo new >"$d/inv"; echo activating >"$d/state"; echo 0 >"$d/polls" ;;
+  *"--property=LoadState"*) echo loaded ;;
+  *"--property=InvocationID"*) cat "$d/inv" ;;
+  *"--property=ActiveState"*)
+    polls=$(($(cat "$d/polls") + 1)); echo "$polls" >"$d/polls"
+    if [ "$(cat "$d/state")" = activating ] && [ "$polls" -ge 2 ]; then cat "$d/end_state" >"$d/state"; fi
+    cat "$d/state" ;;
+esac
+SH
+  chmod +x "$sandbox/fakebin/systemctl"
+  printf '0::/user.slice/other.service\n' >"$sandbox/cgroup"
+  run_restart() {
+    echo old >"$sandbox/inv"; echo active >"$sandbox/state"; echo 0 >"$sandbox/polls"; : >"$sandbox/log"
+    echo "$1" >"$sandbox/end_state"; shift
+    PATH="$sandbox/fakebin:$PATH" XDG_RUNTIME_DIR="$sandbox/run" FAKE_SYSTEMD_DIR="$sandbox" \
+      WEBHARNESS_SELF_CGROUP_FILE="$sandbox/cgroup" WEBHARNESS_RESTART_POLL_INTERVAL=0.01 \
+      "$ROOT/bin/webharness" restart "$@" >"$sandbox/out" 2>&1
+  }
+  run_restart active --wait --timeout 5 || { cat "$sandbox/out" >&2; return 1; }
+  grep -q 'restarted and ready' "$sandbox/out" && [ "$(cat "$sandbox/log")" = restart ] || return 1
+  run_restart failed --wait --timeout 5 && return 1
+  grep -q 'failed to restart' "$sandbox/out" || return 1
+  run_restart active --timeout 0 && return 1
+  printf '0::/user.slice/mcp-dev-bridge.service\n' >"$sandbox/cgroup"
+  run_restart active --wait; [ "$?" -eq 2 ] && [ ! -s "$sandbox/log" ] || return 1
+  run_restart active && [ "$(cat "$sandbox/log")" = restart ] && grep -q 'restart queued' "$sandbox/out"
+}
+
 run_test 'lifecycle entrypoint scripts remain executable' test_scripts_are_executable
 run_test 'no global pkill/pgrep lifecycle management' test_no_global_process_matching
 run_test 'privileged MCP dependencies are pinned' test_dependencies_are_pinned
@@ -223,6 +259,7 @@ run_test '1MCP runtime avoids an unbounded console append log' test_1mcp_runtime
 run_test '1MCP origin is reconciled before watchdog startup' test_start_orders_origin_before_watchdog
 run_test 'watchdog starts only after public health succeeds' test_watchdog_starts_only_after_public_health
 run_test 'legacy tunnel scripts are thin start/stop aliases' test_compatibility_wrappers_are_thin
+run_test 'restart --wait blocks until the new unit invocation is active' test_restart_wait_blocks_until_new_invocation_is_active
 run_test 'status keeps duplicate and PID/listener diagnostics' test_status_has_core_diagnostics
 run_test 'systemd user unit autostarts the canonical bridge' test_systemd_user_autostart_contract
 run_test 'systemd installer derives user home when HOME is missing' test_systemd_installer_handles_missing_home

@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -11,6 +12,28 @@ export const DEFAULT_BROWSER_FAST_CONFIG_FILE = path.join(
 const MAX_CONFIG_BYTES = 16 * 1024;
 const MAX_PROFILE_NAME_LENGTH = 64;
 const PROFILE_NAME = /^[A-Za-z0-9._-]+$/;
+
+// browser_target used when a call omits it: windows only on WSL hosts, where Windows Chrome
+// is reachable through interop. MCP_BROWSER_DEFAULT_TARGET overrides the detection.
+export function defaultBrowserTarget({ env = process.env, readOsRelease = readKernelOsRelease } = {}) {
+  const override = env.MCP_BROWSER_DEFAULT_TARGET;
+  if (override !== undefined && override !== '') {
+    if (override !== 'windows' && override !== 'linux') {
+      throw configError('INVALID_BROWSER_TARGET', `MCP_BROWSER_DEFAULT_TARGET must be windows or linux, got ${override}`);
+    }
+    return override;
+  }
+  if (env.WSL_DISTRO_NAME || env.WSL_INTEROP) return 'windows';
+  return /microsoft|wsl/i.test(readOsRelease()) ? 'windows' : 'linux';
+}
+
+function readKernelOsRelease() {
+  try {
+    return readFileSync('/proc/sys/kernel/osrelease', 'utf8');
+  } catch {
+    return os.release();
+  }
+}
 
 function configError(code, message, cause) {
   const error = new Error(`${code}: ${message}`, cause ? { cause } : undefined);

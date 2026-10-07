@@ -8,7 +8,7 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { ensureWindowsChrome } from '../browser/windows-chrome-runtime.mjs';
-import { resolveLinuxBrowserBackend } from './browser-backend-config.mjs';
+import { defaultBrowserTarget, resolveLinuxBrowserBackend } from './browser-backend-config.mjs';
 import { ManagedClearcoteRuntime } from './clearcote-runtime.mjs';
 import { resolveBrowserMemory } from './browser-memory.mjs';
 import { readTargetInfo } from './target-info.mjs';
@@ -60,7 +60,7 @@ function localDelay(milliseconds) {
 }
 
 function targetName(value) {
-  const target = value ?? 'windows';
+  const target = value ?? defaultBrowserTarget();
   if (target !== 'windows' && target !== 'linux') throw fastError('INVALID_BROWSER_TARGET', `expected windows or linux, got ${String(target)}`);
   return target;
 }
@@ -1096,7 +1096,7 @@ export function createBrowserFastServer({ browser } = {}) {
       inputSchema: {
         type: 'object',
         properties: {
-          browser_target: { type: 'string', enum: ['windows', 'linux'], description: 'Omit for Windows Chrome; use linux for a Linux Chrome or Clearcote backend.' },
+          browser_target: { type: 'string', enum: ['windows', 'linux'], description: 'Omit for the host default: windows on WSL, linux elsewhere. Use linux for a Linux Chrome or Clearcote backend.' },
           browser_backend: { type: 'string', enum: ['chrome', 'clearcote'], description: 'Select Chrome or managed Clearcote. Windows supports only Chrome. On Linux, omit to use the configured default; set it explicitly whenever browser_profile is set.' },
           browser_profile: { type: 'string', minLength: 1, maxLength: 64, pattern: '^[A-Za-z0-9._-]+$', description: 'Optional named persistent profile on Windows or Linux. Omit for the existing shared default. Windows and Linux Chrome create or reuse an isolated profile by this name; Linux Clearcote selects a profile defined in browser-fast.json.' },
           scope: { type: 'string', enum: ['interactive', 'compact', 'full'], default: 'interactive' },

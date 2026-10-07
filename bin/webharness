@@ -13,7 +13,7 @@ Usage:
   webharness doctor [--profile restricted|trusted-dev|personal|server] [--env-file PATH] [--state-dir PATH]
   webharness start
   webharness stop
-  webharness restart
+  webharness restart [--wait] [--timeout SECONDS]
   webharness status
   webharness extension list|install|remove ...
   webharness help
@@ -70,10 +70,76 @@ stop_command() {
   exec "$ROOT/bin/stop"
 }
 
+systemd_bridge_show() {
+  local runtime_dir bus_address
+  runtime_dir="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+  bus_address="${DBUS_SESSION_BUS_ADDRESS:-unix:path=$runtime_dir/bus}"
+  XDG_RUNTIME_DIR="$runtime_dir" DBUS_SESSION_BUS_ADDRESS="$bus_address" \
+    systemctl --user show mcp-dev-bridge.service --property="$1" --value
+}
+
+# A command running inside the bridge unit (for example an MCP exec) is killed by the
+# restart it queues, so it can never observe the result.
+inside_bridge_unit() {
+  grep -q 'mcp-dev-bridge\.service' "${WEBHARNESS_SELF_CGROUP_FILE:-/proc/self/cgroup}" 2>/dev/null
+}
+
+# Type=notify makes the unit active only after bin/start passed the public readiness check,
+# so a new InvocationID in the active state means the restarted bridge is reachable.
+wait_for_bridge_restart() {
+  local previous="$1" timeout="$2" interval="${WEBHARNESS_RESTART_POLL_INTERVAL:-1}"
+  local deadline=$((SECONDS + timeout)) invocation state
+  while :; do
+    invocation="$(systemd_bridge_show InvocationID 2>/dev/null || true)"
+    state="$(systemd_bridge_show ActiveState 2>/dev/null || true)"
+    if [ -n "$invocation" ] && [ "$invocation" != "$previous" ]; then
+      case "$state" in
+        active) return 0 ;;
+        failed)
+          echo "mcp-dev-bridge.service failed to restart; see: journalctl --user -u mcp-dev-bridge.service" >&2
+          return 1
+          ;;
+      esac
+    fi
+    if [ "$SECONDS" -ge "$deadline" ]; then
+      echo "timed out after ${timeout}s waiting for mcp-dev-bridge.service (state: ${state:-unknown})" >&2
+      return 1
+    fi
+    sleep "$interval"
+  done
+}
+
 restart_command() {
+  local wait=0 timeout=180 previous
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --wait) wait=1 ;;
+      --timeout)
+        [ "$#" -ge 2 ] && [[ "$2" =~ ^[1-9][0-9]*$ ]] || { echo "--timeout needs a positive number of seconds" >&2; return 2; }
+        timeout="$2"
+        shift
+        ;;
+      *) usage >&2; return 2 ;;
+    esac
+    shift
+  done
+
   if systemd_bridge_available; then
+    if [ "$wait" = 0 ]; then
+      systemd_bridge_action restart --no-block
+      echo "WebHarness restart queued through mcp-dev-bridge.service"
+      return 0
+    fi
+    if inside_bridge_unit; then
+      echo "restart --wait cannot run inside mcp-dev-bridge.service: the restart kills this command." >&2
+      echo "Run plain 'webharness restart' and reconnect after about 20 seconds." >&2
+      return 2
+    fi
+    previous="$(systemd_bridge_show InvocationID 2>/dev/null || true)"
     systemd_bridge_action restart --no-block
-    echo "WebHarness restart queued through mcp-dev-bridge.service"
+    echo "WebHarness restart queued through mcp-dev-bridge.service; waiting for readiness"
+    wait_for_bridge_restart "$previous" "$timeout" || return 1
+    echo "WebHarness restarted and ready"
     return 0
   fi
 
@@ -144,8 +210,7 @@ case "$COMMAND" in
     stop_command
     ;;
   restart)
-    [ "$#" -eq 0 ] || { usage >&2; exit 2; }
-    restart_command
+    restart_command "$@"
     ;;
   status)
     [ "$#" -eq 0 ] || { usage >&2; exit 2; }
