@@ -127,7 +127,7 @@ function validateSuccess(value) {
   return result;
 }
 
-export function validateStartArguments(value) {
+export function validateStartArguments(value, { defaultTarget = defaultBrowserTarget() } = {}) {
   const args = requireObject(value, 'arguments');
   rejectUnknownKeys(args, START_KEYS, 'arguments');
   const rawUrl = nonEmptyString(args.url, 'url');
@@ -143,7 +143,7 @@ export function validateStartArguments(value) {
 
   const scenario = requireObject(args.scenario, 'scenario');
   rejectUnknownKeys(scenario, SCENARIO_KEYS, 'scenario');
-  const browserTarget = scenario.browser_target ?? defaultBrowserTarget();
+  const browserTarget = scenario.browser_target ?? defaultTarget;
   if (!['windows', 'linux'].includes(browserTarget)) {
     throw invalid('browser_target must be windows or linux');
   }

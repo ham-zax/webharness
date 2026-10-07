@@ -59,8 +59,8 @@ function localDelay(milliseconds) {
   return new Promise(resolve => setTimeout(resolve, milliseconds));
 }
 
-function targetName(value) {
-  const target = value ?? defaultBrowserTarget();
+function targetName(value, defaultTarget) {
+  const target = value ?? defaultTarget;
   if (target !== 'windows' && target !== 'linux') throw fastError('INVALID_BROWSER_TARGET', `expected windows or linux, got ${String(target)}`);
   return target;
 }
@@ -774,9 +774,16 @@ export function actionCommand(action) {
 }
 
 export class FastBrowser {
-  constructor({ runner = new AgentBrowserRunner(), memoryRoot, artifactManifestPath = DEFAULT_BROWSER_ARTIFACTS_FILE } = {}) {
+  // defaultTarget is resolved once so an invalid MCP_BROWSER_DEFAULT_TARGET fails at startup.
+  constructor({
+    runner = new AgentBrowserRunner(),
+    memoryRoot,
+    artifactManifestPath = DEFAULT_BROWSER_ARTIFACTS_FILE,
+    defaultTarget = defaultBrowserTarget()
+  } = {}) {
     if (!runner || typeof runner.batch !== 'function') throw new TypeError('runner with batch() is required');
     this.runner = runner;
+    this.defaultTarget = defaultTarget;
     this.memoryRoot = memoryRoot;
     this.artifactManifestPath = artifactManifestPath;
     this.operationTails = new Map();
@@ -873,7 +880,7 @@ export class FastBrowser {
   }
 
   async observe({ browser_target, browser_backend, browser_profile, scope = 'interactive', include_urls = true, tab } = {}) {
-    const target = targetName(browser_target);
+    const target = targetName(browser_target, this.defaultTarget);
     const requested = browserSelection(target, browser_backend, browser_profile);
     const selection = await this.resolvedSelection(target, requested);
     const prepared = typeof this.runner.prepareObservation === 'function'
@@ -892,7 +899,7 @@ export class FastBrowser {
   }
 
   async execute({ browser_target, browser_backend, browser_profile, actions, stop_on_error = true, final_state = 'interactive', tab } = {}) {
-    const target = targetName(browser_target);
+    const target = targetName(browser_target, this.defaultTarget);
     const requested = browserSelection(target, browser_backend, browser_profile);
     const selection = await this.resolvedSelection(target, requested);
     const requestedTab = requiredString(tab, 'tab');

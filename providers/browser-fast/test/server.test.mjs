@@ -1141,6 +1141,42 @@ test('uncertain mutating failures are never reported as safe failures', async ()
   assert.equal(result.steps[0].status, 'unknown');
 });
 
+test('observe over MCP without browser_target routes to the configured default target', async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'browser-fast-default-target-'));
+  t.after(async () => { await fs.rm(root, { recursive: true, force: true }); });
+  const tab = { active: true, tabId: 't1', targetId: 'TARGET-1', title: 'Blank', url: 'about:blank' };
+  for (const defaultTarget of ['windows', 'linux']) {
+    const targets = [];
+    const runner = {
+      async batch(target, commands) {
+        targets.push(target);
+        const items = commands.map(command => {
+          if (command[0] === 'snapshot') return { success: true, result: { origin: 'about:blank', snapshot: '', refs: {} } };
+          if (command[0] === 'tab' && command[1] === 'list') return { success: true, result: { tabs: [tab] } };
+          return { success: true, result: { tabId: tab.tabId, targetId: tab.targetId } };
+        });
+        return { exitCode: 0, items };
+      }
+    };
+    const server = createBrowserFastServer({ browser: new FastBrowser({ runner, memoryRoot: root, defaultTarget }) });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: 'browser-fast-test', version: '1.0.0' });
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    try {
+      const result = await client.callTool({ name: 'observe', arguments: {} });
+      assert.notEqual(result.isError, true, JSON.stringify(result.content));
+      assert.equal(result.structuredContent.browser_target, defaultTarget);
+      assert.equal(result.structuredContent.active_tab, 'TARGET-1');
+      assert.ok(targets.length > 0);
+      assert.ok(targets.every(target => target === defaultTarget), `runner targets: ${targets.join(',')}`);
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  }
+});
+
 test('default browser target is windows only on WSL hosts unless overridden', () => {
   const linuxKernel = () => '6.8.0-1012-oracle';
   const wslKernel = () => '6.18.40.1-microsoft-standard-WSL2';

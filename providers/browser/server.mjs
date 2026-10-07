@@ -234,11 +234,14 @@ export class BrowserRouter {
     env = process.env,
     linuxBackendResolve = resolveLinuxBrowserBackend,
     clearcoteEndpointResolve = resolveClearcoteEndpoint,
-    linuxChromeProfilesRoot = DEFAULT_LINUX_CHROME_PROFILES_ROOT
+    linuxChromeProfilesRoot = DEFAULT_LINUX_CHROME_PROFILES_ROOT,
+    // Resolved once so an invalid MCP_BROWSER_DEFAULT_TARGET fails at startup.
+    defaultTarget = defaultBrowserTarget({ env })
   } = {}) {
     if (typeof childFactory !== 'function') throw new TypeError('childFactory must be a function');
     this.childFactory = childFactory;
     this.env = env;
+    this.defaultTarget = defaultTarget;
     this.linuxBackendResolve = linuxBackendResolve;
     this.clearcoteEndpointResolve = clearcoteEndpointResolve;
     this.linuxChromeProfilesRoot = linuxChromeProfilesRoot;
@@ -346,7 +349,7 @@ export class BrowserRouter {
     if (args === null || typeof args !== 'object' || Array.isArray(args)) throw new TypeError('tool arguments must be an object');
 
     const upstreamArgs = { ...args };
-    const target = upstreamArgs[BROWSER_TARGET_FIELD] ?? defaultBrowserTarget();
+    const target = upstreamArgs[BROWSER_TARGET_FIELD] ?? this.defaultTarget;
     const browserBackend = upstreamArgs[BROWSER_BACKEND_FIELD];
     const browserProfile = upstreamArgs[BROWSER_PROFILE_FIELD];
     delete upstreamArgs[BROWSER_TARGET_FIELD];

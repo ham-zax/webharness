@@ -33,7 +33,7 @@ test('browser facade adds locality and deployment path guidance without changing
   assert.equal(upstream.inputSchema.properties.filePath.description, 'Path to save the screenshot to.');
 });
 
-test('browser router defaults to Windows, resolves Linux through the shared backend policy, and forwards native results unchanged', async () => {
+test('browser router uses its configured default target, resolves Linux through the shared backend policy, and forwards native results unchanged', async () => {
   const calls = [];
   const imageResult = {
     content: [{ type: 'image', data: 'cG5n', mimeType: 'image/png' }],
@@ -59,6 +59,7 @@ test('browser router defaults to Windows, resolves Linux through the shared back
   const router = new BrowserRouter({
     childFactory,
     env: { DISPLAY: ':0' },
+    defaultTarget: 'windows',
     linuxBackendResolve: async ({ browser, profile }) => {
       assert.equal(browser, undefined);
       assert.equal(profile, undefined);
@@ -90,6 +91,18 @@ test('browser router defaults to Windows, resolves Linux through the shared back
 
   await router.shutdown();
   assert.ok(children.every(child => child.alive === false));
+
+  const linuxDefault = new BrowserRouter({
+    childFactory,
+    env: { DISPLAY: ':0' },
+    defaultTarget: 'linux',
+    linuxBackendResolve: async () => ({ browser: 'clearcote', managed: true, profileName: 'x-main' }),
+    clearcoteEndpointResolve: async () => ({ browserUrl: 'http://127.0.0.1:42425' })
+  });
+  await linuxDefault.call({ tool: 'take_screenshot', arguments: { format: 'png' } });
+  assert.equal(calls.at(-1).target, 'linux');
+  assert.deepEqual(calls.at(-1).args, { format: 'png' });
+  await linuxDefault.shutdown();
 });
 
 test('browser router attaches to a V1 external CDP endpoint without resolving a managed profile', async () => {
@@ -127,6 +140,7 @@ test('browser router supports explicit Linux Chrome profiles and rejects ambiguo
   const router = new BrowserRouter({
     childFactory,
     env: { DISPLAY: ':0' },
+    defaultTarget: 'windows',
     linuxChromeProfilesRoot: '/state/chrome-profiles',
     linuxBackendResolve: async ({ browser, profile }) => ({ browser, profileName: profile })
   });

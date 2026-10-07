@@ -477,6 +477,7 @@ GALLIUM_DRIVER=d3d12
 MOZ_ENABLE_WAYLAND=1
 AGENT_BROWSER_PROFILE=Default
 AGENT_BROWSER_EXECUTABLE_PATH=$tmp/home/fake-chrome
+MCP_BROWSER_DEFAULT_TARGET=linux
 EOF
   chmod 0600 "$tmp/home/context.md" "$tmp/home/gui.env"
   cat > "$tmp/deployment.env" <<EOF
@@ -505,6 +506,12 @@ for (const env of [dev, terminal]) {
 }
 
 if (browser.GALLIUM_DRIVER !== 'd3d12') process.exit(1);
+for (const env of [browser, fast, jev]) {
+  if (env.MCP_BROWSER_DEFAULT_TARGET !== 'linux') process.exit(1);
+}
+for (const env of [dev, terminal]) {
+  if (env.MCP_BROWSER_DEFAULT_TARGET !== undefined) process.exit(1);
+}
 if (browser.MOZ_ENABLE_WAYLAND !== undefined) process.exit(1);
 if (browser.AGENT_BROWSER_PROFILE !== undefined || browser.AGENT_BROWSER_EXECUTABLE_PATH !== undefined) process.exit(1);
 if (fast.GALLIUM_DRIVER !== 'd3d12') process.exit(1);
@@ -530,7 +537,7 @@ EOF
     --state-dir "$tmp/invalid-state" --repo-root "$ROOT" 2>&1)"
   rc=$?
   rm -rf "$tmp"
-  [ "$rc" -ne 0 ] && grep -Fq 'MCP_OWNER_ENV_FILE permits only: GALLIUM_DRIVER, MOZ_ENABLE_WAYLAND, AGENT_BROWSER_PROFILE, AGENT_BROWSER_EXECUTABLE_PATH' <<<"$output"
+  [ "$rc" -ne 0 ] && grep -Fq 'MCP_OWNER_ENV_FILE permits only: GALLIUM_DRIVER, MOZ_ENABLE_WAYLAND, AGENT_BROWSER_PROFILE, AGENT_BROWSER_EXECUTABLE_PATH, MCP_BROWSER_DEFAULT_TARGET' <<<"$output"
 }
 
 test_browser_jev_credential_path_rendering() {

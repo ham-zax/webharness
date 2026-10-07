@@ -55,8 +55,10 @@ async function readEnvFile(file, { optional = false } = {}) {
 }
 
 const OWNER_RUNTIME_ENV_KEYS = ['GALLIUM_DRIVER', 'MOZ_ENABLE_WAYLAND'];
-const OWNER_BROWSER_ENV_KEYS = new Set(['GALLIUM_DRIVER']);
-const OWNER_BROWSER_FAST_ENV_KEYS = new Set(['GALLIUM_DRIVER', 'AGENT_BROWSER_PROFILE', 'AGENT_BROWSER_EXECUTABLE_PATH']);
+// 1MCP passes a stdio server only its own env block (no inheritParentEnv), so a browser default
+// target override must be rendered into each browser server explicitly.
+const OWNER_BROWSER_ENV_KEYS = new Set(['GALLIUM_DRIVER', 'MCP_BROWSER_DEFAULT_TARGET']);
+const OWNER_BROWSER_FAST_ENV_KEYS = new Set(['GALLIUM_DRIVER', 'AGENT_BROWSER_PROFILE', 'AGENT_BROWSER_EXECUTABLE_PATH', 'MCP_BROWSER_DEFAULT_TARGET']);
 const OWNER_ENV_KEYS = new Set([...OWNER_RUNTIME_ENV_KEYS, ...OWNER_BROWSER_FAST_ENV_KEYS]);
 const BROWSER_JEV_ENV_KEYS = new Set([
   'TYPESAFE_API_KEY', 'TYPESAFE_MODEL', 'TEXT_MODEL_API_KEY',
@@ -97,6 +99,9 @@ function parseOwnerEnv(text) {
   }
   if (values.AGENT_BROWSER_EXECUTABLE_PATH !== undefined && !path.isAbsolute(values.AGENT_BROWSER_EXECUTABLE_PATH)) {
     throw new Error('AGENT_BROWSER_EXECUTABLE_PATH in MCP_OWNER_ENV_FILE must be an absolute path');
+  }
+  if (values.MCP_BROWSER_DEFAULT_TARGET !== undefined && !['windows', 'linux'].includes(values.MCP_BROWSER_DEFAULT_TARGET)) {
+    throw new Error('MCP_BROWSER_DEFAULT_TARGET in MCP_OWNER_ENV_FILE must be windows or linux');
   }
   return values;
 }

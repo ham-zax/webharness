@@ -2,6 +2,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
+import { defaultBrowserTarget } from '../browser-fast/browser-backend-config.mjs';
 import { BrowserJevBackendResolver } from './backend.mjs';
 import {
   TERMINAL_STATUSES,
@@ -279,9 +280,12 @@ export class BrowserJevRunManager {
     script = DEFAULT_WORKER,
     idFactory = () => randomUUID().replaceAll('-', ''),
     leaseDirectory = process.env.MCP_LIFECYCLE_LEASE_DIR,
-    leaseFactory = options => acquireRuntimeLease(options)
+    leaseFactory = options => acquireRuntimeLease(options),
+    // Resolved once so an invalid MCP_BROWSER_DEFAULT_TARGET fails at startup.
+    defaultTarget = defaultBrowserTarget()
   } = {}) {
     this.backendResolver = backendResolver;
+    this.defaultTarget = defaultTarget;
     this.credentialLoader = credentialLoader;
     this.credentialFile = credentialFile;
     this.baseEnv = baseEnv;
@@ -371,7 +375,7 @@ export class BrowserJevRunManager {
   }
 
   async startRun(input) {
-    const args = validateStartArguments(input);
+    const args = validateStartArguments(input, { defaultTarget: this.defaultTarget });
     const backend = await this.backendResolver.resolve(args.scenario);
     if (this.closing) throw managerError('JEV_MANAGER_CLOSED', 'run manager is shutting down');
     const id = this.idFactory();

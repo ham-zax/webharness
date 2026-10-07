@@ -70,7 +70,7 @@ Qualification is limited to the headless Dev/Local/Terminal path. This profile d
 
 ## Optional headless Browser Fast (aarch64 or x86_64, no GPU)
 
-The `server` profile excludes browser providers. An owner can add `browser-fast` alone through `MCP_LOCAL_SERVERS_FILE`; `scripts/doctor.sh` accepts it in the `server` profile only when that variable is set in `.env`. Clearcote is x64-only and is not used. `browser-fast` stays the Linux-target `observe`/`execute` pair, so pass `browser_target: "linux"` on every call.
+The `server` profile excludes browser providers. An owner can add `browser-fast` alone through `MCP_LOCAL_SERVERS_FILE`; `scripts/doctor.sh` accepts it in the `server` profile only when that variable is set in `.env`. Clearcote is x64-only and is not used. `browser-fast` stays the Linux-target `observe`/`execute` pair; on a non-WSL host an omitted `browser_target` already resolves to `linux`.
 
 Requirements: `xvfb` plus fonts, a Chromium build for the host architecture (for example `npx playwright install chromium`), and `pnpm`/`npm install` in `providers/browser-fast`.
 

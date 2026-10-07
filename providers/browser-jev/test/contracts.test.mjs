@@ -23,16 +23,27 @@ const validArgs = () => ({
 
 test('validates and normalizes a start request', () => {
   assert.deepEqual(validateStartArguments(validArgs()), validArgs());
-  assert.deepEqual(validateStartArguments({
+  const minimal = () => ({
     url: 'https://example.com',
     goal: 'Inspect it',
     scenario: { success: { url_contains: ['example.com'] } }
-  }), {
+  });
+  assert.deepEqual(validateStartArguments(minimal(), { defaultTarget: 'windows' }), {
     url: 'https://example.com/',
     goal: 'Inspect it',
     scenario: {
       browser_target: 'windows',
       browser_backend: 'chrome',
+      browser_profile: undefined,
+      success: { url_contains: ['example.com'] }
+    }
+  });
+  assert.deepEqual(validateStartArguments(minimal(), { defaultTarget: 'linux' }), {
+    url: 'https://example.com/',
+    goal: 'Inspect it',
+    scenario: {
+      browser_target: 'linux',
+      browser_backend: undefined,
       browser_profile: undefined,
       success: { url_contains: ['example.com'] }
     }
