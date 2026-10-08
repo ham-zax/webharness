@@ -201,7 +201,7 @@ export async function resolveLinuxBrowserBackend({
     if (configuredBrowser === 'firefox') {
       throw configError(
         'UNSUPPORTED_BROWSER_BACKEND',
-        'Firefox does not expose Chromium CDP and Agent Browser 0.35.0 cannot drive it; use chrome or clearcote'
+        'Firefox does not expose Chromium CDP and Agent Browser cannot drive it; use chrome or clearcote'
       );
     }
     if (configuredBrowser === 'chrome') {
@@ -230,7 +230,7 @@ export async function resolveLinuxBrowserBackend({
   if (configuredBrowser === 'firefox') {
     throw configError(
       'UNSUPPORTED_BROWSER_BACKEND',
-      'Firefox does not expose Chromium CDP and Agent Browser 0.35.0 cannot drive it; use chrome or clearcote'
+      'Firefox does not expose Chromium CDP and Agent Browser cannot drive it; use chrome or clearcote'
     );
   }
   if (!['chrome', 'clearcote'].includes(configuredBrowser)) {

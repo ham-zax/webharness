@@ -13,7 +13,7 @@ import { ManagedClearcoteRuntime } from './clearcote-runtime.mjs';
 import { resolveBrowserMemory } from './browser-memory.mjs';
 import { readTargetInfo } from './target-info.mjs';
 
-export const AGENT_BROWSER_VERSION = '0.35.0';
+export const AGENT_BROWSER_VERSION = '0.38.2';
 export const DEFAULT_SESSION_PREFIX = 'mcp-browser-fast';
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
