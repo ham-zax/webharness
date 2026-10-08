@@ -17,6 +17,7 @@ Use the guide that matches what you are doing:
 | Run the maintained reference qualification | [Acceptance](acceptance.md) |
 | Diagnose common failures | [Troubleshooting](troubleshooting.md) |
 | Operate the full Personal Workstation profile | [Personal Workstation](personal/harness.md) |
+| See evaluated improvements that are not built yet | [Deferred improvements](deferred.md) |
 
 ## Current vs. engineering history
 

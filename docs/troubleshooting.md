@@ -66,6 +66,21 @@ The first durable baseline could not be committed within the positive call hold.
 `pkill -f <pattern>` matches the runner's own `bash -c` command line, so it can terminate the calling RPC itself. Inspect with `pgrep -f "[p]attern"` first, or list with `ps -o pid= -o args=` and exclude the caller PID before signalling.
 
 
+## 1MCP does not come back after killing its process (cold-start mode)
+
+With `BRIDGE_COLD_START=1` the watchdog supervises only the wake proxy and cloudflared; it never respawns an idle or killed 1MCP backend. A bare `kill -TERM <1mcp pid>` therefore leaves the backend down, and the proxy still believes it is `ready`: `/health/ready` only probes the backend and does not change that state. The first real request through the public port returns 502 and marks the proxy `failed`; the next request restarts the backend.
+
+Restart deliberately instead:
+
+```bash
+bash lib/bridge/backend-control.sh stop                      # lock-aware backend stop
+for _ in 1 2 3; do curl -s -m 40 -o /dev/null http://127.0.0.1:$MCP_ONE_MCP_PORT/health; done   # wakes it
+curl -s http://127.0.0.1:$((MCP_ONE_MCP_PORT + 10))/health   # backend itself, not the proxy
+```
+
+Stopping the proxy (`SIGTERM`) also works: it stops the backend, and the watchdog restarts only the proxy within about 20 seconds. `webharness restart --wait` is the last resort because it also restarts the tunnel.
+
+
 ## ChatGPT shows an old action catalog
 
 After provider composition changes, refresh Actions/connector metadata and start a fresh MCP-backed session if necessary. Verify the local rendered provider set before blaming the client.
