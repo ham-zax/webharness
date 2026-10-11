@@ -56,6 +56,20 @@ Extensions do not receive additional Browser authority. `bin/extension` is an op
 `execute` requires an observed tab ID plus the target/backend/profile selection returned by `observe`. On Linux, the complete operation is serialized by resolved backend/profile/tab; independent tabs use separate pinned Agent Browser sessions and may proceed concurrently, while same-tab work remains ordered and fail-closed. Windows serializes within each profile; different explicit profile names use separate data directories, browser processes, Agent Browser sessions, and operation queues. Agent Browser 0.35.0 remains the strict `--pin-tab` observation/ref layer; normalized tab IDs prefer the CDP `targetId`, which Agent Browser accepts as a tab reference and keeps stable across daemon restarts. Immediately before mutation, `browser-fast` reads the selected session's tab list and requires the current target to equal `execute.tab`; it deliberately does not switch tabs in this precondition because switching invalidates snapshot refs. `observe` may explicitly bind a chosen/current target before taking its fresh snapshot, which is the recovery boundary after a strict pinned target is externally closed. Managed Clearcote input is bound back to the same profile-scoped target ID before dispatch through its Playwright context; ref-targeted input does not invent CSS/XPath selectors. Clearcote profile startup is coalesced with process-local promises rather than persistent filesystem locks, so an agent failure cannot strand another agent behind stale ownership. A click may bind exactly one newly created target before later actions only after a bounded read-only CDP lookup verifies its opener is the clicked target. Multiple new targets, missing opener metadata, or lookup failure stop the sequence without selecting a target, preserving truthful completed/not-run states. On Windows, the default profile remains `%LOCALAPPDATA%\\mcp-dev-bridge\\chrome-profile`, while explicit Browser Fast profiles live under `%LOCALAPPDATA%\\mcp-dev-bridge\\chrome-profiles\\<name>`; the everyday Chrome user-data directory is not attached, copied, or exposed to `tag:local`. All managed debugging endpoints remain ephemeral and loopback-only. The fast executor never automatically retries a failed, partial, or unknown action batch.
 
 
+## Skill retrieval boundary
+
+The native skill-library provider reads only files explicitly named by its policy.
+Source frontmatter, prose references and generated catalog metadata cannot grant
+access or execute scripts. Reads reject traversal, symlinks and non-regular files,
+verify all declared dependency digests, and preserve source invocation hints.
+Completeness means declared files exist; runtime compatibility is a separate
+reviewed assertion. Skill content does not override user or host authority.
+
+The built-in route joins Local's existing powerful trust domain in Personal and
+Server profiles. Skills-only clients require separately authenticated exposure
+of the standalone provider, with no Dev/Local routes. Read-only annotations do
+not create that separation. See [Skill library](skill-library.md).
+
 ## Edit mutation guarantees
 
 Edit V2 coordinates all requested canonical paths through the existing in-process mutation coordinator, plans every target before the first edit mutation, and revalidates file identity plus exact snapshot bytes through the same open file descriptor used for write/truncate. This reduces stale-path and cooperating-writer races but is not a cross-file transaction, rollback system, fsync durability guarantee, or compare-and-swap against arbitrary Bash/Python/editor processes. A post-mutation failure may therefore be reported as an explicit partial or uncertain state that requires rereading before retrying.

@@ -88,6 +88,9 @@ test_public_classifier_matches_reference_boundary() {
     providers/browser/example \
     providers/browser-fast/example \
     providers/local-tools/example \
+    providers/skill-library/example \
+    skill-library/policy.json \
+    skill-library/packs/thinking/LICENSE \
     scripts/bootstrap-personal.sh \
     scripts/manage-extension.mjs \
     bin/extension \
@@ -145,7 +148,8 @@ const keys = cfg => Object.keys(cfg.mcpServers ?? {}).sort();
 if (JSON.stringify(keys(restricted)) !== JSON.stringify(['dev', 'shell'])) process.exit(1);
 if (JSON.stringify(keys(trusted)) !== JSON.stringify(['dev'])) process.exit(1);
 if (JSON.stringify(keys(personal)) !== JSON.stringify(['dev', 'local'])) process.exit(1);
-if (JSON.stringify(keys(local)) !== JSON.stringify(['browser-devtools', 'browser-fast', 'browser-jev', 'dev', 'host', 'terminal'])) process.exit(1);
+if (JSON.stringify(keys(local)) !== JSON.stringify(['browser-devtools', 'browser-fast', 'browser-jev', 'dev', 'host', 'skill-library', 'terminal'])) process.exit(1);
+if (!local.mcpServers['skill-library'].args.includes(root + '/providers/skill-library/server.mjs')) process.exit(1);
 if (!local.mcpServers['browser-devtools'].args.includes(root + '/providers/browser/server.mjs')) process.exit(1);
 if (!local.mcpServers['browser-fast'].args.includes(root + '/providers/browser-fast/server.mjs')) process.exit(1);
 if (!local.mcpServers['browser-jev'].args.includes(root + '/providers/browser-jev/server.mjs')) process.exit(1);

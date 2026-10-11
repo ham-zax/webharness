@@ -11,6 +11,8 @@ providers/browser/   Chrome DevTools facade + resource-local child routing
 providers/browser-fast/ compact observe/execute facade over Agent Browser on Windows + Linux
 providers/browser-jev/ stateful Jev loop over managed browser backends
 providers/local-tools/ stable Local tool broker over inner 1MCP
+providers/skill-library/ native read-only policy/catalog/search/reader
+skill-library/       reviewed distributable packs and generated metadata
 providers/legacy-shell/ restricted-profile legacy shell
 extensions/          engineering-checkout domain packs; the public reference ships generic extension machinery but excludes these machine/domain-specific packs
 config/              tracked templates and trust profiles
@@ -33,6 +35,7 @@ npm --prefix providers/browser-fast ci --omit=dev
 npm --prefix providers/browser-jev ci --omit=dev
 uv sync --frozen --project providers/browser-jev
 npm --prefix providers/local-tools ci --omit=dev
+npm --prefix providers/skill-library ci --omit=dev
 ```
 
 ## Portable verification
@@ -55,6 +58,8 @@ bash tests/lifecycle.sh
 (cd providers/browser-fast && npm test)
 (cd providers/browser-jev && npm test)
 (cd providers/local-tools && npm test)
+(cd providers/skill-library && npm test)
+./bin/webharness skills check
 node scripts/check-doc-links.mjs
 bash -n bin/* lib/bridge/*.sh scripts/*.sh tests/*.sh
 node --check scripts/*.mjs providers/pi-dev/*.mjs providers/terminal/*.mjs providers/browser/*.mjs providers/browser-fast/*.mjs providers/browser-jev/*.mjs providers/local-tools/*.mjs
@@ -97,7 +102,7 @@ For documentation-only work, keep the edit loop lightweight: check local Markdow
 
 `scripts/public-paths.sh` is the single source of truth for the public reference distribution. `tests/publication.sh` consumes it for validation, and `scripts/stage-public.sh` consumes the same classifier for release staging. Do not maintain a second allow/deny list in release tooling.
 
-The public reference includes the generic Personal Workstation implementation, generic extension machinery, the inactive vendored Chat-on-Steroids extension snapshot, and the Agents follow-on plan. It excludes engineering history/experiments, broad tracked Skills, machine/domain-specific extension packs, the optional WebSession HTTP adapter, and machine-local/runtime state.
+The public reference includes the generic Personal Workstation implementation, generic extension machinery, the inactive vendored Chat-on-Steroids extension snapshot, and the Agents follow-on plan. Reviewed `skill-library/` packs and the native provider are also public. It excludes engineering history/experiments, broad tracked Skills in `skills/`, machine/domain-specific extension packs, the optional WebSession HTTP adapter, and machine-local/runtime state.
 
 Promotion into the independent public repository is:
 

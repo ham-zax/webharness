@@ -58,7 +58,7 @@ const keys = cfg => Object.keys(cfg.mcpServers ?? {}).sort();
 if (JSON.stringify(keys(restricted)) !== JSON.stringify(['dev', 'shell'])) process.exit(1);
 if (JSON.stringify(keys(trusted)) !== JSON.stringify(['dev'])) process.exit(1);
 if (JSON.stringify(keys(personal)) !== JSON.stringify(['dev', 'local'])) process.exit(1);
-if (JSON.stringify(keys(personalLocal)) !== JSON.stringify(['browser-devtools', 'browser-fast', 'browser-jev', 'dev', 'host', 'terminal'])) process.exit(1);
+if (JSON.stringify(keys(personalLocal)) !== JSON.stringify(['browser-devtools', 'browser-fast', 'browser-jev', 'dev', 'host', 'skill-library', 'terminal'])) process.exit(1);
 if (restricted.mcpServers?.code || trusted.mcpServers?.code) process.exit(1);
 if (restricted.mcpServers?.terminal || trusted.mcpServers?.terminal) process.exit(1);
 if (restricted.mcpServers?.local || trusted.mcpServers?.local) process.exit(1);
@@ -127,7 +127,7 @@ if (personalLocal.mcpServers['browser-jev'].env.DISPLAY !== ':0') process.exit(1
 if (personalLocal.mcpServers['browser-jev'].env.PULSE_SERVER !== 'unix:/mnt/wslg/PulseServer') process.exit(1);
 if (personalLocal.mcpServers['browser-jev'].tags !== undefined) process.exit(1);
 if (JSON.stringify(keys(server)) !== JSON.stringify(['dev', 'local'])) process.exit(1);
-if (JSON.stringify(keys(serverLocal)) !== JSON.stringify(['dev', 'terminal'])) process.exit(1);
+if (JSON.stringify(keys(serverLocal)) !== JSON.stringify(['dev', 'skill-library', 'terminal'])) process.exit(1);
 if (server.mcpServers.shell || serverLocal.mcpServers.shell) process.exit(1);
 for (const absent of ['browser-devtools', 'browser-fast', 'browser-jev', 'host', 'code', 'codedb']) {
   if (serverLocal.mcpServers[absent] || server.mcpServers[absent]) process.exit(1);
@@ -238,7 +238,7 @@ const outer = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 const inner = JSON.parse(fs.readFileSync(process.argv[3], 'utf8'));
 const keys = cfg => Object.keys(cfg.mcpServers ?? {}).sort();
 if (JSON.stringify(keys(outer)) !== JSON.stringify(['dev', 'local'])) process.exit(1);
-if (JSON.stringify(keys(inner)) !== JSON.stringify(['addon', 'dev', 'terminal'])) process.exit(1);
+if (JSON.stringify(keys(inner)) !== JSON.stringify(['addon', 'dev', 'skill-library', 'terminal'])) process.exit(1);
 if (inner.mcpServers.addon?.type !== 'stdio') process.exit(1);
 if (inner.mcpServers.addon?.restartOnExit !== true) process.exit(1);
 NODE

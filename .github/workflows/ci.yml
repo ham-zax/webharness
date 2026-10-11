@@ -23,6 +23,7 @@ jobs:
           npm --prefix providers/browser-fast ci --omit=dev
           npm --prefix providers/browser-jev ci --omit=dev
           npm --prefix providers/local-tools ci --omit=dev
+          npm --prefix providers/skill-library ci --omit=dev
 
       - name: Run portable repository gate
         shell: bash

@@ -19,6 +19,12 @@ Local is one authorization domain. Its five broker tools address downstream MCPs
 
 Unscoped `tool_list` excludes the fallback-only Dev mirror. Explicit read-only recovery inspection may still use `tool_list(server="dev")` and `tool_schema(server="dev", tool=...)`. Ordinary `tool_call` and `tool_batch` reject Dev. `fallback_dispatch` is reserved for an already-authorized operation whose normal writable MCP call is unavailable or unreliable; it can reach the hidden Dev mirror as well as public Local servers and forwards the downstream `CallToolResult` unchanged. Its `readOnlyHint` is intentionally retained for fallback transport compatibility and is not a promise that the selected downstream action is side-effect free. `tool_batch` applies several structured argument objects to one public `{server, tool}` route with bounded concurrency, and its member envelope adds attribution/status while each fulfilled downstream result remains intact.
 
+The additive `skill-library` logical server exposes `find_skills` and `read_skill`
+in Personal and Server profiles. This changes neither the five outer Local tools
+nor smaller-profile authority. Read responses distinguish complete/incomplete
+pages and package completeness/runtime compatibility; stale dependency revisions
+require rediscovery. See [Skill library](skill-library.md).
+
 ## Compatibility rules
 
 The following are compatible when existing meanings remain unchanged:

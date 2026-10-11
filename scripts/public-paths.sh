@@ -4,6 +4,10 @@
 # scripts/stage-public.sh must consume this exact decision.
 is_public_path() {
   case "$1" in
+    skill-library/*)
+      # Deliberately public, reviewed portable packs; skills/* stays private.
+      return 0
+      ;;
     docs/history/* | \
     docs/benchmarks/* | \
     experiments/* | \

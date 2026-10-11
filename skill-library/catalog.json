@@ -1,0 +1,1098 @@
+{
+  "version": 1,
+  "revision": "b81c294bba4a0596d1d528dfdfa62b0d88f2724bf05a9da277c41929dcecf225",
+  "skills": [
+    {
+      "id": "thinking/thinking-bounded-rationality",
+      "collection": "thinking",
+      "name": "thinking-bounded-rationality",
+      "description": "Use when search or investigation could run forever. Set an explicit good-enough threshold first, then stop at the first option that clears it.",
+      "invocationHints": {
+        "disable-model-invocation": true
+      },
+      "revision": "4a3ed0613898cf44d9fa06a81280232afd017265104e77c2039d1d86eac6d544",
+      "source": "https://github.com/tjboudreaux/cc-thinking-skills",
+      "license": "MIT",
+      "completeness": {
+        "declaredFiles": 3,
+        "status": "present"
+      },
+      "compatibility": {
+        "kind": "instruction-only",
+        "requires": [],
+        "verification": "reviewed"
+      },
+      "files": [
+        {
+          "file": "LICENSE",
+          "digest": "41f47abf7be896c870173738e108e902b49497807a2c8b040c8144bf7128f01c",
+          "bytes": 1069
+        },
+        {
+          "file": "PROVENANCE.md",
+          "digest": "0e67d280518a49ccfe155ac44ab225f131dfd475259acd9b2c8e09ea64388a61",
+          "bytes": 902
+        },
+        {
+          "file": "thinking-bounded-rationality/SKILL.md",
+          "digest": "1996c6a4218a038de2daa987f77676fbb23fa5fba6dd11f3ab74f6233e9b7a9f",
+          "bytes": 2815
+        }
+      ],
+      "main": "thinking-bounded-rationality/SKILL.md"
+    },
+    {
+      "id": "thinking/thinking-circle-of-competence",
+      "collection": "thinking",
+      "name": "thinking-circle-of-competence",
+      "description": "Use when a specific claim may lack grounding. Check evidence boundary, size wrongness cost, then answer, fetch, or abstain — never confabulate.",
+      "invocationHints": {
+        "disable-model-invocation": true
+      },
+      "revision": "e05852512d5fa97b49ad098727e6e2cfdf17d9a7a8dddcf656ad71e43c54b867",
+      "source": "https://github.com/tjboudreaux/cc-thinking-skills",
+      "license": "MIT",
+      "completeness": {
+        "declaredFiles": 3,
+        "status": "present"
+      },
+      "compatibility": {
+        "kind": "instruction-only",
+        "requires": [],
+        "verification": "reviewed"
+      },
+      "files": [
+        {
+          "file": "LICENSE",
+          "digest": "41f47abf7be896c870173738e108e902b49497807a2c8b040c8144bf7128f01c",
+          "bytes": 1069
+        },
+        {
+          "file": "PROVENANCE.md",
+          "digest": "0e67d280518a49ccfe155ac44ab225f131dfd475259acd9b2c8e09ea64388a61",
+          "bytes": 902
+        },
+        {
+          "file": "thinking-circle-of-competence/SKILL.md",
+          "digest": "0c740956cb49af3682678968aecafee4e89076f096b36284e5bc09f1a6d615d9",
+          "bytes": 2941
+        }
+      ],
+      "main": "thinking-circle-of-competence/SKILL.md"
+    },
+    {
+      "id": "thinking/thinking-cynefin",
+      "collection": "thinking",
+      "name": "thinking-cynefin",
+      "description": "When the right response mode is unclear, classify the cause-effect domain first; decompose disorder.",
+      "invocationHints": {
+        "disable-model-invocation": true
+      },
+      "revision": "733a2e1c1e9a0c5a3b7040e5d815a7078c737ef581c7707074b534f0c838d777",
+      "source": "https://github.com/tjboudreaux/cc-thinking-skills",
+      "license": "MIT",
+      "completeness": {
+        "declaredFiles": 3,
+        "status": "present"
+      },
+      "compatibility": {
+        "kind": "instruction-only",
+        "requires": [],
+        "verification": "reviewed"
+      },
+      "files": [
+        {
+          "file": "LICENSE",
+          "digest": "41f47abf7be896c870173738e108e902b49497807a2c8b040c8144bf7128f01c",
+          "bytes": 1069
+        },
+        {
+          "file": "PROVENANCE.md",
+          "digest": "0e67d280518a49ccfe155ac44ab225f131dfd475259acd9b2c8e09ea64388a61",
+          "bytes": 902
+        },
+        {
+          "file": "thinking-cynefin/SKILL.md",
+          "digest": "65ffbfeadf1348e978fe56679174a883b378a162fc0c12cf83edfc609b552882",
+          "bytes": 2651
+        }
+      ],
+      "main": "thinking-cynefin/SKILL.md"
+    },
+    {
+      "id": "thinking/thinking-effectuation",
+      "collection": "thinking",
+      "name": "thinking-effectuation",
+      "description": "Under genuine uncertainty with no reliable forecast, inventory means, cap downside at affordable loss, act for commitments, and let goals emerge from controllable moves.",
+      "invocationHints": {
+        "disable-model-invocation": true
+      },
+      "revision": "0f2783f3c6d9ba4ff9303a35e42a9aa2fc1b8bef98bb5f2bdeff6efe029a4098",
+      "source": "https://github.com/tjboudreaux/cc-thinking-skills",
+      "license": "MIT",
+      "completeness": {
+        "declaredFiles": 3,
+        "status": "present"
+      },
+      "compatibility": {
+        "kind": "instruction-only",
+        "requires": [],
+        "verification": "reviewed"
+      },
+      "files": [
+        {
+          "file": "LICENSE",
+          "digest": "41f47abf7be896c870173738e108e902b49497807a2c8b040c8144bf7128f01c",
+          "bytes": 1069
+        },
+        {
+          "file": "PROVENANCE.md",
+          "digest": "0e67d280518a49ccfe155ac44ab225f131dfd475259acd9b2c8e09ea64388a61",
+          "bytes": 902
+        },
+        {
+          "file": "thinking-effectuation/SKILL.md",
+          "digest": "21d597c896c79dbebd5f0b9914686d4f454627bb8da3760794f77a1f190b9dfe",
+          "bytes": 3924
+        }
+      ],
+      "main": "thinking-effectuation/SKILL.md"
+    },
+    {
+      "id": "thinking/thinking-first-principles",
+      "collection": "thinking",
+      "name": "thinking-first-principles",
+      "description": "When a constraint is treated as fixed, separate physics from convention, keep only independently supported primitives, and rebuild the simplest solution that satisfies real constraints.",
+      "invocationHints": {
+        "disable-model-invocation": true
+      },
+      "revision": "3caedd1321f64056dd803a5e052b31b7b2a0a1bbff69eb82578e5cfd4d56802d",
+      "source": "https://github.com/tjboudreaux/cc-thinking-skills",
+      "license": "MIT",
+      "completeness": {
+        "declaredFiles": 3,
+        "status": "present"
+      },
+      "compatibility": {
+        "kind": "instruction-only",
+        "requires": [],
+        "verification": "reviewed"
+      },
+      "files": [
+        {
+          "file": "LICENSE",
+          "digest": "41f47abf7be896c870173738e108e902b49497807a2c8b040c8144bf7128f01c",
+          "bytes": 1069
+        },
+        {
+          "file": "PROVENANCE.md",
+          "digest": "0e67d280518a49ccfe155ac44ab225f131dfd475259acd9b2c8e09ea64388a61",
+          "bytes": 902
+        },
+        {
+          "file": "thinking-first-principles/SKILL.md",
+          "digest": "a3fd307e169b420a9eebce847849a6778435fe83cf8e1d130d59e98453e617cb",
+          "bytes": 3372
+        }
+      ],
+      "main": "thinking-first-principles/SKILL.md"
+    },
+    {
+      "id": "thinking/thinking-five-whys-plus",
+      "collection": "thinking",
+      "name": "thinking-five-whys-plus",
+      "description": "When a fault is localized and the proximate cause is known but the systemic root is not, chain evidence-linked whys with a counterfactual stop and a countermeasure.",
+      "invocationHints": {
+        "disable-model-invocation": true
+      },
+      "revision": "af516cd0dfc97738258030b4ae798a6620295db3eab448e80758ffc45673dafd",
+      "source": "https://github.com/tjboudreaux/cc-thinking-skills",
+      "license": "MIT",
+      "completeness": {
+        "declaredFiles": 3,
+        "status": "present"
+      },
+      "compatibility": {
+        "kind": "instruction-only",
+        "requires": [],
+        "verification": "reviewed"
+      },
+      "files": [
+        {
+          "file": "LICENSE",
+          "digest": "41f47abf7be896c870173738e108e902b49497807a2c8b040c8144bf7128f01c",
+          "bytes": 1069
+        },
+        {
+          "file": "PROVENANCE.md",
+          "digest": "0e67d280518a49ccfe155ac44ab225f131dfd475259acd9b2c8e09ea64388a61",
+          "bytes": 902
+        },
+        {
+          "file": "thinking-five-whys-plus/SKILL.md",
+          "digest": "366f1d0c5e5efec152868aae7d9f0cbffa0064b99fecdf79907f9c41d23fb367",
+          "bytes": 3529
+        }
+      ],
+      "main": "thinking-five-whys-plus/SKILL.md"
+    },
+    {
+      "id": "thinking/thinking-jobs-to-be-done",
+      "collection": "thinking",
+      "name": "thinking-jobs-to-be-done",
+      "description": "Deciding what to build or why adoption fails. Recover the progress users hire a solution for under a circumstance, then rank by outcome and competing workarounds.",
+      "invocationHints": {
+        "disable-model-invocation": true
+      },
+      "revision": "21b18eabeb70c1b456d2d6c2cdbe3241e20d6ac663fa956b72aa5230fb5db44c",
+      "source": "https://github.com/tjboudreaux/cc-thinking-skills",
+      "license": "MIT",
+      "completeness": {
+        "declaredFiles": 3,
+        "status": "present"
+      },
+      "compatibility": {
+        "kind": "instruction-only",
+        "requires": [],
+        "verification": "reviewed"
+      },
+      "files": [
+        {
+          "file": "LICENSE",
+          "digest": "41f47abf7be896c870173738e108e902b49497807a2c8b040c8144bf7128f01c",
+          "bytes": 1069
+        },
+        {
+          "file": "PROVENANCE.md",
+          "digest": "0e67d280518a49ccfe155ac44ab225f131dfd475259acd9b2c8e09ea64388a61",
+          "bytes": 902
+        },
+        {
+          "file": "thinking-jobs-to-be-done/SKILL.md",
+          "digest": "bfeb61a07611a7ba1f4de4bf1807a35f1466aa6bb6ac29f6588eaa861e59929f",
+          "bytes": 3787
+        }
+      ],
+      "main": "thinking-jobs-to-be-done/SKILL.md"
+    },
+    {
+      "id": "thinking/thinking-kepner-tregoe",
+      "collection": "thinking",
+      "name": "thinking-kepner-tregoe",
+      "description": "Use when a selective defect needs IS/IS-NOT difference analysis or a consequential option choice needs must/want weighting and adverse-consequence comparison.",
+      "invocationHints": {
+        "disable-model-invocation": true
+      },
+      "revision": "a3416c62cdebf11aa928d61b74de337152274e1aeb01cd3cf01285398b232322",
+      "source": "https://github.com/tjboudreaux/cc-thinking-skills",
+      "license": "MIT",
+      "completeness": {
+        "declaredFiles": 3,
+        "status": "present"
+      },
+      "compatibility": {
+        "kind": "instruction-only",
+        "requires": [],
+        "verification": "reviewed"
+      },
+      "files": [
+        {
+          "file": "LICENSE",
+          "digest": "41f47abf7be896c870173738e108e902b49497807a2c8b040c8144bf7128f01c",
+          "bytes": 1069
+        },
+        {
+          "file": "PROVENANCE.md",
+          "digest": "0e67d280518a49ccfe155ac44ab225f131dfd475259acd9b2c8e09ea64388a61",
+          "bytes": 902
+        },
+        {
+          "file": "thinking-kepner-tregoe/SKILL.md",
+          "digest": "0e109e099804913df818dc1aa10fe6c17713f0aba40e9e9f1ecac61eab938d41",
+          "bytes": 3649
+        }
+      ],
+      "main": "thinking-kepner-tregoe/SKILL.md"
+    },
+    {
+      "id": "thinking/thinking-lindy-effect",
+      "collection": "thinking",
+      "name": "thinking-lindy-effect",
+      "description": "Use when longevity of a non-perishable option matters. Treat survival duration as a remaining-life prior, then check domain drift before favoring the proven.",
+      "invocationHints": {
+        "disable-model-invocation": true
+      },
+      "revision": "42a81dca20455dba6824d61e612a0332637a712c50f0da1ec507710c8b75cc1a",
+      "source": "https://github.com/tjboudreaux/cc-thinking-skills",
+      "license": "MIT",
+      "completeness": {
+        "declaredFiles": 3,
+        "status": "present"
+      },
+      "compatibility": {
+        "kind": "instruction-only",
+        "requires": [],
+        "verification": "reviewed"
+      },
+      "files": [
+        {
+          "file": "LICENSE",
+          "digest": "41f47abf7be896c870173738e108e902b49497807a2c8b040c8144bf7128f01c",
+          "bytes": 1069
+        },
+        {
+          "file": "PROVENANCE.md",
+          "digest": "0e67d280518a49ccfe155ac44ab225f131dfd475259acd9b2c8e09ea64388a61",
+          "bytes": 902
+        },
+        {
+          "file": "thinking-lindy-effect/SKILL.md",
+          "digest": "82c22f0fdb5d8730c56344814aeb1b122c636ebfce84d158d312612729615338",
+          "bytes": 2605
+        }
+      ],
+      "main": "thinking-lindy-effect/SKILL.md"
+    },
+    {
+      "id": "thinking/thinking-map-territory",
+      "collection": "thinking",
+      "name": "thinking-map-territory",
+      "description": "When a claim, doc, test, metric, or assumption conflicts with observed behavior, stop theorizing from the map and verify the live code or data; let territory overrule.",
+      "invocationHints": {
+        "disable-model-invocation": true
+      },
+      "revision": "7182f30b1545f6dae77f2cb15870b9928e9dd4f022e5e2a28198732fc9561b6b",
+      "source": "https://github.com/tjboudreaux/cc-thinking-skills",
+      "license": "MIT",
+      "completeness": {
+        "declaredFiles": 3,
+        "status": "present"
+      },
+      "compatibility": {
+        "kind": "instruction-only",
+        "requires": [],
+        "verification": "reviewed"
+      },
+      "files": [
+        {
+          "file": "LICENSE",
+          "digest": "41f47abf7be896c870173738e108e902b49497807a2c8b040c8144bf7128f01c",
+          "bytes": 1069
+        },
+        {
+          "file": "PROVENANCE.md",
+          "digest": "0e67d280518a49ccfe155ac44ab225f131dfd475259acd9b2c8e09ea64388a61",
+          "bytes": 902
+        },
+        {
+          "file": "thinking-map-territory/SKILL.md",
+          "digest": "49692f7757be7a869d774dc95c6183fb42aa3d3be2a46080d8fa360fcb34cf49",
+          "bytes": 3338
+        }
+      ],
+      "main": "thinking-map-territory/SKILL.md"
+    },
+    {
+      "id": "thinking/thinking-margin-of-safety",
+      "collection": "thinking",
+      "name": "thinking-margin-of-safety",
+      "description": "When provisioning, setting a limit, or committing an estimate under uncertainty, size a buffer to residual error and the cost of breach—not to the optimistic edge.",
+      "invocationHints": {
+        "disable-model-invocation": true
+      },
+      "revision": "dc1415f22f415c7b98087205b64e879dcc301ac4636989cdb3e212357c14ed8d",
+      "source": "https://github.com/tjboudreaux/cc-thinking-skills",
+      "license": "MIT",
+      "completeness": {
+        "declaredFiles": 3,
+        "status": "present"
+      },
+      "compatibility": {
+        "kind": "instruction-only",
+        "requires": [],
+        "verification": "reviewed"
+      },
+      "files": [
+        {
+          "file": "LICENSE",
+          "digest": "41f47abf7be896c870173738e108e902b49497807a2c8b040c8144bf7128f01c",
+          "bytes": 1069
+        },
+        {
+          "file": "PROVENANCE.md",
+          "digest": "0e67d280518a49ccfe155ac44ab225f131dfd475259acd9b2c8e09ea64388a61",
+          "bytes": 902
+        },
+        {
+          "file": "thinking-margin-of-safety/SKILL.md",
+          "digest": "f71486975e318a1571f291ab089277d12d996f8df0951279ff74129f8429e604",
+          "bytes": 3423
+        }
+      ],
+      "main": "thinking-margin-of-safety/SKILL.md"
+    },
+    {
+      "id": "thinking/thinking-model-combination",
+      "collection": "thinking",
+      "name": "thinking-model-combination",
+      "description": "When one mental model leaves a material blind spot on a multi-domain or high-stakes problem, sequence complementary models with named roles and a conflict rule.",
+      "invocationHints": {
+        "disable-model-invocation": true
+      },
+      "revision": "8dbeee0df752cfd8033a21501e69dcf5a04d52c5d5e9bb24b6a57a86f689282b",
+      "source": "https://github.com/tjboudreaux/cc-thinking-skills",
+      "license": "MIT",
+      "completeness": {
+        "declaredFiles": 3,
+        "status": "present"
+      },
+      "compatibility": {
+        "kind": "instruction-only",
+        "requires": [],
+        "verification": "reviewed"
+      },
+      "files": [
+        {
+          "file": "LICENSE",
+          "digest": "41f47abf7be896c870173738e108e902b49497807a2c8b040c8144bf7128f01c",
+          "bytes": 1069
+        },
+        {
+          "file": "PROVENANCE.md",
+          "digest": "0e67d280518a49ccfe155ac44ab225f131dfd475259acd9b2c8e09ea64388a61",
+          "bytes": 902
+        },
+        {
+          "file": "thinking-model-combination/SKILL.md",
+          "digest": "8c37407d77d1c75985a44822c0f229457475969c762d91b74eefb9a897910848",
+          "bytes": 3612
+        }
+      ],
+      "main": "thinking-model-combination/SKILL.md"
+    },
+    {
+      "id": "thinking/thinking-model-router",
+      "collection": "thinking",
+      "name": "thinking-model-router",
+      "description": "When unsure which thinking skill fits, map domain and problem type, then return NONE or one primary skill by default (at most three complementary).",
+      "invocationHints": {
+        "disable-model-invocation": true
+      },
+      "revision": "905d3ff9d97cf06fc1797d66370d4ea88e8297c2c7a8e70a7f351435f9d2fc21",
+      "source": "https://github.com/tjboudreaux/cc-thinking-skills",
+      "license": "MIT",
+      "completeness": {
+        "declaredFiles": 3,
+        "status": "present"
+      },
+      "compatibility": {
+        "kind": "instruction-only",
+        "requires": [],
+        "verification": "reviewed"
+      },
+      "files": [
+        {
+          "file": "LICENSE",
+          "digest": "41f47abf7be896c870173738e108e902b49497807a2c8b040c8144bf7128f01c",
+          "bytes": 1069
+        },
+        {
+          "file": "PROVENANCE.md",
+          "digest": "0e67d280518a49ccfe155ac44ab225f131dfd475259acd9b2c8e09ea64388a61",
+          "bytes": 902
+        },
+        {
+          "file": "thinking-model-router/SKILL.md",
+          "digest": "b230ab2d3dd4e44d04b031b1a33b1bca3415500b0ba142ff4bbe1cda27422411",
+          "bytes": 6125
+        }
+      ],
+      "main": "thinking-model-router/SKILL.md"
+    },
+    {
+      "id": "thinking/thinking-ooda",
+      "collection": "thinking",
+      "name": "thinking-ooda",
+      "description": "Use under time pressure when the situation is still changing and you must act before certainty — cycle Observe→Orient→Decide→Act on ~70% confidence, then re-observe.",
+      "invocationHints": {
+        "disable-model-invocation": true
+      },
+      "revision": "3cf7ecf07280024adac0b1558974cba413d32e0e3c0c2b5d3e0d3840f37047eb",
+      "source": "https://github.com/tjboudreaux/cc-thinking-skills",
+      "license": "MIT",
+      "completeness": {
+        "declaredFiles": 3,
+        "status": "present"
+      },
+      "compatibility": {
+        "kind": "instruction-only",
+        "requires": [],
+        "verification": "reviewed"
+      },
+      "files": [
+        {
+          "file": "LICENSE",
+          "digest": "41f47abf7be896c870173738e108e902b49497807a2c8b040c8144bf7128f01c",
+          "bytes": 1069
+        },
+        {
+          "file": "PROVENANCE.md",
+          "digest": "0e67d280518a49ccfe155ac44ab225f131dfd475259acd9b2c8e09ea64388a61",
+          "bytes": 902
+        },
+        {
+          "file": "thinking-ooda/SKILL.md",
+          "digest": "b5120a4734a5652dcd14952347f1a6d906460e465fde9c8ffd6a6f842b8b2a29",
+          "bytes": 3193
+        }
+      ],
+      "main": "thinking-ooda/SKILL.md"
+    },
+    {
+      "id": "thinking/thinking-opportunity-cost",
+      "collection": "thinking",
+      "name": "thinking-opportunity-cost",
+      "description": "Before committing scarce time, people, or money, name the best forgone use of those resources and the value delta of the chosen path versus that alternative.",
+      "invocationHints": {
+        "disable-model-invocation": true
+      },
+      "revision": "0e827ad3805f8505512747aa7bcd6c1d9bb54b42286e062de4c252f7c38b2a4c",
+      "source": "https://github.com/tjboudreaux/cc-thinking-skills",
+      "license": "MIT",
+      "completeness": {
+        "declaredFiles": 3,
+        "status": "present"
+      },
+      "compatibility": {
+        "kind": "instruction-only",
+        "requires": [],
+        "verification": "reviewed"
+      },
+      "files": [
+        {
+          "file": "LICENSE",
+          "digest": "41f47abf7be896c870173738e108e902b49497807a2c8b040c8144bf7128f01c",
+          "bytes": 1069
+        },
+        {
+          "file": "PROVENANCE.md",
+          "digest": "0e67d280518a49ccfe155ac44ab225f131dfd475259acd9b2c8e09ea64388a61",
+          "bytes": 902
+        },
+        {
+          "file": "thinking-opportunity-cost/SKILL.md",
+          "digest": "d6a83af92038d1430919370738a05efba329f70d49724d0702ac3e6e90c1c841",
+          "bytes": 3895
+        }
+      ],
+      "main": "thinking-opportunity-cost/SKILL.md"
+    },
+    {
+      "id": "thinking/thinking-pre-mortem",
+      "collection": "thinking",
+      "name": "thinking-pre-mortem",
+      "description": "Before committing to a plan or launch, assume it already failed and reason backward through concrete causes — convert failure paths into mitigations, gates, and stop checks.",
+      "invocationHints": {
+        "disable-model-invocation": true
+      },
+      "revision": "bb55bbafac38b2ad1e9766d59a9d7da179d55f6ec55b5045b12457596aeda7bd",
+      "source": "https://github.com/tjboudreaux/cc-thinking-skills",
+      "license": "MIT",
+      "completeness": {
+        "declaredFiles": 3,
+        "status": "present"
+      },
+      "compatibility": {
+        "kind": "instruction-only",
+        "requires": [],
+        "verification": "reviewed"
+      },
+      "files": [
+        {
+          "file": "LICENSE",
+          "digest": "41f47abf7be896c870173738e108e902b49497807a2c8b040c8144bf7128f01c",
+          "bytes": 1069
+        },
+        {
+          "file": "PROVENANCE.md",
+          "digest": "0e67d280518a49ccfe155ac44ab225f131dfd475259acd9b2c8e09ea64388a61",
+          "bytes": 902
+        },
+        {
+          "file": "thinking-pre-mortem/SKILL.md",
+          "digest": "a38aff195dcdb7b4932bbf12fe4e78d1cd69b9412c15b6aa2e9d855560a2d482",
+          "bytes": 3732
+        }
+      ],
+      "main": "thinking-pre-mortem/SKILL.md"
+    },
+    {
+      "id": "thinking/thinking-probabilistic",
+      "collection": "thinking",
+      "name": "thinking-probabilistic",
+      "description": "Use when forecasting, estimating, or sizing risk — anchor on base rates, give ranges, update prior→likelihood→posterior on evidence, and factor unmeasured quantities into order-of-magnitude bounds.",
+      "invocationHints": {
+        "disable-model-invocation": true
+      },
+      "revision": "ddf8a8b7e666630cbab94769ba16056142527f8c4c5c6396b7d6643057410e2f",
+      "source": "https://github.com/tjboudreaux/cc-thinking-skills",
+      "license": "MIT",
+      "completeness": {
+        "declaredFiles": 3,
+        "status": "present"
+      },
+      "compatibility": {
+        "kind": "instruction-only",
+        "requires": [],
+        "verification": "reviewed"
+      },
+      "files": [
+        {
+          "file": "LICENSE",
+          "digest": "41f47abf7be896c870173738e108e902b49497807a2c8b040c8144bf7128f01c",
+          "bytes": 1069
+        },
+        {
+          "file": "PROVENANCE.md",
+          "digest": "0e67d280518a49ccfe155ac44ab225f131dfd475259acd9b2c8e09ea64388a61",
+          "bytes": 902
+        },
+        {
+          "file": "thinking-probabilistic/SKILL.md",
+          "digest": "e597f111923ea19b59ec5a0831c88f678b21141a6c7d258c7fc76eae5bb32ff5",
+          "bytes": 4516
+        }
+      ],
+      "main": "thinking-probabilistic/SKILL.md"
+    },
+    {
+      "id": "thinking/thinking-red-team",
+      "collection": "thinking",
+      "name": "thinking-red-team",
+      "description": "For authorized security review of code, auth, or APIs you control, model the attacker, map the attack surface, and report only findings with a reproducible exploit path and verified mitigation.",
+      "invocationHints": {
+        "disable-model-invocation": true
+      },
+      "revision": "35f1c391039418119563d7142c8ba6b931619d726796a9eb3bff0ca190a34a42",
+      "source": "https://github.com/tjboudreaux/cc-thinking-skills",
+      "license": "MIT",
+      "completeness": {
+        "declaredFiles": 3,
+        "status": "present"
+      },
+      "compatibility": {
+        "kind": "instruction-only",
+        "requires": [],
+        "verification": "reviewed"
+      },
+      "files": [
+        {
+          "file": "LICENSE",
+          "digest": "41f47abf7be896c870173738e108e902b49497807a2c8b040c8144bf7128f01c",
+          "bytes": 1069
+        },
+        {
+          "file": "PROVENANCE.md",
+          "digest": "0e67d280518a49ccfe155ac44ab225f131dfd475259acd9b2c8e09ea64388a61",
+          "bytes": 902
+        },
+        {
+          "file": "thinking-red-team/SKILL.md",
+          "digest": "f1654bd34e07b37059ac9ab099b635722a45ead513bdc70a0c4c6ef15f9e8908",
+          "bytes": 4154
+        }
+      ],
+      "main": "thinking-red-team/SKILL.md"
+    },
+    {
+      "id": "thinking/thinking-reversibility",
+      "collection": "thinking",
+      "name": "thinking-reversibility",
+      "description": "Before heavy deliberation, classify the decision as cheap or costly to undo; decide two-way doors fast and stage one-way doors to preserve options.",
+      "invocationHints": {
+        "disable-model-invocation": true
+      },
+      "revision": "15f623936dc90e0f8e4a4f5f2258fe1d9722672a3db57da65d047112e98366f5",
+      "source": "https://github.com/tjboudreaux/cc-thinking-skills",
+      "license": "MIT",
+      "completeness": {
+        "declaredFiles": 3,
+        "status": "present"
+      },
+      "compatibility": {
+        "kind": "instruction-only",
+        "requires": [],
+        "verification": "reviewed"
+      },
+      "files": [
+        {
+          "file": "LICENSE",
+          "digest": "41f47abf7be896c870173738e108e902b49497807a2c8b040c8144bf7128f01c",
+          "bytes": 1069
+        },
+        {
+          "file": "PROVENANCE.md",
+          "digest": "0e67d280518a49ccfe155ac44ab225f131dfd475259acd9b2c8e09ea64388a61",
+          "bytes": 902
+        },
+        {
+          "file": "thinking-reversibility/SKILL.md",
+          "digest": "674f597cbc2f5e3cb154fba82400b841cf573f16049c8f0dc43f76b65522946b",
+          "bytes": 3190
+        }
+      ],
+      "main": "thinking-reversibility/SKILL.md"
+    },
+    {
+      "id": "thinking/thinking-scientific-method",
+      "collection": "thinking",
+      "name": "thinking-scientific-method",
+      "description": "When a symptom has several plausible causes, rank falsifiable hypotheses and run the cheapest discriminating observation first; prefer least-assumptive survivors only after evidence fit.",
+      "invocationHints": {
+        "disable-model-invocation": true
+      },
+      "revision": "aca960d58fcf5b7ec4725eff913129c9525dc31188d37eebdc665303cbd4eeed",
+      "source": "https://github.com/tjboudreaux/cc-thinking-skills",
+      "license": "MIT",
+      "completeness": {
+        "declaredFiles": 3,
+        "status": "present"
+      },
+      "compatibility": {
+        "kind": "instruction-only",
+        "requires": [],
+        "verification": "reviewed"
+      },
+      "files": [
+        {
+          "file": "LICENSE",
+          "digest": "41f47abf7be896c870173738e108e902b49497807a2c8b040c8144bf7128f01c",
+          "bytes": 1069
+        },
+        {
+          "file": "PROVENANCE.md",
+          "digest": "0e67d280518a49ccfe155ac44ab225f131dfd475259acd9b2c8e09ea64388a61",
+          "bytes": 902
+        },
+        {
+          "file": "thinking-scientific-method/SKILL.md",
+          "digest": "fc0440edac8f2fc4787d7fd1daa5d465de1115dac1e8e282741908ccaf28026d",
+          "bytes": 4304
+        }
+      ],
+      "main": "thinking-scientific-method/SKILL.md"
+    },
+    {
+      "id": "thinking/thinking-second-order",
+      "collection": "thinking",
+      "name": "thinking-second-order",
+      "description": "When a change has effects past the immediate fix—incentives, scale, feedback—trace consequence chains with timing and probability before committing.",
+      "invocationHints": {
+        "disable-model-invocation": true
+      },
+      "revision": "ac737ed6b24019492628255d9ac2da1bfa00b78b6828dd545fe036c81ff0a3e7",
+      "source": "https://github.com/tjboudreaux/cc-thinking-skills",
+      "license": "MIT",
+      "completeness": {
+        "declaredFiles": 3,
+        "status": "present"
+      },
+      "compatibility": {
+        "kind": "instruction-only",
+        "requires": [],
+        "verification": "reviewed"
+      },
+      "files": [
+        {
+          "file": "LICENSE",
+          "digest": "41f47abf7be896c870173738e108e902b49497807a2c8b040c8144bf7128f01c",
+          "bytes": 1069
+        },
+        {
+          "file": "PROVENANCE.md",
+          "digest": "0e67d280518a49ccfe155ac44ab225f131dfd475259acd9b2c8e09ea64388a61",
+          "bytes": 902
+        },
+        {
+          "file": "thinking-second-order/SKILL.md",
+          "digest": "bd1fe2b01aa56b26c189f75824dcb7fad4fc3cf55de56e422dd32fadb3d27a88",
+          "bytes": 2998
+        }
+      ],
+      "main": "thinking-second-order/SKILL.md"
+    },
+    {
+      "id": "thinking/thinking-socratic",
+      "collection": "thinking",
+      "name": "thinking-socratic",
+      "description": "When a request is vague, assumption-laden, or \"obvious,\" ask the few load-bearing questions that expose hidden requirements before building or committing.",
+      "invocationHints": {
+        "disable-model-invocation": true
+      },
+      "revision": "fd32d10c1de01f67a53831e3849593aaf4a74360c798e652a9b1929d449ff816",
+      "source": "https://github.com/tjboudreaux/cc-thinking-skills",
+      "license": "MIT",
+      "completeness": {
+        "declaredFiles": 3,
+        "status": "present"
+      },
+      "compatibility": {
+        "kind": "instruction-only",
+        "requires": [],
+        "verification": "reviewed"
+      },
+      "files": [
+        {
+          "file": "LICENSE",
+          "digest": "41f47abf7be896c870173738e108e902b49497807a2c8b040c8144bf7128f01c",
+          "bytes": 1069
+        },
+        {
+          "file": "PROVENANCE.md",
+          "digest": "0e67d280518a49ccfe155ac44ab225f131dfd475259acd9b2c8e09ea64388a61",
+          "bytes": 902
+        },
+        {
+          "file": "thinking-socratic/SKILL.md",
+          "digest": "64a510f0b7ad190b2f346571f9fe36fb8b96b53d913cac97b2f7eb094af0b0b8",
+          "bytes": 3410
+        }
+      ],
+      "main": "thinking-socratic/SKILL.md"
+    },
+    {
+      "id": "thinking/thinking-steel-manning",
+      "collection": "thinking",
+      "name": "thinking-steel-manning",
+      "description": "Before rejecting a proposal or reflexively agreeing, build the strongest faithful opposing case, state agreement conditions, then update or reaffirm.",
+      "invocationHints": {
+        "disable-model-invocation": true
+      },
+      "revision": "c84a729458e01f13c44f8f51a7e3690f0a7aaf044df7af096f8f942686e66140",
+      "source": "https://github.com/tjboudreaux/cc-thinking-skills",
+      "license": "MIT",
+      "completeness": {
+        "declaredFiles": 3,
+        "status": "present"
+      },
+      "compatibility": {
+        "kind": "instruction-only",
+        "requires": [],
+        "verification": "reviewed"
+      },
+      "files": [
+        {
+          "file": "LICENSE",
+          "digest": "41f47abf7be896c870173738e108e902b49497807a2c8b040c8144bf7128f01c",
+          "bytes": 1069
+        },
+        {
+          "file": "PROVENANCE.md",
+          "digest": "0e67d280518a49ccfe155ac44ab225f131dfd475259acd9b2c8e09ea64388a61",
+          "bytes": 902
+        },
+        {
+          "file": "thinking-steel-manning/SKILL.md",
+          "digest": "89c1401a53367897909c15d67d2d222ef9648fb616346af4779ffce81154d5c3",
+          "bytes": 3384
+        }
+      ],
+      "main": "thinking-steel-manning/SKILL.md"
+    },
+    {
+      "id": "thinking/thinking-systems",
+      "collection": "thinking",
+      "name": "thinking-systems",
+      "description": "When behavior is emergent across components—fixes elsewhere break, loops/delays dominate—map boundary, stocks/flows, feedback, archetypes, then rank leverage.",
+      "invocationHints": {
+        "disable-model-invocation": true
+      },
+      "revision": "37cacda791df10e64086f6a08622e5922688a1983abc7d110ee4d02983a51444",
+      "source": "https://github.com/tjboudreaux/cc-thinking-skills",
+      "license": "MIT",
+      "completeness": {
+        "declaredFiles": 3,
+        "status": "present"
+      },
+      "compatibility": {
+        "kind": "instruction-only",
+        "requires": [],
+        "verification": "reviewed"
+      },
+      "files": [
+        {
+          "file": "LICENSE",
+          "digest": "41f47abf7be896c870173738e108e902b49497807a2c8b040c8144bf7128f01c",
+          "bytes": 1069
+        },
+        {
+          "file": "PROVENANCE.md",
+          "digest": "0e67d280518a49ccfe155ac44ab225f131dfd475259acd9b2c8e09ea64388a61",
+          "bytes": 902
+        },
+        {
+          "file": "thinking-systems/SKILL.md",
+          "digest": "0c8b5259eded742bbfa1179a3a70bbb4fc230f699a8bbfa9f31519f7b2e75cb7",
+          "bytes": 4462
+        }
+      ],
+      "main": "thinking-systems/SKILL.md"
+    },
+    {
+      "id": "thinking/thinking-theory-of-constraints",
+      "collection": "thinking",
+      "name": "thinking-theory-of-constraints",
+      "description": "When throughput or latency is pipeline-limited, identify the single binding constraint and exploit, subordinate, elevate, then recheck—ignore non-constraints.",
+      "invocationHints": {
+        "disable-model-invocation": true
+      },
+      "revision": "1d8825b5f5bbf51052e9dce5f76ae917d174eaf8ad96f29fa8c23a53b0bd5a93",
+      "source": "https://github.com/tjboudreaux/cc-thinking-skills",
+      "license": "MIT",
+      "completeness": {
+        "declaredFiles": 3,
+        "status": "present"
+      },
+      "compatibility": {
+        "kind": "instruction-only",
+        "requires": [],
+        "verification": "reviewed"
+      },
+      "files": [
+        {
+          "file": "LICENSE",
+          "digest": "41f47abf7be896c870173738e108e902b49497807a2c8b040c8144bf7128f01c",
+          "bytes": 1069
+        },
+        {
+          "file": "PROVENANCE.md",
+          "digest": "0e67d280518a49ccfe155ac44ab225f131dfd475259acd9b2c8e09ea64388a61",
+          "bytes": 902
+        },
+        {
+          "file": "thinking-theory-of-constraints/SKILL.md",
+          "digest": "0a5c64afacbd2112b227cdd788497ed7c19fcfb35f74efce1adb4a18d893f7da",
+          "bytes": 3474
+        }
+      ],
+      "main": "thinking-theory-of-constraints/SKILL.md"
+    },
+    {
+      "id": "thinking/thinking-thought-experiment",
+      "collection": "thinking",
+      "name": "thinking-thought-experiment",
+      "description": "When a real test is too rare, large, or irreversible, run a controlled counterfactual: isolate one variable, fix conditions, trace the mechanistic chain, and bound what the result implies.",
+      "invocationHints": {
+        "disable-model-invocation": true
+      },
+      "revision": "50ef696f3003ecc0c9c6f3b8addd2f6c7f688fbdcc23a211a21fed91e0a4263f",
+      "source": "https://github.com/tjboudreaux/cc-thinking-skills",
+      "license": "MIT",
+      "completeness": {
+        "declaredFiles": 3,
+        "status": "present"
+      },
+      "compatibility": {
+        "kind": "instruction-only",
+        "requires": [],
+        "verification": "reviewed"
+      },
+      "files": [
+        {
+          "file": "LICENSE",
+          "digest": "41f47abf7be896c870173738e108e902b49497807a2c8b040c8144bf7128f01c",
+          "bytes": 1069
+        },
+        {
+          "file": "PROVENANCE.md",
+          "digest": "0e67d280518a49ccfe155ac44ab225f131dfd475259acd9b2c8e09ea64388a61",
+          "bytes": 902
+        },
+        {
+          "file": "thinking-thought-experiment/SKILL.md",
+          "digest": "782ce38969ef05dec63281598ef32f1dab359df9dc8691fe648d0eb5a266c93c",
+          "bytes": 3765
+        }
+      ],
+      "main": "thinking-thought-experiment/SKILL.md"
+    },
+    {
+      "id": "thinking/thinking-triz",
+      "collection": "thinking",
+      "name": "thinking-triz",
+      "description": "When two design requirements seem mutually exclusive, name the contradiction, separate conflicting states, then invent a concrete no-compromise resolution.",
+      "invocationHints": {
+        "disable-model-invocation": true
+      },
+      "revision": "3cd63597867bc7d061e1b3f524729c199da1df3e2a12bddab42aa1bcd18aff48",
+      "source": "https://github.com/tjboudreaux/cc-thinking-skills",
+      "license": "MIT",
+      "completeness": {
+        "declaredFiles": 3,
+        "status": "present"
+      },
+      "compatibility": {
+        "kind": "instruction-only",
+        "requires": [],
+        "verification": "reviewed"
+      },
+      "files": [
+        {
+          "file": "LICENSE",
+          "digest": "41f47abf7be896c870173738e108e902b49497807a2c8b040c8144bf7128f01c",
+          "bytes": 1069
+        },
+        {
+          "file": "PROVENANCE.md",
+          "digest": "0e67d280518a49ccfe155ac44ab225f131dfd475259acd9b2c8e09ea64388a61",
+          "bytes": 902
+        },
+        {
+          "file": "thinking-triz/SKILL.md",
+          "digest": "4bdde5c7aefa08d0e75e83f5344303a1f8135b61fd94198db38403757ef8cb69",
+          "bytes": 3860
+        }
+      ],
+      "main": "thinking-triz/SKILL.md"
+    },
+    {
+      "id": "thinking/thinking-via-negativa",
+      "collection": "thinking",
+      "name": "thinking-via-negativa",
+      "description": "Use when the reflex is to add a feature, layer, or process. Prefer removing harmful or nonessential elements first, with an irreversibility guard before deletion.",
+      "invocationHints": {
+        "disable-model-invocation": true
+      },
+      "revision": "badb328f60bf02297ff3d17300d6cfdc9503798c8e9b451b8b25a9174261c657",
+      "source": "https://github.com/tjboudreaux/cc-thinking-skills",
+      "license": "MIT",
+      "completeness": {
+        "declaredFiles": 3,
+        "status": "present"
+      },
+      "compatibility": {
+        "kind": "instruction-only",
+        "requires": [],
+        "verification": "reviewed"
+      },
+      "files": [
+        {
+          "file": "LICENSE",
+          "digest": "41f47abf7be896c870173738e108e902b49497807a2c8b040c8144bf7128f01c",
+          "bytes": 1069
+        },
+        {
+          "file": "PROVENANCE.md",
+          "digest": "0e67d280518a49ccfe155ac44ab225f131dfd475259acd9b2c8e09ea64388a61",
+          "bytes": 902
+        },
+        {
+          "file": "thinking-via-negativa/SKILL.md",
+          "digest": "538edd051bee63a1bddc1897c94736766d7abbc1d966653e929889cabae2ba12",
+          "bytes": 2949
+        }
+      ],
+      "main": "thinking-via-negativa/SKILL.md"
+    }
+  ]
+}

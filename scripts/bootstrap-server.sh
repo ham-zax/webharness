@@ -66,6 +66,7 @@ if [ "${SERVER_BOOTSTRAP_SKIP_INSTALL:-0}" != "1" ]; then
   npm --prefix "$ROOT/providers/pi-dev" ci --omit=dev
   npm --prefix "$ROOT/providers/terminal" ci --omit=dev
   npm --prefix "$ROOT/providers/local-tools" ci --omit=dev
+  npm --prefix "$ROOT/providers/skill-library" ci --omit=dev
 else
   echo "== skipping provider installation by SERVER_BOOTSTRAP_SKIP_INSTALL =="
 fi

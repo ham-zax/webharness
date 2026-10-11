@@ -12,6 +12,7 @@ Use the guide that matches what you are doing:
 | Start, stop, inspect, restart, or move a deployment | [Operations](operations.md) |
 | Understand the outer Dev/Local split and Local Terminal, Host, and Browser ownership | [Architecture](architecture.md) |
 | Understand the model-facing compatibility contract | [MCP Compatibility](compatibility.md) |
+| Discover portable specialist instructions | [Skill library](skill-library.md) |
 | Choose a trust profile or review authority | [Security](security.md) |
 | Change the repository and run verification | [Development](development.md) |
 | Run the maintained reference qualification | [Acceptance](acceptance.md) |

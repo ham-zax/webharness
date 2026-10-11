@@ -28,6 +28,7 @@ echo "=== Checking documentation links ==="
 node "$ROOT/scripts/check-doc-links.mjs"
 
 echo "=== Checking Skill snapshot ==="
+node "$ROOT/providers/skill-library/cli.mjs" check
 if [ -f "$ROOT/skills/SNAPSHOT_SHA256.txt" ]; then
   bash "$ROOT/scripts/skill-snapshot.sh" check
 fi

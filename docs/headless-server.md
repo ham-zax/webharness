@@ -1,6 +1,6 @@
 # Headless Server
 
-Use the `server` profile for a trusted owner's Linux server. It publishes the same Dev and Local broker surfaces as Personal, but Local contains Terminal and the hidden Dev recovery mirror only. Browser and Host providers, WSLg, and desktop launchers are excluded. Owner-added Local stdio servers remain an explicit capability grant.
+Use the `server` profile for a trusted owner's Linux server. It publishes the same Dev and Local broker surfaces as Personal, but Local contains Terminal, the read-only skill library and the hidden Dev recovery mirror. Browser and Host providers, WSLg, and desktop launchers are excluded. Owner-added Local stdio servers remain an explicit capability grant.
 
 ## Install
 

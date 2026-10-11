@@ -86,6 +86,15 @@ The Local broker starts its inner 1MCP (and therefore every inner provider proce
 
 Local `server="host"` registers `pc_sleep` only for the Personal Workstation composition and uses Windows Task Scheduler for an optional wake time. Repository discovery uses Dev `exec` with `rg` and focused `read`.
 
+## Skill library configuration
+
+Personal and Server templates include the self-contained `skill-library` server.
+Its default policy is `skill-library/policy.json` within the checkout; runtime
+metadata is derived from approved files. No model credentials are required.
+For a standalone alternate library, `MCP_SKILL_POLICY_FILE` selects an operator
+policy file. It is not a model-call parameter or a change to the Local trust
+boundary. See [Skill library](skill-library.md) for updates and skills-only deployment.
+
 ## Rendering
 
 `webharness setup` calls the renderer for you. Direct rendering is also supported:

@@ -473,6 +473,20 @@ test('Linux runner hot-switches from managed Chrome to a Clearcote CDP session',
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'browser-fast-backend-switch-'));
   t.after(async () => { await fs.rm(root, { recursive: true, force: true }); });
   const configFile = path.join(root, 'browser-fast.json');
+  let cdpPort;
+  const cdp = http.createServer((request, response) => {
+    response.setHeader('content-type', 'application/json');
+    if (request.url === '/json/version') {
+      response.end(JSON.stringify({ webSocketDebuggerUrl: `ws://127.0.0.1:${cdpPort}/devtools/browser/fixture` }));
+    } else if (request.url === '/json/list') {
+      response.end('[]');
+    } else {
+      response.writeHead(404).end();
+    }
+  });
+  await new Promise(resolve => cdp.listen(0, '127.0.0.1', resolve));
+  cdpPort = cdp.address().port;
+  t.after(() => new Promise(resolve => cdp.close(resolve)));
   const calls = [];
   const processRunner = async (command, args, options = {}) => {
     calls.push({ command, args, options });
@@ -489,15 +503,15 @@ test('Linux runner hot-switches from managed Chrome to a Clearcote CDP session',
 
   await fs.writeFile(configFile, JSON.stringify({ version: 1, linux: { browser: 'chrome' } }));
   await runner.linuxBatch([['tab', 'list']]);
-  await fs.writeFile(configFile, JSON.stringify({ version: 1, linux: { browser: 'clearcote', cdpPort: 9222 } }));
+  await fs.writeFile(configFile, JSON.stringify({ version: 1, linux: { browser: 'clearcote', cdpPort } }));
   await runner.linuxBatch([['tab', 'list']]);
 
   assert.equal(calls.length, 2);
   assert.equal(calls[0].args.includes('mcp-browser-fast-linux'), true);
   assert.equal(calls[0].args.includes('--cdp'), false);
   assert.equal(calls[0].options.env.AGENT_BROWSER_EXECUTABLE_PATH, '/usr/bin/google-chrome');
-  assert.equal(calls[1].args.includes('mcp-browser-fast-linux-clearcote-9222'), true);
-  assert.deepEqual(calls[1].args.slice(calls[1].args.indexOf('--cdp'), calls[1].args.indexOf('--cdp') + 2), ['--cdp', '9222']);
+  assert.equal(calls[1].args.includes(`mcp-browser-fast-linux-clearcote-${cdpPort}`), true);
+  assert.deepEqual(calls[1].args.slice(calls[1].args.indexOf('--cdp'), calls[1].args.indexOf('--cdp') + 2), ['--cdp', String(cdpPort)]);
   assert.equal(calls[1].options.env.AGENT_BROWSER_EXECUTABLE_PATH, undefined);
   assert.equal(calls[1].options.env.AGENT_BROWSER_PROFILE, undefined);
 });

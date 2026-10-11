@@ -43,7 +43,7 @@ if (local) {
 
   const inner = JSON.parse(fs.readFileSync(env.MCP_LOCAL_INNER_CONFIG, 'utf8'));
   const innerNames = Object.keys(inner.mcpServers ?? {}).sort();
-  for (const required of ['browser-devtools', 'browser-fast', 'browser-jev', 'terminal', 'host', 'dev']) {
+  for (const required of ['browser-devtools', 'browser-fast', 'browser-jev', 'terminal', 'host', 'dev', 'skill-library']) {
     if (!innerNames.includes(required)) throw new Error(`Local inner provider set is missing required server: ${required}`);
   }
   if (env.MCP_LOCAL_FALLBACK_ONLY_SERVERS !== 'dev') throw new Error('only Dev may be fallback-only in personal Local');
@@ -86,7 +86,7 @@ if (local) {
   if (fast.tags !== undefined) throw new Error('inner Browser Fast provider must not carry an outer OAuth tag');
   const fastPkg = JSON.parse(fs.readFileSync(path.join(repoRoot, 'providers', 'browser-fast', 'package.json'), 'utf8'));
   if (fastPkg.dependencies?.['@modelcontextprotocol/sdk'] !== '1.30.0') throw new Error('unexpected Browser Fast MCP SDK pin');
-  if (fastPkg.dependencies?.['agent-browser'] !== '0.35.0') throw new Error('unexpected Browser Fast Agent Browser pin');
+  if (fastPkg.dependencies?.['agent-browser'] !== '0.38.2') throw new Error('unexpected Browser Fast Agent Browser pin');
   if (fastPkg.dependencies?.zod !== '4.4.3') throw new Error('unexpected Browser Fast zod pin');
 
   const jev = inner.mcpServers['browser-jev'];

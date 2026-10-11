@@ -109,6 +109,15 @@ The Local broker owns stable logical `{server, tool}` routing and connects over 
 
 The private inner 1MCP contains the built-in `terminal`, `host`, `browser-fast`, `browser-jev`, and `browser-devtools` servers, owner-configured Local servers, and one fallback-only mirror of outer Dev. It enables only its internal reload management action for broker-owned recovery; the reserved `1mcp` namespace remains rejected and filtered from model routes. If a public configured server is absent during scoped discovery/schema/batch preflight, Local performs one coalesced targeted reload and verifies that tools reappear. A failed direct `tool_call` or `fallback_dispatch` is never automatically replayed: if Local proves the selected server disappeared, it may recover the backend but returns a retry-required error because the original action's side-effect outcome could be ambiguous. Owner-configured stdio MCPs are rendered with 1MCP `restartOnExit: true` by default, with an explicit `false` opt-out, so ordinary post-start crashes are handled by the native supervisor before broker recovery is needed.
 
+### Skill library
+
+Personal and Server include `server="skill-library"` with `find_skills` and
+`read_skill`. The native provider owns explicit file policy, generated metadata,
+local BM25 and bounded UTF-8 reads. `skill-library/` contains portable source
+packs, licenses and provenance; existing snapshots are separate. Revisions cover
+all declared readable dependencies. Local retains routing/lifecycle ownership
+and its five-tool ABI. See [Skill library](skill-library.md).
+
 ### Browser
 
 The Local inner 1MCP publishes two browser surfaces in the same `tag:local` trust domain:

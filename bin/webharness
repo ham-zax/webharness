@@ -16,6 +16,7 @@ Usage:
   webharness restart [--wait] [--timeout SECONDS]
   webharness status
   webharness extension list|install|remove ...
+  webharness skills find|read|check|compile|export ...
   webharness help
 EOF
 }
@@ -219,6 +220,9 @@ case "$COMMAND" in
   extension)
     [ "$#" -gt 0 ] || { usage >&2; exit 2; }
     exec "$ROOT/bin/extension" "$@"
+    ;;
+  skills)
+    exec node "$ROOT/providers/skill-library/cli.mjs" "$@"
     ;;
   help|-h|--help)
     usage

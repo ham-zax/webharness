@@ -22,6 +22,7 @@ Dev       read edit write import_file file_ops review_changes wait exec bash
 Local     tool_list tool_schema tool_call fallback_dispatch tool_batch
             |-- terminal          durable PTY/session control
             |-- host              pc_sleep
+            |-- skill-library     find_skills / read_skill
             |-- browser-fast      observe / execute
             `-- browser-devtools  Chrome DevTools diagnostics
 ```
@@ -90,6 +91,11 @@ webharness status
 `doctor` is non-mutating. `setup` qualifies dependencies and renders configuration. `--enable-startup` is an explicit consent boundary: without it, setup does not enable user linger or persistent services.
 
 Machine-specific owner policy stays outside the checkout under operator-controlled paths referenced by `MCP_OWNER_CONTEXT_FILE` and `MCP_OWNER_ENV_FILE`. The repository also cannot silently install or replace ChatGPT Skills or client authorization.
+
+The native [skill library](docs/skill-library.md) ships 28 MIT-licensed thinking
+skills as ordinary files, with description discovery and revision-verified reads
+through Local. No JevShelf, Skillshare or hosted model is required. Access policy
+is explicit and metadata is generated; the retained `skills/` snapshot is separate.
 
 Generated configuration and OAuth/session state live outside Git by default:
 

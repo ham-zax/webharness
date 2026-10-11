@@ -1,6 +1,10 @@
 {
   "version": "1.0.0",
   "mcpServers": {
+    "skill-library": {
+      "command": "node",
+      "args": ["__REPO_ROOT__/providers/skill-library/server.mjs"]
+    },
     "terminal": {
       "command": "node",
       "args": [
