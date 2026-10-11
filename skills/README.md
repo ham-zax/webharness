@@ -13,25 +13,28 @@ This directory tracks the Skills that were exposed or invoked in ChatGPT and kee
 7. `frontend-design`
 8. `job-application`
 9. `lateral-thinking`
-10. `learning-os-teacher`
-11. `lingua-os-teacher`
-12. `mcp-harness-router`
-13. `pdfs`
-14. `persistent-agent-loop`
-15. `ponytail`
-16. `reflexion`
-17. `skill-creator`
-18. `slides`
-19. `spreadsheets`
-20. `systematic-debugging`
-21. `writing-plans`
-22. `x-content`
+10. `lingua-os-teacher`
+11. `mcp-harness-router`
+12. `pdfs`
+13. `persistent-agent-loop`
+14. `ponytail`
+15. `reflexion`
+16. `skill-creator`
+17. `slides`
+18. `spreadsheets`
+19. `systematic-debugging`
+20. `writing-plans`
+21. `x-content`
 
 ## Provenance
 
-The current ChatGPT runtime is the sole upstream for the 22 skill directories listed above. On an explicit synchronization request, each complete `/home/oai/skills/<name>` directory is copied byte-for-byte into `skills/<name>`, including helper scripts, references, binary assets, and executable modes. Downstream-only first-level skill directories are removed in the same synchronization so the repository skill set matches the session skill set exactly.
+The current ChatGPT runtime is the sole upstream for the 21 skill directories listed above. On an explicit synchronization request, each complete `/home/oai/skills/<name>` directory is copied byte-for-byte into `skills/<name>`, including helper scripts, references, binary assets, and executable modes. Downstream-only first-level skill directories are removed in the same synchronization so the repository skill set matches the session skill set exactly.
 
 `README.md` and `SNAPSHOT_SHA256.txt` are repository snapshot metadata, not upstream skill payloads. No skill-specific files are synthesized, omitted, or locally patched during synchronization.
+
+## Not mirrored here
+
+`learning-os-teacher` is intentionally not part of this snapshot. Its source of truth is the Learning OS repository (`skills/learning-os-teacher/`), which web and CLI sessions read directly. A copy here would go stale and nothing loads it.
 
 ## Validation
 
