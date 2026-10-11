@@ -12,6 +12,7 @@ import { defaultBrowserTarget, resolveLinuxBrowserBackend } from './browser-back
 import { ManagedClearcoteRuntime } from './clearcote-runtime.mjs';
 import { resolveBrowserMemory } from './browser-memory.mjs';
 import { readTargetInfo } from './target-info.mjs';
+import { readExternalCdpPages, ownedBootstrapPage, closeExternalOwnedPage } from './external-pinned-session.mjs';
 
 export const AGENT_BROWSER_VERSION = '0.38.2';
 export const DEFAULT_SESSION_PREFIX = 'mcp-browser-fast';
@@ -267,6 +268,9 @@ export class AgentBrowserRunner {
     this.clearcoteRuntime = clearcoteRuntime;
     this.windowsAgentRuntimePromise = null;
     this.linuxSessions = new Map();
+    this.externalPinnedReady = new Map();
+    this.externalDefaultOwned = new Map();
+    this.externalDefaultInspected = new Set();
     this.clearcoteClaims = new Map();
     this.clearcoteAllocationTails = new Map();
   }
@@ -562,6 +566,48 @@ export class AgentBrowserRunner {
     return { items, stderr: stderr.join('\n'), exitCode };
   }
 
+  async ensureExternalPinnedSession(selected, session, sessionTab) {
+    // Managed Clearcote owns its context. External CDP 9222 is a separate,
+    // shared Chrome process: creating a pinned Agent Browser session silently
+    // adds an about:blank page that `agent-browser close` does not remove.
+    // Initialize on the explicitly selected tab and reclaim ONLY the blank
+    // target proven to have been allocated by this very session.
+    if (selected.managed === true || !/^\d{2,5}$/.test(String(selected.cdp || ''))
+        || !/^[a-f0-9]{32}$/i.test(String(sessionTab || ''))) return;
+    const previous = this.externalPinnedReady.get(session);
+    if (previous) return previous;
+    const initialization = (async () => {
+      const before = await readExternalCdpPages(selected.cdp);
+      const first = await this.linuxAgentBatch({ ...selected, session }, [['tab', 'list']], { bail: true });
+      const listing = first.items?.[0];
+      if (listing?.success !== true) throw fastError('BROWSER_FAST_PIN_INIT_FAILED', listing?.error || 'initial tab listing failed');
+      const active = (listing.result?.tabs || []).find(tab => tab.active === true)?.targetId;
+      const after = await readExternalCdpPages(selected.cdp);
+      const blank = ownedBootstrapPage({ before, after, activeTargetId: active, selectedTargetId: sessionTab });
+      try {
+        const selectedTab = await this.linuxAgentBatch({ ...selected, session }, [['tab', sessionTab]], { bail: true });
+        if (selectedTab.items?.[0]?.success !== true) {
+          throw fastError('BROWSER_FAST_PIN_INIT_FAILED', selectedTab.items?.[0]?.error || 'could not bind pre-existing tab');
+        }
+      } finally {
+        if (blank) {
+          const current = await readExternalCdpPages(selected.cdp);
+          if (current.websocket !== before.websocket || current.pages.get(blank) !== 'about:blank') {
+            throw fastError('BROWSER_FAST_PIN_INIT_UNCERTAIN', 'session bootstrap tab changed; refusing unverified cleanup');
+          }
+          await closeExternalOwnedPage(before.websocket, blank);
+          const verified = await readExternalCdpPages(selected.cdp);
+          if (verified.pages.has(blank)) throw fastError('BROWSER_FAST_PIN_INIT_UNCERTAIN', 'session bootstrap tab remains after exact cleanup');
+        }
+      }
+    })().catch(error => {
+      this.externalPinnedReady.delete(session);
+      throw error;
+    });
+    this.externalPinnedReady.set(session, initialization);
+    return initialization;
+  }
+
   async linuxBatch(commands, { bail = true, browserBackend, browserProfile, sessionTab } = {}) {
     const selected = await this.linuxBackendResolve({ browser: browserBackend, profile: browserProfile });
     const session = this.linuxSession(selected, sessionTab);
@@ -571,7 +617,28 @@ export class AgentBrowserRunner {
       const result = await this.managedLinuxBatch(backend, commands, { bail });
       return { ...result, browserBackend: selected.browser, browserProfile: selected.profileName };
     }
+    await this.ensureExternalPinnedSession(selected, session, sessionTab);
+    let initialInventory;
+    const checkDefault = sessionTab === undefined && /^\d{2,5}$/.test(String(selected.cdp || ''))
+      && !this.externalDefaultInspected.has(session);
+    if (checkDefault) {
+      this.externalDefaultInspected.add(session);
+      initialInventory = await readExternalCdpPages(selected.cdp);
+    }
     const result = await this.linuxAgentBatch({ ...selected, session }, commands, { bail });
+    if (initialInventory) {
+      try {
+        const later = await readExternalCdpPages(selected.cdp);
+        const initialPage = result.items?.[0]?.result?.tabs?.find(t => t.active === true)?.targetId;
+        const added = [...later.pages].filter(([id]) => !initialInventory.pages.has(id));
+        if (later.websocket === initialInventory.websocket && added.length === 1
+          && added[0][0] === initialPage && added[0][1] === 'about:blank') {
+          this.externalDefaultOwned.set(session, {
+            port: selected.cdp, websocket: initialInventory.websocket, targetId: initialPage,
+          });
+        }
+      } catch {} // No speculative ownership when provider discovery is incomplete.
+    }
     return { ...result, browserBackend: selected.browser, browserProfile: selected.profileName ?? null };
   }
 
@@ -700,11 +767,22 @@ export class AgentBrowserRunner {
   async close() {
     const sessions = [...this.linuxSessions];
     this.linuxSessions.clear();
+    this.externalPinnedReady.clear();
+    const defaultOwned = [...this.externalDefaultOwned.values()];
+    this.externalDefaultOwned.clear();
+    this.externalDefaultInspected.clear();
     await Promise.all(sessions.map(([session, env]) => this.processRunner(process.execPath, [
       AGENT_BROWSER_JS,
       '--session', session,
       'close'
     ], { env, acceptNonZero: true }).catch(() => {})));
+    for (const owned of defaultOwned) {
+      try {
+        const current = await readExternalCdpPages(owned.port);
+        if (current.websocket !== owned.websocket || current.pages.get(owned.targetId) !== 'about:blank') continue;
+        await closeExternalOwnedPage(owned.websocket, owned.targetId);
+      } catch {} // Never close other clients' tabs on ambiguous state.
+    }
     await this.clearcoteRuntime.close();
   }
 }
