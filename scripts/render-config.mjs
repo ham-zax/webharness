@@ -6,6 +6,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { loadJevConfig } from '../providers/skill-library/jev-config.mjs';
 
 function usage() {
   return `Usage: scripts/render-config.mjs --profile <restricted|trusted-dev|personal|server> [options]\n\nOptions:\n  --check           Validate without writing generated state\n  --env-file PATH   Deployment env file (default: <repo>/.env)\n  --state-dir PATH  Persistent state root\n  --repo-root PATH  Repository root override\n  --help            Show this help\n`;
@@ -254,7 +255,7 @@ export async function renderConfig(options) {
   const deployment = {
     ...(await readEnvFile(envFile, { optional: true })),
     ...Object.fromEntries(
-      ['MCP_WORKSPACE_ROOT', 'MCP_PUBLIC_URL', 'MCP_TUNNEL_NAME', 'MCP_DEV_MAX_OUTPUT_BYTES', 'MCP_DEV_READ_DEFAULT_LINES', 'MCP_DEV_IMPORT_MAX_BYTES', 'MCP_DEV_MAX_SPOOL_BYTES', 'MCP_DEV_SPOOL_TTL_SECONDS', 'MCP_DEV_SPOOL_MAX_TOTAL_BYTES', 'MCP_ONE_MCP_PORT', 'MCP_ONE_MCP_LOG_MAX_SIZE_BYTES', 'MCP_ONE_MCP_LOG_MAX_FILES', 'MCP_PERSONAL_DEFAULT_CWD', 'MCP_TERMINAL_FRONTEND', 'MCP_OWNER_CONTEXT_FILE', 'MCP_OWNER_ENV_FILE', 'MCP_BROWSER_JEV_ENV_FILE', 'MCP_LOCAL_SERVERS_FILE', 'BRIDGE_ONE_MCP_ENTRY', 'BRIDGE_COLD_START', 'BRIDGE_BACKEND_PORT', 'BRIDGE_WAKE_IDLE_MS', 'MCP_LOCAL_INNER_IDLE_MS', 'MCP_DEV_WORKER_IDLE_MS', 'MCP_LIFECYCLE_LEASE_DIR'].filter((key) => process.env[key] !== undefined).map((key) => [key, process.env[key]]),
+      ['MCP_WORKSPACE_ROOT', 'MCP_PUBLIC_URL', 'MCP_TUNNEL_NAME', 'MCP_DEV_MAX_OUTPUT_BYTES', 'MCP_DEV_READ_DEFAULT_LINES', 'MCP_DEV_IMPORT_MAX_BYTES', 'MCP_DEV_MAX_SPOOL_BYTES', 'MCP_DEV_SPOOL_TTL_SECONDS', 'MCP_DEV_SPOOL_MAX_TOTAL_BYTES', 'MCP_ONE_MCP_PORT', 'MCP_ONE_MCP_LOG_MAX_SIZE_BYTES', 'MCP_ONE_MCP_LOG_MAX_FILES', 'MCP_PERSONAL_DEFAULT_CWD', 'MCP_TERMINAL_FRONTEND', 'MCP_OWNER_CONTEXT_FILE', 'MCP_OWNER_ENV_FILE', 'MCP_BROWSER_JEV_ENV_FILE', 'MCP_SKILL_JEV_ENABLED', 'MCP_SKILL_JEV_ENV_FILE', 'MCP_LOCAL_SERVERS_FILE', 'BRIDGE_ONE_MCP_ENTRY', 'BRIDGE_COLD_START', 'BRIDGE_BACKEND_PORT', 'BRIDGE_WAKE_IDLE_MS', 'MCP_LOCAL_INNER_IDLE_MS', 'MCP_DEV_WORKER_IDLE_MS', 'MCP_LIFECYCLE_LEASE_DIR'].filter((key) => process.env[key] !== undefined).map((key) => [key, process.env[key]]),
     ),
   };
   const profileValues = await readEnvFile(path.join(repoRoot, 'config', 'profiles', `${profile}.env`));
@@ -267,6 +268,15 @@ export async function renderConfig(options) {
   const isPersonal = profile === 'personal';
   const isServer = profile === 'server';
   const isLocal = isPersonal || isServer;
+  const skillJevEnabled = String(deployment.MCP_SKILL_JEV_ENABLED ?? '0');
+  const skillJevEnvFile = String(deployment.MCP_SKILL_JEV_ENV_FILE ?? '').trim();
+  if (isLocal) {
+    if (!['0', '1'].includes(skillJevEnabled)) throw new Error('MCP_SKILL_JEV_ENABLED must be 0 or 1');
+    if (skillJevEnabled === '1') {
+      if (!skillJevEnvFile) throw new Error('MCP_SKILL_JEV_ENV_FILE is required when Jev selection is enabled in Local');
+      await loadJevConfig({ MCP_SKILL_JEV_ENABLED: '1', MCP_SKILL_JEV_ENV_FILE: skillJevEnvFile });
+    }
+  }
   let personalDefaultCwd = null;
   let terminalFrontend = 'kitty';
   let ownerContextFile = null;
@@ -433,6 +443,8 @@ export async function renderConfig(options) {
     __LOCAL_INNER_CONFIG__: localInnerConfigPath,
     __ONE_MCP_ENTRY__: oneMcpEntry,
     __BROWSER_JEV_ENV_FILE__: browserJevEnvFile,
+    __SKILL_JEV_ENABLED__: skillJevEnabled,
+    __SKILL_JEV_ENV_FILE__: skillJevEnvFile,
   };
   const templateName = isPersonal ? 'mcp-personal.json' : isServer ? 'mcp-server.json' : 'mcp.json';
   const template = JSON.parse(await fs.readFile(path.join(repoRoot, 'config', 'templates', templateName), 'utf8'));

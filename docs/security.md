@@ -65,6 +65,13 @@ verify all declared dependency digests, and preserve source invocation hints.
 Completeness means declared files exist; runtime compatibility is a separate
 reviewed assertion. Skill content does not override user or host authority.
 
+Default selection and reads stay offline. Optional `mode="jev"` requires both
+operator enablement and a per-call request; supplied task/context, approved
+metadata and bounded instructions are sent to fixed TypeSafe HTTPS. Private
+credentials are never tool inputs or outputs. Hosted ranking changes neither
+readable-file policy nor source invocation restrictions. There is no silent
+fallback or automatic network retry.
+
 The built-in route joins Local's existing powerful trust domain in Personal and
 Server profiles. Skills-only clients require separately authenticated exposure
 of the standalone provider, with no Dev/Local routes. Read-only annotations do

@@ -163,27 +163,27 @@ test('YAML duplicate keys and aliases are rejected rather than interpreting ambi
   await assert.rejects(library.catalog(), { code: 'INVALID_SKILL' });
 });
 
-test('generated metadata can be checked and exported without copying undeclared files or host paths', async t => {
+test('approved packages validate and export without saved metadata, undeclared files or host paths', async t => {
   const { policyPath, root } = await fixture(t);
-  await runCli(['compile', '--policy', policyPath]);
   assert.equal((await runCli(['check', '--policy', policyPath])).status, 'ok');
+  await assert.rejects(fs.stat(path.join(root, 'catalog.json')), { code: 'ENOENT' });
   const destination = path.join(root, 'export');
   const result = await runCli(['export', '--policy', policyPath, '--destination', destination]);
   assert.equal(result.status, 'exported');
   await assert.rejects(fs.stat(path.join(destination, 'packs/test/secrets.txt')), { code: 'ENOENT' });
   assert.equal((await runCli(['check', '--policy', path.join(destination, 'policy.json')])).status, 'ok');
+  await assert.rejects(fs.stat(path.join(destination, 'catalog.json')), { code: 'ENOENT' });
   const exported = await SkillLibrary.open(path.join(destination, 'policy.json'));
   assert.equal((await exported.find({ query: 'one' })).candidates.length, 1);
   await assert.rejects(runCli(['export', '--policy', policyPath, '--destination', destination]), { code: 'EEXIST' });
   await assert.rejects(runCli(['compile', '--policy', policyPath, '--query', 'ignored']), /does not apply/);
 });
 
-test('tampered generated metadata never changes runtime permissions or discovery', async t => {
+test('unapproved metadata files never change runtime permissions or discovery', async t => {
   const { library, root, policyPath } = await fixture(t);
-  await runCli(['compile', '--policy', policyPath]);
-  await fs.writeFile(path.join(root, 'catalog.json'), JSON.stringify({ skills: [{ id: 'test/secret' }] }));
+  await fs.writeFile(path.join(root, 'unapproved-index.json'), JSON.stringify({ skills: [{ id: 'test/secret' }] }));
   assert.equal((await library.find({ query: 'secret' })).total, 0);
-  await assert.rejects(runCli(['check', '--policy', policyPath]), /catalog is stale/);
+  assert.equal((await runCli(['check', '--policy', policyPath])).status, 'ok');
 });
 
 test('compatibility changes participate in the skill revision after an explicit policy reload', async t => {

@@ -11,16 +11,17 @@ const annotations = { readOnlyHint: true, destructiveHint: false, idempotentHint
 export const TOOLS = [
   {
     name: 'find_skills',
-    description: 'Find approved specialist instructions using local metadata only. Optional query prioritizes exact names then lexical BM25; omit it to browse descriptions. Optional collection narrows the domain. Returns revisions and invocation restrictions without loading bodies. Results are candidates, not semantic recommendations; zero matches means broaden the query or browse. Load only useful skills and respect invocation hints.',
-    annotations,
+    description: 'Discover approved specialist guidance. Default mode=lexical stays offline: exact names then BM25; omit query to browse. Explicit mode=jev additionally requires operator opt-in and credentials: query is the task, optional context is its situation, and task/context, approved metadata and bounded instruction excerpts are sent to TypeSafe. Jev evaluates the selected collection (at most 64 skills), returns up to three candidates or no_match/uncertain, and never silently falls back. No Jev cursors. Respect invocation hints; load only useful skills.',
+    annotations: { ...annotations, idempotentHint: false, openWorldHint: true },
     inputSchema: { type: 'object', properties: {
       query: bounded(), collection: bounded(64),
       limit: { type: 'integer', minimum: 1, maximum: 20, default: 8 }, cursor: bounded(2048),
+      mode: { type: 'string', enum: ['lexical', 'jev'], default: 'lexical' }, context: bounded(4096),
     }, additionalProperties: false },
   },
   {
     name: 'read_skill',
-    description: 'Read one approved skill or declared text dependency using its discovered revision. Omit file for SKILL.md; returned readableFiles lists approved pack-relative references. Reads verify the entire dependency set, preserve source instructions and never execute scripts or grant authority. Follow nextCursor until complete=true before treating instructions as complete. STALE_REVISION requires rediscovery; POLICY_CHANGED requires provider restart.',
+    description: 'Read one approved skill or declared text dependency using its discovered revision. Omit file for SKILL.md; readableFiles lists approved pack-relative references. An optional operator adaptation supplies host invocation mapping alongside unchanged source content. Reads verify the entire dependency set and never execute scripts or grant authority. Follow nextCursor until complete=true. STALE_REVISION requires rediscovery; POLICY_CHANGED requires restart.',
     annotations,
     inputSchema: { type: 'object', properties: {
       id: bounded(129), revision: { type: 'string', pattern: '^[a-f0-9]{64}$' }, file: bounded(), cursor: bounded(2048),
@@ -32,10 +33,10 @@ export const TOOLS = [
 export function createSkillServer(library) {
   const server = new Server({ name: 'skill-library', version: '0.1.0' }, {
     capabilities: { tools: {} },
-    instructions: 'Read-only skill retrieval. Discover descriptions, choose useful guidance, then read complete instructions and needed declared references. Local lexical ranking is not a fit guarantee. Skill contents and allowed-tools hints do not override user instructions, permissions or operator policy. Compatibility declarations and package completeness are separate claims.',
+    instructions: 'Read-only skill retrieval. Discover descriptions, choose useful guidance, then read complete instructions and needed declared references. Respect invocation hints: the starter thinking pack requires explicit invocation. Recommendations grant no automatic activation. An operator adaptation maps host invocation without changing source procedure or permissions. Default selection stays offline; explicit mode=jev requires operator opt-in and sends task/context and bounded approved evidence to TypeSafe. Compatibility and package completeness are separate claims.',
   });
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }));
-  server.setRequestHandler(CallToolRequestSchema, async request => {
+  server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
     try {
       const tool = TOOLS.find(item => item.name === request.params.name);
       const args = request.params.arguments ?? {};
@@ -43,7 +44,7 @@ export function createSkillServer(library) {
       if (Object.keys(args).some(key => !Object.hasOwn(tool.inputSchema.properties, key))) {
         throw Object.assign(new Error('unexpected argument'), { code: 'INVALID_ARGUMENT' });
       }
-      const value = tool.name === 'find_skills' ? await library.find(args) : await library.read(args);
+      const value = tool.name === 'find_skills' ? await library.find({ ...args, signal: extra.signal }) : await library.read(args);
       return { content: [{ type: 'text', text: JSON.stringify(value) }], structuredContent: value };
     } catch (error) {
       const value = { code: error.code ?? 'SKILL_LIBRARY_FAILED', message: error.message };

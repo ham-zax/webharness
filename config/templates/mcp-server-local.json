@@ -3,7 +3,11 @@
   "mcpServers": {
     "skill-library": {
       "command": "node",
-      "args": ["__REPO_ROOT__/providers/skill-library/server.mjs"]
+      "args": ["__REPO_ROOT__/providers/skill-library/server.mjs"],
+      "env": {
+        "MCP_SKILL_JEV_ENABLED": "__SKILL_JEV_ENABLED__",
+        "MCP_SKILL_JEV_ENV_FILE": "__SKILL_JEV_ENV_FILE__"
+      }
     },
     "terminal": {
       "command": "node",

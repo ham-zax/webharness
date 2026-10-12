@@ -178,14 +178,19 @@
         {
           "id": "thinking-model-router",
           "directory": "thinking-model-router",
+          "adaptation": "thinking-model-router/WEBHARNESS.md",
           "readable": [
             "thinking-model-router/SKILL.md",
+            "thinking-model-router/WEBHARNESS.md",
             "LICENSE",
             "PROVENANCE.md"
           ],
           "compatibility": {
-            "kind": "instruction-only",
-            "requires": [],
+            "kind": "requires-tools",
+            "requires": [
+              "skill-library.find_skills",
+              "skill-library.read_skill"
+            ],
             "verification": "reviewed"
           }
         },

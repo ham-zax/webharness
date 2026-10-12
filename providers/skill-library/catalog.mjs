@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { parseDocument } from 'yaml';
-import { digest, failure, MAX_SET_BYTES, readApproved, utf8 } from './files.mjs';
+import { digest, failure, MAX_SET_BYTES, readApprovedEntry, utf8 } from './files.mjs';
 
 function metadata(bytes, expectedName) {
   const text = utf8(bytes).replace(/\r\n/g, '\n');
@@ -34,42 +34,46 @@ function metadata(bytes, expectedName) {
   return { name: data.name, description: data.description.trim(), invocationHints: hints };
 }
 
-export async function inspectSkill(pack, skill) {
+export async function inspectSkill(pack, skill, signal) {
   const files = [];
   const contents = new Map();
   let bytes = 0;
   for (const file of skill.readable) {
-    const raw = await readApproved(pack.root, file);
+    const { bytes: raw, executeBits } = await readApprovedEntry(pack.root, file, undefined, signal);
     utf8(raw);
     bytes += raw.length;
     if (bytes > MAX_SET_BYTES) throw failure('SET_TOO_LARGE', 'readable dependency set exceeds 16 MiB');
-    files.push({ file, digest: digest(raw), bytes: raw.length });
+    files.push({ file, digest: digest(raw), bytes: raw.length, executeBits });
     contents.set(file, raw);
   }
   const meta = metadata(contents.get(skill.main), path.posix.basename(skill.directory));
+  if (skill.adaptation && contents.get(skill.adaptation).length > 4096) {
+    throw failure('ADAPTATION_TOO_LARGE', 'host adaptation must fit within 4 KiB');
+  }
   if (Buffer.byteLength(JSON.stringify(files)) > 8192) {
     throw failure('DEPENDENCY_METADATA_TOO_LARGE', 'readable file metadata exceeds 8 KiB; narrow the declared dependency set');
   }
   // Policy mappings and all readable bytes participate, not just SKILL.md.
   const revision = digest(JSON.stringify({
     pack: pack.id, source: pack.source, license: pack.license,
-    id: skill.id, directory: skill.directory, compatibility: skill.compatibility, files,
+    id: skill.id, directory: skill.directory, compatibility: skill.compatibility, adaptation: skill.adaptation ?? null, files,
   }));
   const card = {
     id: `${pack.id}/${skill.id}`, collection: pack.id, ...meta, revision,
     source: pack.source, license: pack.license,
     completeness: { declaredFiles: files.length, status: 'present' },
     compatibility: skill.compatibility,
+    ...(skill.adaptation ? { adaptation: skill.adaptation } : {}),
   };
   return { card, files, contents, main: skill.main };
 }
 
-export async function compileCatalog(policy) {
+export async function compileCatalog(policy, signal) {
   const skills = [];
   let bytes = 0;
   for (const pack of policy.packs) {
     for (const skill of pack.skills) {
-      const inspected = await inspectSkill(pack, skill);
+      const inspected = await inspectSkill(pack, skill, signal);
       bytes += inspected.files.reduce((sum, file) => sum + file.bytes, 0);
       if (bytes > 64 * 1024 * 1024) throw failure('CATALOG_TOO_LARGE', 'catalog readable content exceeds 64 MiB');
       skills.push({ ...inspected.card, files: inspected.files, main: skill.main });

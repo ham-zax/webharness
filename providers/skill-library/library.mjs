@@ -1,7 +1,8 @@
-import { digest, failure, MAX_POLICY_BYTES, readApproved, utf8 } from './files.mjs';
+import { checkJevCancellation, digest, failure, MAX_POLICY_BYTES, readApproved, utf8 } from './files.mjs';
 import { loadPolicy } from './policy.mjs';
 import { compileCatalog, inspectSkill } from './catalog.mjs';
 import { search } from './search.mjs';
+import { JevSelector } from './jev-selection.mjs';
 
 const RESPONSE_BYTES = 24 * 1024;
 
@@ -32,30 +33,63 @@ function decode(value) {
 }
 
 export class SkillLibrary {
-  static async open(policyPath) { return new SkillLibrary(await loadPolicy(policyPath)); }
-  constructor(policy) { this.policy = policy; }
+  static async open(policyPath, options) { return new SkillLibrary(await loadPolicy(policyPath), options); }
+  constructor(policy, { jevSelector = new JevSelector() } = {}) { this.policy = policy; this.jevSelector = jevSelector; }
 
-  async checkPolicy() {
-    const bytes = await readApproved(this.policy.root, this.policy.file, MAX_POLICY_BYTES);
+  async checkPolicy(signal) {
+    const bytes = await readApproved(this.policy.root, this.policy.file, MAX_POLICY_BYTES, signal);
     if (digest(bytes) !== this.policy.fileHash) {
       throw failure('POLICY_CHANGED', 'approved policy changed; restart the provider to apply it');
     }
   }
 
-  async catalog() {
-    await this.checkPolicy();
-    const result = await compileCatalog(this.policy);
-    await this.checkPolicy();
+  async catalog(signal) {
+    await this.checkPolicy(signal);
+    const result = await compileCatalog(this.policy, signal);
+    await this.checkPolicy(signal);
     return result;
   }
 
-  async find({ query, collection, limit, cursor } = {}) {
+  async find({ query, collection, limit, cursor, mode = 'lexical', context, signal } = {}) {
+    if (!['lexical', 'jev'].includes(mode)) throw failure('INVALID_ARGUMENT', 'mode must be lexical or jev');
     query = optionalString(query, 'query');
     collection = optionalString(collection, 'collection', 64);
+    context = optionalString(context, 'context', 4096);
+    if (mode === 'lexical' && context !== undefined) throw failure('INVALID_ARGUMENT', 'context applies only to mode=jev');
+    if (mode === 'jev' && (!query || cursor !== undefined)) throw failure('INVALID_ARGUMENT', 'mode=jev requires a task query and does not accept cursors');
     const size = integer(limit, 8, 1, 20, 'limit');
-    const catalog = await this.catalog();
+    // Cover catalog inspection and the final revision check as well as HTTP.
+    const routeSignal = mode === 'jev' ? AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(30000)]) : undefined;
+    const catalog = await this.catalog(routeSignal);
     const collections = this.policy.packs.map(pack => ({ id: pack.id, count: pack.skills.length }));
     if (collection && !collections.some(item => item.id === collection)) throw failure('UNKNOWN_COLLECTION', 'unknown collection');
+    if (mode === 'jev') {
+      const cards = catalog.skills.filter(card => !collection || card.collection === collection);
+      const selection = await this.jevSelector.select({ cards, task: query, context, limit: size, signal: routeSignal,
+        readBody: async card => {
+          const pack = this.policy.packs.find(item => item.id === card.collection);
+          const skill = pack.skills.find(item => `${pack.id}/${item.id}` === card.id);
+          await this.checkPolicy(routeSignal);
+          const inspected = await inspectSkill(pack, skill, routeSignal);
+          await this.checkPolicy(routeSignal);
+          if (inspected.card.revision !== card.revision) throw failure('STALE_REVISION', 'skill changed during Jev selection; rediscover');
+          // The operator adaptation is already approved and revision-bound.
+          const adaptation = skill.adaptation ? `${utf8(inspected.contents.get(skill.adaptation))}\n\n` : '';
+          return adaptation + utf8(inspected.contents.get(skill.main));
+        } });
+      const current = await this.catalog(routeSignal);
+      checkJevCancellation(routeSignal);
+      if (current.revision !== catalog.revision) throw failure('STALE_REVISION', 'catalog changed during Jev selection; repeat discovery');
+      const candidates = selection.selected.map(judgment => {
+        const { files, main, source, license, ...metadata } = cards.find(card => card.id === judgment.id);
+        return { ...metadata, judgment: { fit: judgment.fit, score: judgment.score, confidence: judgment.confidence } };
+      });
+      const { selected, status, ...details } = selection;
+      const result = { mode: 'jev', status, collections,
+        candidates, total: candidates.length, hasMore: false, selection: details };
+      if (Buffer.byteLength(JSON.stringify(result)) > RESPONSE_BYTES) throw failure('RESPONSE_TOO_LARGE', 'selected candidate metadata exceeds response budget; use a smaller limit');
+      return result;
+    }
     const candidates = search(catalog.skills.filter(card => !collection || card.collection === collection), query);
     const filter = digest(JSON.stringify({ query: query ?? null, collection: collection ?? null }));
     let offset = 0;
@@ -66,15 +100,18 @@ export class SkillLibrary {
       offset = page.offset;
       if (offset > candidates.length) throw failure('INVALID_CURSOR', 'cursor offset is outside the result set');
     }
-    const result = { mode: query ? 'lexical' : 'browse', catalogRevision: catalog.revision,
+    const result = { mode: query ? 'lexical' : 'browse',
       collections, candidates: [], total: candidates.length, hasMore: false };
     for (const { card } of candidates.slice(offset, offset + size)) {
-      const { files, main, ...metadata } = card;
+      const { files, main, source, license, ...metadata } = card;
       result.candidates.push(metadata);
       if (Buffer.byteLength(JSON.stringify(result)) > RESPONSE_BYTES - 2048) {
         result.candidates.pop();
         break;
       }
+    }
+    if (result.candidates.length === 0 && offset < candidates.length) {
+      throw failure('RESPONSE_TOO_LARGE', 'candidate metadata exceeds the find response budget; reduce its approved metadata before discovery');
     }
     const next = offset + result.candidates.length;
     result.hasMore = next < candidates.length;
@@ -115,8 +152,9 @@ export class SkillLibrary {
     while (end < bytes.length && (bytes[end] & 0xc0) === 0x80) end -= 1;
     const result = { id, revision, file: selected, content: utf8(bytes.subarray(offset, end)),
       bytes: end - offset, totalBytes: bytes.length, complete: end === bytes.length,
-      readableFiles: inspected.files.map(item => ({ file: item.file, digest: item.digest, bytes: item.bytes })),
+      readableFiles: inspected.files.map(item => ({ file: item.file, bytes: item.bytes })),
       compatibility: skill.compatibility, invocationHints: inspected.card.invocationHints };
+    if (skill.adaptation) result.adaptation = { file: skill.adaptation, content: utf8(inspected.contents.get(skill.adaptation)) };
     // JSON escaping also counts toward the response budget, not only UTF-8 bytes.
     while (Buffer.byteLength(JSON.stringify(result)) > RESPONSE_BYTES - 2048 && end > offset) {
       end = offset + Math.floor((end - offset) / 2);

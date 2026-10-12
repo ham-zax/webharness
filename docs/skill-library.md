@@ -1,9 +1,10 @@
 # Skill library
 
 WebHarness ships a native read-only provider and 28 MIT-licensed thinking skills
-under `skill-library/`. Source instructions, license, provenance, access policy
-and generated catalog travel with the repository. JevShelf, Skillshare, TypeSafe
-credentials, embeddings and hosted model calls are not required. Existing
+under `skill-library/`. Source instructions, license, provenance and access policy
+travel with the repository. Metadata is calculated in memory; no `catalog.json`
+or compile step is needed. JevShelf, Skillshare, TypeSafe credentials, embeddings
+and hosted model calls are not required for native retrieval. Existing
 `skills/` and `agents/skills/` are unchanged and are not implicitly exposed.
 
 ## Deployment and authorization
@@ -57,7 +58,7 @@ Typical logical arguments:
 ```
 
 `find_skills`: optional `query`, `collection`, `limit` (1..20, default 8) and
-opaque `cursor`. Returns descriptions, counts, provenance, revisions, invocation
+opaque `cursor`. Returns descriptions, counts, revisions, invocation
 hints, completeness and compatibility without skill bodies. Omit query to browse
 descriptions. Exact names are preferred; other queries use deterministic BM25
 over names/descriptions. Results say `lexical` or `browse`, without semantic
@@ -75,7 +76,55 @@ Skill text and `allowed-tools` hints grant no authority and cannot override user
 instructions or operator policy. Preserve `disable-model-invocation` and
 `user-invocable` restrictions when applying skills. The bundled upstream skills
 require explicit invocation; retrieving them does not permit auto-activation.
-The provider never executes helpers or makes network/model calls.
+The provider never executes helpers. Default discovery and all reads stay offline;
+only explicit opt-in Jev selection makes model calls.
+
+The starter pack supports **explicit invocation**. For example, ask ChatGPT:
+"Use the thinking-model-router skill to compare these options." Discovery or a
+Jev recommendation does not itself authorize automatic application. The router's
+separate, policy-approved `WEBHARNESS.md` maps its original host-specific invocation
+step to native `find_skills`/`read_skill`. Its identifier appears in discovery and
+its text appears as `adaptation` beside unchanged source instructions on reads.
+
+## Optional Jev selection
+
+Native selection ports only the useful questions, evidence sampler and typed
+HTTP contract from JevShelf and its pinned router. No JevShelf executable,
+Python package or new dependency is needed. Attribution is preserved in
+`providers/skill-library/JEV_PROVENANCE.md` and `JEV_LICENSE`.
+
+Use `mode="jev"` with a task in `query` and optional situation in `context`.
+The server must also opt in with `MCP_SKILL_JEV_ENABLED=1` and credentials.
+Standalone/CLI can inherit `TYPESAFE_API_KEY` and optional `TYPESAFE_MODEL`;
+Personal/Server deployments require `MCP_SKILL_JEV_ENV_FILE`, an absolute,
+current-user-owned private regular file (mode 0600, at most 64 KiB):
+
+```text
+TYPESAFE_API_KEY=<operator key>
+TYPESAFE_MODEL=jev-latest
+```
+
+The renderer stores only its path, never the key. Configuration is checked when
+the deployment is rendered and again for each Jev request. Ordinary retrieval
+does not read optional credentials or contact TypeSafe.
+An existing private Browser Jev environment file can be reused: known
+`TEXT_MODEL_*` assignments are accepted but never used or forwarded by selection.
+
+```json
+{"mode":"jev","collection":"thinking","query":"Compare two architecture options","context":"Current step: evaluate maintenance and portability","limit":3}
+```
+
+Jev receives only the supplied task/context, approved names/descriptions and
+bounded source instruction excerpts. It ranks the selected collection and
+verifies up to six candidates for applicability and usefulness, returning at most
+three. `selected`, `no_match` and `uncertain` remain distinct. Errors never silently
+become lexical results; callers can explicitly retry with `mode="lexical"`.
+
+Limits: 64 skills, 6,000 bytes of task/context, 24,000 bytes per model request,
+900-character excerpts, two HTTP calls, 64 KiB responses and a 30-second route
+deadline. Oversized scopes fail before paid calls; narrow the collection or context.
+Jev results do not paginate, retry automatically, execute skills or change
+invocation restrictions. Fit/confidence values are model judgments, not guarantees.
 
 ## Explicit policy and generated metadata
 
@@ -102,9 +151,11 @@ Permissions are never derived from frontmatter or prose links. Operators must
 review dependencies when declaring the readable set; automatic link parsing is
 not proof that all operational dependencies were declared.
 
-`catalog.json` contains reproducible names/descriptions, digests, sizes and
-revisions. Editing it cannot approve a file. Runtime derives metadata from
-policy and source files; discovery recomputes it without a watcher or cache.
+Runtime derives metadata from policy and source files, without a generated file,
+watcher or cache. Internal hashes detect changed bytes and execute bits; clients
+receive the revision needed for reads, not a repeated digest for every dependency.
+License files preserve attribution and are copied on export, without repeating
+their contents or source declarations in ordinary discovery responses.
 
 Completeness means **all declared files are present and readable**. Compatibility
 is a separate operator assertion: `instruction-only`, `requires-tools` or
@@ -112,7 +163,7 @@ is a separate operator assertion: `instruction-only`, `requires-tools` or
 review does not prove an executable workflow works on this machine. The provider
 does not claim to detect every implicit dependency.
 
-A skill revision covers every readable file's bytes, its mappings, compatibility
+A skill revision covers every readable file's bytes and execute bits, its mappings, compatibility
 and pack source/license declarations. Reference changes invalidate it even if
 SKILL.md is unchanged. Reads verify the entire selected dependency set.
 Discovery cursors bind to catalog revision and filters; read cursors bind to
@@ -125,14 +176,13 @@ skill, revision, file and offset. Checksums establish continuity, not trust.
 ./bin/webharness skills find --collection thinking --limit 8
 ./bin/webharness skills read --id thinking/thinking-first-principles --revision RETURNED_SHA256
 ./bin/webharness skills check
-./bin/webharness skills compile
 ./bin/webharness skills export --destination /new/path/skill-library
 ```
 
-`compile` regenerates only metadata; it cannot add access permissions. `check`
-validates declared files and compares the derived catalog byte-for-byte.
+`check` validates declared files without writing generated metadata.
 `export` creates a new destination with approved files, per-pack LICENSE and
-PROVENANCE.md, policy and catalog. Those provenance files must be explicitly readable in each
+PROVENANCE.md and policy. Approved execute bits survive relocation; special
+permission bits are not copied. Those provenance files must be explicitly readable in each
 exportable pack. It refuses existing destinations and copies no undeclared
 files. A failed partial export is left for inspection. An export contains data;
 the destination's WebHarness supplies the bundled native reader.
@@ -143,7 +193,7 @@ not a remotely supplied tool argument.
 
 Updates are explicit: review source changes, distribution terms, invocation
 restrictions, dependencies and compatibility; update copies/policy; retain
-license/provenance; compile; check; run portable tests. No installs, background
+license/provenance; check; run portable tests. No installs, background
 sync, JevShelf imports or automatic source rewrites occur. Restart the provider
 after policy changes. OAuth and existing state identities need not change.
 
@@ -158,6 +208,11 @@ after policy changes. OAuth and existing state identities need not change.
 | `MISSING_DEPENDENCY` | Restore or review the declared file; it is never silently omitted |
 | `UNSAFE_FILE` | Replace symlinks/non-regular files with reviewed regular files |
 | `INVALID_SKILL` | Review and fix malformed or ambiguous metadata |
+| `RESPONSE_TOO_LARGE` | Reduce oversized candidate metadata or use a smaller selection limit |
+| `JEV_DISABLED` | Operator enables Jev, or use native discovery |
+| `JEV_CONFIG_INVALID` | Review the private operator credentials |
+| `JEV_SCOPE_TOO_LARGE` | Narrow the collection/task/context before retrying |
+| `JEV_HTTP_ERROR` / `JEV_UNAVAILABLE` | Retry later or explicitly use lexical discovery |
 
 Portable checks cover policy separation, invocation hints, missing/changed
 references, traversal/symlinks, UTF-8 and JSON budgets, export relocation, real

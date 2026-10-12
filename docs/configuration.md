@@ -95,6 +95,12 @@ For a standalone alternate library, `MCP_SKILL_POLICY_FILE` selects an operator
 policy file. It is not a model-call parameter or a change to the Local trust
 boundary. See [Skill library](skill-library.md) for updates and skills-only deployment.
 
+Optional Jev selection is disabled by default. Set `MCP_SKILL_JEV_ENABLED=1`
+and `MCP_SKILL_JEV_ENV_FILE` to a private current-user-owned mode-0600 file
+containing `TYPESAFE_API_KEY` and optional `TYPESAFE_MODEL`. Personal/Server
+rendering validates it and passes only its path to the provider. Clients must
+also request `mode="jev"`; default lexical discovery makes no model calls.
+
 ## Rendering
 
 `webharness setup` calls the renderer for you. Direct rendering is also supported:

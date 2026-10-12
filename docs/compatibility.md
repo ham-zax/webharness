@@ -25,6 +25,11 @@ nor smaller-profile authority. Read responses distinguish complete/incomplete
 pages and package completeness/runtime compatibility; stale dependency revisions
 require rediscovery. See [Skill library](skill-library.md).
 
+`find_skills` optionally accepts `mode="jev"` and `context`; omission preserves
+offline lexical behavior. Its annotations acknowledge that opt-in calls contact
+an external model and may consume quota. The operator CLI validates directly;
+the obsolete generated catalog and compile command have been removed.
+
 ## Compatibility rules
 
 The following are compatible when existing meanings remain unchanged:

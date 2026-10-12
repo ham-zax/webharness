@@ -54,7 +54,7 @@ export async function loadPolicy(policyPath) {
     const skills = [];
     for (const skill of pack.skills) {
       if (++count > 2048) throw failure('INVALID_POLICY', 'policy has too many skills');
-      object(skill, ['id', 'directory', 'readable', 'compatibility'], 'skill');
+      object(skill, ['id', 'directory', 'readable', 'compatibility', 'adaptation'], 'skill');
       name(skill.id, 'skill id');
       relativeFile(skill.directory);
       if (ids.has(skill.id)) throw failure('INVALID_POLICY', 'duplicate skill id');
@@ -65,6 +65,9 @@ export async function loadPolicy(policyPath) {
       const readable = [...new Set(skill.readable.map(relativeFile))].sort();
       const main = `${skill.directory}/SKILL.md`;
       if (!readable.includes(main)) throw failure('INVALID_POLICY', 'readable must include the skill SKILL.md');
+      if (skill.adaptation !== undefined && !readable.includes(relativeFile(skill.adaptation))) {
+        throw failure('INVALID_POLICY', 'adaptation must be an explicitly readable file');
+      }
       object(skill.compatibility, ['kind', 'requires', 'verification'], 'compatibility');
       if (!['instruction-only', 'requires-tools', 'host-specific'].includes(skill.compatibility.kind)
           || !['unverified', 'reviewed', 'tested'].includes(skill.compatibility.verification)
