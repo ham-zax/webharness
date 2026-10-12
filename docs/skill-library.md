@@ -86,6 +86,25 @@ separate, policy-approved `WEBHARNESS.md` maps its original host-specific invoca
 step to native `find_skills`/`read_skill`. Its identifier appears in discovery and
 its text appears as `adaptation` beside unchanged source instructions on reads.
 
+## Canonical workflow and optional expertise
+
+For engineering work, follow the user/project's configured canonical method
+and its activation rules before specialist discovery; retain its fast path.
+Consider directly available specialists first; search the library when additional
+expertise helps, selection
+is ambiguous or the user requests it. Compare useful direct and returned
+candidates for the current step. A sufficient direct skill needs no Jev call.
+Include the active workflow, current step and needed contribution in Jev context.
+Specialists do not replace canonical planning, artifacts, verification or
+completion conventions. Non-engineering tasks need no engineering workflow.
+
+The portable provider does not choose or bundle a canonical engineering method.
+Machine-specific selection belongs in owner instructions. A method installed on
+the workstation is not automatically in this library; load its actual instructions
+and required references through the reader if approved, or through authorized
+host filesystem tools. Report unavailable instructions rather than claiming the
+method is loaded. Model adherence to these instructions remains client-dependent.
+
 ## Optional Jev selection
 
 Native selection ports only the useful questions, evidence sampler and typed

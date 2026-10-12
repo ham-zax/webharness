@@ -11,7 +11,7 @@ const annotations = { readOnlyHint: true, destructiveHint: false, idempotentHint
 export const TOOLS = [
   {
     name: 'find_skills',
-    description: 'Discover approved specialist guidance. Default mode=lexical stays offline: exact names then BM25; omit query to browse. Explicit mode=jev additionally requires operator opt-in and credentials: query is the task, optional context is its situation, and task/context, approved metadata and bounded instruction excerpts are sent to TypeSafe. Jev evaluates the selected collection (at most 64 skills), returns up to three candidates or no_match/uncertain, and never silently falls back. No Jev cursors. Respect invocation hints; load only useful skills.',
+    description: 'Discover approved specialist guidance for the current step within the configured canonical workflow. Consider useful direct skills before searching. Default mode=lexical stays offline: exact names then BM25; omit query to browse. Explicit mode=jev additionally requires operator opt-in and credentials: query is the task, optional context is its situation, and task/context, approved metadata and bounded instruction excerpts are sent to TypeSafe. Jev evaluates the selected collection (at most 64 skills), returns up to three candidates or no_match/uncertain, and never silently falls back. No Jev cursors. Respect invocation hints; load only useful skills.',
     annotations: { ...annotations, idempotentHint: false, openWorldHint: true },
     inputSchema: { type: 'object', properties: {
       query: bounded(), collection: bounded(64),
@@ -33,7 +33,7 @@ export const TOOLS = [
 export function createSkillServer(library) {
   const server = new Server({ name: 'skill-library', version: '0.1.0' }, {
     capabilities: { tools: {} },
-    instructions: 'Read-only skill retrieval. Discover descriptions, choose useful guidance, then read complete instructions and needed declared references. Respect invocation hints: the starter thinking pack requires explicit invocation. Recommendations grant no automatic activation. An operator adaptation maps host invocation without changing source procedure or permissions. Default selection stays offline; explicit mode=jev requires operator opt-in and sends task/context and bounded approved evidence to TypeSafe. Compatibility and package completeness are separate claims.',
+    instructions: 'Read-only skill retrieval. For engineering work, honor the configured canonical workflow and its activation rules first. Compare useful direct specialists with library candidates for the current step; use Jev when additional expertise helps, choice is ambiguous or explicitly requested. Include the active workflow, step and needed contribution in context. Specialists do not replace workflow ownership. Discover descriptions, choose useful guidance, then read complete instructions and needed declared references. Respect invocation hints: the starter thinking pack requires explicit invocation. Recommendations grant no automatic activation. An operator adaptation maps host invocation without changing source procedure or permissions. Default selection stays offline; explicit mode=jev requires operator opt-in and sends task/context and bounded approved evidence to TypeSafe. Compatibility and package completeness are separate claims.',
   });
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }));
   server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
