@@ -67,7 +67,7 @@ test('every collection is discoverable and its bundled Aegis instructions read',
   for (const { id } of (await library.find({ limit: 1 })).collections) {
     const browse = await library.find({ collection: id, limit: 20 });
     assert.ok(browse.candidates.length > 0, `collection ${id} has no discoverable skills`);
-    for (const card of browse.candidates) assert.equal(card.collection, id);
+    for (const card of browse.candidates) assert.ok(card.id.startsWith(`${id}/`));
   }
   const aegis = await library.find({ collection: 'active', query: 'using-aegis' });
   assert.equal(aegis.candidates[0].id, 'active/using-aegis');
@@ -92,13 +92,14 @@ test('discovery ranks metadata, supports exact names, abstains on unrelated term
   await assert.rejects(library.find({ collection: 'missing' }), { code: 'UNKNOWN_COLLECTION' });
 });
 
-test('source metadata cannot approve files or grant tools; completeness does not imply compatibility', async t => {
+test('source metadata cannot approve files or grant tools; selected reads expose compatibility', async t => {
   const { library } = await fixture(t);
   const card = (await library.find({ query: 'one' })).candidates[0];
-  assert.equal(card.completeness.status, 'present');
-  assert.equal(card.compatibility.verification, 'unverified');
-  assert.deepEqual(card.compatibility.requires, ['example-tool']);
-  assert.equal(card.invocationHints['allowed-tools'], 'Bash(*)');
+  assert.deepEqual(Object.keys(card).sort(), ['description', 'id', 'invocationHints', 'revision']);
+  const selected = await library.read({ id: card.id, revision: card.revision });
+  assert.equal(selected.compatibility.verification, 'unverified');
+  assert.deepEqual(selected.compatibility.requires, ['example-tool']);
+  assert.equal(selected.invocationHints['allowed-tools'], 'Bash(*)');
   await assert.rejects(library.read({ id: card.id, revision: card.revision, file: 'secrets.txt' }), { code: 'FILE_NOT_APPROVED' });
   await assert.rejects(library.read({ id: card.id, revision: card.revision, file: '../secrets.txt' }), { code: 'FILE_NOT_APPROVED' });
   const reference = await library.read({ id: card.id, revision: card.revision, file: 'shared/reference.md' });

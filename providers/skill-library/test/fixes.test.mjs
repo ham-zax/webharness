@@ -67,14 +67,13 @@ test('router exposes and versions its WebHarness tool mapping', async t => {
   const bundled = await SkillLibrary.open(defaultPolicy);
   const card = (await bundled.find({ query: 'thinking-model-router' })).candidates[0];
   assert.equal(card.id, 'thinking/thinking-model-router');
-  assert.equal(card.compatibility.kind, 'requires-tools');
-  assert.deepEqual(card.compatibility.requires, [
+  const router = await bundled.read({ id: card.id, revision: card.revision });
+  assert.equal(router.compatibility.kind, 'requires-tools');
+  assert.deepEqual(router.compatibility.requires, [
     'skill-library.find_skills',
     'skill-library.read_skill',
   ]);
-  assert.equal(card.adaptation, 'thinking-model-router/WEBHARNESS.md');
-
-  const router = await bundled.read({ id: card.id, revision: card.revision });
+  assert.equal(router.adaptation.file, 'thinking-model-router/WEBHARNESS.md');
   assert.match(router.adaptation.content, /find_skills/);
   assert.match(router.adaptation.content, /read_skill/);
   const adaptationFile = 'thinking-model-router/WEBHARNESS.md';
@@ -110,7 +109,7 @@ test('router exposes and versions its WebHarness tool mapping', async t => {
   assert.notEqual(afterRevision, beforeRevision);
 });
 
-test('oversized first discovery candidate returns a typed error instead of a repeated cursor', async t => {
+test('large compatibility declarations stay out of discovery and selected reads remain bounded', async t => {
   const { library } = await fixture(t, [{
     id: 'giant',
     description: 'Large but policy-valid metadata.',
@@ -122,11 +121,12 @@ test('oversized first discovery candidate returns a typed error instead of a rep
     },
   }]);
 
-  await assert.rejects(library.find({ query: 'giant', limit: 1 }), error => {
-    assert.equal(error.code, 'RESPONSE_TOO_LARGE');
-    assert.match(error.message, /candidate metadata exceeds the find response budget/);
-    return true;
-  });
+  const found = await library.find({ query: 'giant', limit: 1 });
+  assert.equal(found.hasMore, false);
+  assert.ok(Buffer.byteLength(JSON.stringify(found)) < 1024);
+  const card = found.candidates[0];
+  assert.deepEqual(Object.keys(card).sort(), ['description', 'id', 'revision']);
+  await assert.rejects(library.read({ id: card.id, revision: card.revision }), { code: 'RESPONSE_TOO_LARGE' });
 });
 
 test('export preserves approved execute bits without special permissions and versions mode changes', async t => {

@@ -71,7 +71,7 @@ test('policy-approved router adaptation is surfaced alongside original instructi
   const card = (await library.find({ query: 'thinking-model-router' })).candidates[0];
   const read = await library.read({ id: card.id, revision: card.revision });
   assert.match(read.content, /thinking-skills:thinking-/);
-  assert.equal(read.adaptation.file, card.adaptation);
+  assert.equal(read.adaptation.file, 'thinking-model-router/WEBHARNESS.md');
   assert.match(read.adaptation.content, /thinking\/thinking-/);
   assert.match(read.adaptation.content, /provides no execution authority/);
 });

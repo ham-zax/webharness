@@ -59,8 +59,11 @@ Typical logical arguments:
 ```
 
 `find_skills`: optional `query`, `collection`, `limit` (1..20, default 3) and
-opaque `cursor`. Returns descriptions, counts, revisions, invocation
-hints, completeness and compatibility without skill bodies. Omit query to browse
+opaque `cursor`. Candidates contain only IDs, descriptions, revisions and
+nonempty invocation restrictions. Collection counts appear only on the first
+unscoped discovery page, not on scoped searches or continuations. Compatibility,
+full tool hints, adaptations and dependency inventory arrive with the selected
+skill read; review those before applying its instructions. Omit query to browse
 descriptions. Exact names are preferred; other queries use deterministic BM25
 over names/descriptions. Results say `lexical` or `browse`, without semantic
 confidence claims. Zero matches means no lexical candidates; broaden the query

@@ -22,6 +22,12 @@ function optionalString(value, label, max = 512) {
 }
 
 function encode(value) { return Buffer.from(JSON.stringify(value)).toString('base64url'); }
+function discoveryCard(card) {
+  const invocationHints = Object.fromEntries(Object.entries(card.invocationHints)
+    .filter(([key]) => ['disable-model-invocation', 'user-invocable'].includes(key)));
+  return { id: card.id, description: card.description, revision: card.revision,
+    ...(Object.keys(invocationHints).length ? { invocationHints } : {}) };
+}
 function decode(value) {
   try {
     if (typeof value !== 'string' || value.length > 2048 || !/^[A-Za-z0-9_-]+$/.test(value)) throw new Error();
@@ -81,11 +87,11 @@ export class SkillLibrary {
       checkJevCancellation(routeSignal);
       if (current.revision !== catalog.revision) throw failure('STALE_REVISION', 'catalog changed during Jev selection; repeat discovery');
       const candidates = selection.selected.map(judgment => {
-        const { files, main, source, license, ...metadata } = cards.find(card => card.id === judgment.id);
-        return { ...metadata, judgment: { fit: judgment.fit, score: judgment.score, confidence: judgment.confidence } };
+        const card = cards.find(card => card.id === judgment.id);
+        return { ...discoveryCard(card), judgment: { fit: judgment.fit, score: judgment.score, confidence: judgment.confidence } };
       });
       const { selected, status, ...details } = selection;
-      const result = { mode: 'jev', status, collections,
+      const result = { mode: 'jev', status, ...(!collection ? { collections } : {}),
         candidates, total: candidates.length, hasMore: false, selection: details };
       if (Buffer.byteLength(JSON.stringify(result)) > RESPONSE_BYTES) throw failure('RESPONSE_TOO_LARGE', 'selected candidate metadata exceeds response budget; use a smaller limit');
       return result;
@@ -101,10 +107,9 @@ export class SkillLibrary {
       if (offset > candidates.length) throw failure('INVALID_CURSOR', 'cursor offset is outside the result set');
     }
     const result = { mode: query ? 'lexical' : 'browse',
-      collections, candidates: [], total: candidates.length, hasMore: false };
+      ...(!collection && cursor === undefined ? { collections } : {}), candidates: [], total: candidates.length, hasMore: false };
     for (const { card } of candidates.slice(offset, offset + size)) {
-      const { files, main, source, license, ...metadata } = card;
-      result.candidates.push(metadata);
+      result.candidates.push(discoveryCard(card));
       if (Buffer.byteLength(JSON.stringify(result)) > RESPONSE_BYTES - 2048) {
         result.candidates.pop();
         break;
