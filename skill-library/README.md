@@ -5,7 +5,7 @@ This distributable library is separate from the retained ChatGPT snapshot in
 
 - `policy.json`: approved readable files and compatibility declarations for every
   collection.
-- `packs/`: source snapshots; the policy enables 155 skills across eight
+- `packs/`: source snapshots; the policy enables 150 skills across eight
   collections. Matt Pocock and Addy Osmani entries are disabled and cannot be
   discovered, selected, read or exported through the provider.
 

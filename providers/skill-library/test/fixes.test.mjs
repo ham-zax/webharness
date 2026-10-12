@@ -187,20 +187,16 @@ test('large dependency sets remain readable, revision-bound and executable after
   await assert.rejects(library.read({ id: card.id, revision: card.revision }), { code: 'STALE_REVISION' });
 });
 
-test('complete bundled exports preserve shared academic references and working Archify helpers', async t => {
+test('complete bundled exports preserve shared academic references and large assets', async t => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-library-complete-'));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
   const destination = path.join(root, 'exported');
   const exported = await runCli(['export', '--destination', destination]);
-  assert.equal(exported.skills, 155);
+  assert.equal(exported.skills, 150);
   const library = await SkillLibrary.open(path.join(destination, 'policy.json'));
   const academic = (await library.find({ collection: 'academic', query: 'academic-paper' })).candidates[0];
   const reference = await library.read({ id: academic.id, revision: academic.revision, file: 'shared/output_language_pair.md' });
   assert.ok(reference.content.length > 0);
   assert.ok(Buffer.byteLength(JSON.stringify(reference)) <= 24 * 1024);
-  const archify = path.join(destination, 'packs/active/archify');
-  const { stdout } = await execFile(process.execPath, [path.join(archify, 'bin/archify.mjs'),
-    'validate', 'architecture', path.join(archify, 'examples/web-app.architecture.json'), '--json'], { cwd: root });
-  assert.equal(JSON.parse(stdout).ok, true);
   assert.ok((await fs.stat(path.join(destination, 'packs/active/impeccable/scripts/data/font-index.json'))).size > 1024 * 1024);
 });

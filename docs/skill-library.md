@@ -1,6 +1,6 @@
 # Skill library
 
-WebHarness ships a native read-only provider and a 155-definition skill corpus
+WebHarness ships a native read-only provider and a 150-definition skill corpus
 under `skill-library/`, spread across eight enabled collections. Source
 instructions, license, provenance and access policy travel with the repository.
 Metadata is calculated in memory; no `catalog.json` or compile step is needed.
@@ -101,7 +101,7 @@ discoverable and its declared files are readable through `find_skills`/
 | Collection | Skills | Character |
 |---|---|---|
 | `academic` | 5 | Academic writing, review, pipeline, deep research, screening |
-| `active` | 39 | Directly active Skillshare skills, **including the bundled Aegis method pack** |
+| `active` | 34 | Directly active Skillshare skills, **including the bundled Aegis method pack** |
 | `emil` | 17 | Emil Kowalski UI craft and animation skills |
 | `lateral-thinking` | 9 | Analogy, inversion, provocation, six hats, SCAMPER |
 | `marketing` | 50 | Growth, SEO, CRO, pricing, lifecycle and social |
