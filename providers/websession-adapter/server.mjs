@@ -170,6 +170,7 @@ async function handleUniversalGet(req, res, parts) {
       return true;
     }
     const lines = ['WEBSESSION-MCP-BRIDGE/1', 'state: ready', `tool_count: ${access.tools.length}`];
+    if (access.instructions) lines.push(`instructions_json: ${JSON.stringify(access.instructions)}`);
     access.tools.forEach((tool, index) => {
       const number = index + 1;
       lines.push(

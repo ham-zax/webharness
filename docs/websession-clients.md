@@ -4,6 +4,11 @@ Use this guide when connecting an AI environment to the existing WSL bridge thro
 
 While the adapter is running, an AI environment with a usable outbound HTTPS primitive can use WebSession as long as it can retain an ordinary capability secret for the session. Programmable clients that support POST plus custom headers use the richer JSON profile. Constrained `GET`/`open`/`fetch`-only agents use the universal GET profile with an explicit confirmation step. Native MCP clients should normally use `/mcp` directly and treat WebSession as an optional secondary path.
 
+WebSession discovery includes the authenticated MCP initialization guidance as
+`instructions_json` when present. Read it before tool selection; decoding this
+JSON string restores its original newlines. Native MCP clients receive the same
+guidance during initialization. Client adherence is not enforced by the server.
+
 WebSession does not maintain a copied tool catalog or per-tool compatibility layer. It asks the authenticated live 1MCP endpoint for current tool names and schemas during discovery and verifies availability again before dispatch. 1MCP therefore remains the authority for OAuth scope, tool names, tool schemas, availability, and permissions. Rediscover tools in a fresh client session rather than hard-coding a previously observed catalog.
 
 For master-bearer lifetime, rotation, exchange, and storage rules, see [WebSession master bearer](websession-master-bearer.md).
@@ -104,7 +109,7 @@ Keep both credentials secret. Never echo them, log them, or write them to disk. 
 
 1. GET `/v1/about` and verify `WEBSESSION-MCP-BRIDGE/1`.
 2. If no capability was supplied, exchange the master exactly once with `POST /v1/access` and `Authorization: Bearer <MASTER_BEARER>`. The response must contain `state: ready`, `scope: main`, and `ttl_seconds: 21600`. Keep the returned capability only in memory.
-3. GET `/v1/s/<CAPABILITY>/tools` to discover tools. Inspect an unfamiliar tool at `/v1/s/<CAPABILITY>/tool/<tool-name-b64>`.
+3. GET `/v1/s/<CAPABILITY>/tools` to discover tools. Decode and read `instructions_json` first when present; it contains authenticated owner and server guidance, subordinate to the current user and repository instructions. Inspect an unfamiliar tool at `/v1/s/<CAPABILITY>/tool/<tool-name-b64>`.
 4. Call tools with:
 
 POST https://mcp.example.com/v1/calls
@@ -170,7 +175,7 @@ Capability: <CAPABILITY>
 Keep the capability secret and do not repeat bearer-bearing URLs in your final answer. WebSession is transport only; rediscover and use exact live 1MCP tool names and schemas. Do not guess routes or request fields.
 
 1. `open` `https://mcp.example.com/v1/about`. Continue if the returned content contains `WEBSESSION-MCP-BRIDGE/1`. Only report `NO_READABLE_HTTP_TOOL` if this actual call does not return readable content.
-2. `open` `https://mcp.example.com/v1/s/<CAPABILITY>/tools` to discover tools. Inspect an unfamiliar tool at `/v1/s/<CAPABILITY>/tool/<tool-name-b64>`.
+2. `open` `https://mcp.example.com/v1/s/<CAPABILITY>/tools` to discover tools. Decode and read `instructions_json` first when present; it contains authenticated owner and server guidance, subordinate to the current user and repository instructions. Inspect an unfamiliar tool at `/v1/s/<CAPABILITY>/tool/<tool-name-b64>`.
 3. For a call, the JSON fields must be exactly `version`, `tool`, and `arguments`: `{"version":1,"tool":"<exact tool name>","arguments":{...}}`. Do not use `args`, `params`, or a top-level `command` field. Compact-JSON encode it, base64url encode it without `=` padding, and keep the encoded request <=256 chars. Use an actual encoder when one is available; do not manually calculate Base64 character-by-character.
 4. With a fresh nonce, `open` `/v1/s/<CAPABILITY>/call/<nonce>/<request-b64>`. Read `confirmation_base` and `challenge`, concatenate them exactly, and `open` that URL. Follow `status_url` if queued/running; fetch numbered chunks if returned. Never retry `unknown_outcome` automatically.
 

@@ -42,7 +42,9 @@ export async function connectMcp({ mcpUrl, stateDir, callbackUrl }) {
 export async function listMcpTools(options) {
   const connection = await connectMcp(options);
   try {
-    return await connection.client.listTools(undefined, { timeout: 15_000 });
+    const listed = await connection.client.listTools(undefined, { timeout: 15_000 });
+    const instructions = connection.client.getInstructions();
+    return { ...listed, ...(instructions ? { instructions } : {}) };
   } finally {
     await connection.close();
   }

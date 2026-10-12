@@ -51,7 +51,7 @@ export class OperationCore {
       stateDir: this.store.stateDir,
       callbackUrl: this.callbackUrl,
     });
-    return { principal, tools: listed.tools };
+    return { principal, tools: listed.tools, instructions: listed.instructions };
   }
 
   submit(capabilityToken, clientNonce, parsedRequest, sourceProfile) {
