@@ -30,7 +30,7 @@ test('ordinary discovery stays offline even when optional configuration is avail
   await assert.rejects(library.find({ mode: 'jev', query: 'Test', cursor: 'cursor' }), { code: 'INVALID_ARGUMENT' });
   await assert.rejects(library.find({ mode: 'other', query: 'Test' }), { code: 'INVALID_ARGUMENT' });
   await assert.rejects(library.find({ context: 'ignored' }), { code: 'INVALID_ARGUMENT' });
-  await assert.rejects(library.find({ mode: 'jev', query: 'Test' }), /invalid optional configuration/);
+  await assert.rejects(library.find({ mode: 'jev', query: 'Test', collection: 'thinking' }), /invalid optional configuration/);
 });
 
 test('MCP find/read uses optional Jev without a lexical prefilter or additional tools', async t => {
@@ -123,11 +123,15 @@ test('cancellation covers catalog inspection before and after model selection', 
     return result;
   });
   const library = await SkillLibrary.open(path.join(exported, 'policy.json'), { jevSelector });
+  // The merged corpus exceeds the 64-skill Jev scope, so selection is collection-scoped.
   await assert.rejects(library.find({ mode: 'jev', query: 'Compare alternatives', signal: controller.signal }),
+    { code: 'JEV_SCOPE_TOO_LARGE' });
+  assert.equal(calls, 0, 'an oversized scope must fail before any paid call');
+  await assert.rejects(library.find({ mode: 'jev', query: 'Compare alternatives', collection: 'thinking', signal: controller.signal }),
     error => error.code === 'JEV_CANCELLED' && !error.message.includes('private'));
   assert.equal(calls, 2);
   await fs.unlink(path.join(exported, 'packs/thinking/thinking-first-principles/SKILL.md'));
-  await assert.rejects(library.find({ mode: 'jev', query: 'Compare alternatives', signal: controller.signal }), { code: 'JEV_CANCELLED' });
+  await assert.rejects(library.find({ mode: 'jev', query: 'Compare alternatives', collection: 'thinking', signal: controller.signal }), { code: 'JEV_CANCELLED' });
   assert.equal(calls, 2);
-  await assert.rejects(library.find({ query: 'first-principles' }), { code: 'MISSING_DEPENDENCY' });
+  await assert.rejects(library.find({ collection: 'thinking', query: 'first-principles' }), { code: 'MISSING_DEPENDENCY' });
 });

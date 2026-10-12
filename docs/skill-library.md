@@ -1,11 +1,12 @@
 # Skill library
 
-WebHarness ships a native read-only provider and 28 MIT-licensed thinking skills
-under `skill-library/`. Source instructions, license, provenance and access policy
-travel with the repository. Metadata is calculated in memory; no `catalog.json`
-or compile step is needed. JevShelf, Skillshare, TypeSafe credentials, embeddings
-and hosted model calls are not required for native retrieval. Existing
-`skills/` and `agents/skills/` are unchanged and are not implicitly exposed.
+WebHarness ships a native read-only provider and a 155-definition skill corpus
+under `skill-library/`, spread across eight enabled collections. Source
+instructions, license, provenance and access policy travel with the repository.
+Metadata is calculated in memory; no `catalog.json` or compile step is needed.
+JevShelf, Skillshare, TypeSafe credentials, embeddings and hosted model calls
+are not required for native retrieval. Existing `skills/` and `agents/skills/`
+are unchanged and are not implicitly exposed.
 
 ## Deployment and authorization
 
@@ -57,7 +58,7 @@ Typical logical arguments:
 {"id":"thinking/thinking-pre-mortem","revision":"<returned SHA-256>"}
 ```
 
-`find_skills`: optional `query`, `collection`, `limit` (1..20, default 8) and
+`find_skills`: optional `query`, `collection`, `limit` (1..20, default 3) and
 opaque `cursor`. Returns descriptions, counts, revisions, invocation
 hints, completeness and compatibility without skill bodies. Omit query to browse
 descriptions. Exact names are preferred; other queries use deterministic BM25
@@ -68,7 +69,12 @@ or browse. The host can decide no skill is useful.
 `read_skill`: required `id` and `revision`; optional `file`, `cursor`, `max_bytes`
 (256..16384, default 8192). Files are approved pack-relative identifiers, never
 arbitrary paths. Omit file for SKILL.md. Pages preserve UTF-8 boundaries.
-Readable dependency metadata is capped at 8 KiB at validation.
+The client-visible dependency inventory is capped at 16 KiB at validation.
+Only the first page includes dependency and invocation metadata; continuation
+pages return new text without repeating that inventory. Discovery returns
+paginated descriptions, never the full skill bodies. Load selected instructions
+and references only when the current task needs them.
+
 Structured data is capped at 24 KiB including JSON escaping; the MCP envelope may
 repeat that data in text and structured form. Incomplete pages have a next cursor.
 
@@ -86,6 +92,32 @@ separate, policy-approved `WEBHARNESS.md` maps its original host-specific invoca
 step to native `find_skills`/`read_skill`. Its identifier appears in discovery and
 its text appears as `adaptation` beside unchanged source instructions on reads.
 
+## Collections
+
+`policy.json` is the single canonical library. Every collection below is
+discoverable and its declared files are readable through `find_skills`/
+`read_skill`:
+
+| Collection | Skills | Character |
+|---|---|---|
+| `academic` | 5 | Academic writing, review, pipeline, deep research, screening |
+| `active` | 39 | Directly active Skillshare skills, **including the bundled Aegis method pack** |
+| `emil` | 17 | Emil Kowalski UI craft and animation skills |
+| `lateral-thinking` | 9 | Analogy, inversion, provocation, six hats, SCAMPER |
+| `marketing` | 50 | Growth, SEO, CRO, pricing, lifecycle and social |
+| `sentry` | 6 | Sentry and lassejlv code review and security specialists |
+| `thinking` | 28 | MIT-licensed thinking models (unchanged upstream copy) |
+| `writing` | 1 | ASD-STE100 technical writing |
+
+Matt Pocock and Addy Osmani specialists are disabled at the operator’s request:
+their 21 registrations (including the shared domain-modeling duplicate) are absent
+from the policy. Retained source snapshots grant no discovery, read or export
+access. Aegis remains the canonical engineering workflow.
+
+Use `collection` to scope discovery or Jev selection. Bounds stay unchanged:
+`find_skills` returns at most `limit` (1..20) cards per page, and Jev ranks at
+most one collection of 64 skills.
+
 ## Canonical workflow and optional expertise
 
 For engineering work, follow the user/project's configured canonical method
@@ -98,12 +130,17 @@ Include the active workflow, current step and needed contribution in Jev context
 Specialists do not replace canonical planning, artifacts, verification or
 completion conventions. Non-engineering tasks need no engineering workflow.
 
-The portable provider does not choose or bundle a canonical engineering method.
-Machine-specific selection belongs in owner instructions. A method installed on
-the workstation is not automatically in this library; load its actual instructions
-and required references through the reader if approved, or through authorized
-host filesystem tools. Report unavailable instructions rather than claiming the
-method is loaded. Model adherence to these instructions remains client-dependent.
+The provider does not itself choose a canonical engineering method; that
+selection belongs in owner instructions. The Aegis method pack **is** bundled, in
+the `active` collection, so its instructions and declared references are readable
+through this reader. Load its routing entry point (`active/using-aegis`) and the
+governance skill the current step needs. Report unavailable instructions rather
+than claiming a method is loaded. Model adherence to these instructions remains
+client-dependent.
+
+Discovery does not activate anything. Each skill's source invocation hints
+(`disable-model-invocation`) are preserved and surfaced in discovery; reading a
+skill never authorizes applying it automatically.
 
 ## Optional Jev selection
 
@@ -142,7 +179,11 @@ become lexical results; callers can explicitly retry with `mode="lexical"`.
 Limits: 64 skills, 6,000 bytes of task/context, 24,000 bytes per model request,
 900-character excerpts, two HTTP calls, 64 KiB responses and a 30-second route
 deadline. Oversized scopes fail before paid calls; narrow the collection or context.
-Jev results do not paginate, retry automatically, execute skills or change
+Because the corpus is larger than 64 skills, `mode="jev"` **requires**
+`collection`: an unscoped call fails with `JEV_SCOPE_TOO_LARGE` before any
+request. Every shipped collection is within the limit (largest is `marketing` at
+50), so any single collection is selectable. Jev results do not paginate, retry
+automatically, execute skills or change
 invocation restrictions. Fit/confidence values are model judgments, not guarantees.
 
 ## Explicit policy and generated metadata
@@ -166,7 +207,13 @@ For example, a shared sibling reference is approved explicitly:
 
 Directory traversal, symlinks (including ancestors), non-regular files and
 undeclared files are rejected. Relative pack roots make exports relocatable.
-Permissions are never derived from frontmatter or prose links. Operators must
+All bundled runtime helpers, assets and linked shared references are explicitly
+readable, revision-bound and included in exports. Each skill may declare up to
+256 files; individual files are capped at 2 MiB and a dependency set at 16 MiB.
+The 16 KiB client-visible file inventory excludes internal hashes and mode bits;
+responses remain capped at 24 KiB and content pages shrink when needed.
+Permissions are never derived from frontmatter or prose links.
+Operators must
 review dependencies when declaring the readable set; automatic link parsing is
 not proof that all operational dependencies were declared.
 
@@ -196,7 +243,9 @@ For a reusable prompt to import an installed Codex skill collection, see
 ```bash
 ./bin/webharness skills find --query thinking-first-principles
 ./bin/webharness skills find --collection thinking --limit 8
+./bin/webharness skills find --collection active --query aegis routing --limit 3
 ./bin/webharness skills read --id thinking/thinking-first-principles --revision RETURNED_SHA256
+./bin/webharness skills read --id active/using-aegis --revision RETURNED_SHA256
 ./bin/webharness skills check
 ./bin/webharness skills export --destination /new/path/skill-library
 ```
@@ -233,7 +282,7 @@ after policy changes. OAuth and existing state identities need not change.
 | `RESPONSE_TOO_LARGE` | Reduce oversized candidate metadata or use a smaller selection limit |
 | `JEV_DISABLED` | Operator enables Jev, or use native discovery |
 | `JEV_CONFIG_INVALID` | Review the private operator credentials |
-| `JEV_SCOPE_TOO_LARGE` | Narrow the collection/task/context before retrying |
+| `JEV_SCOPE_TOO_LARGE` | `mode=jev` needs a `collection`; then narrow task/context if still oversized |
 | `JEV_HTTP_ERROR` / `JEV_UNAVAILABLE` | Retry later or explicitly use lexical discovery |
 
 Portable checks cover policy separation, invocation hints, missing/changed

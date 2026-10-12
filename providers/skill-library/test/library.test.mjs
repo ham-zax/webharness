@@ -36,8 +36,22 @@ async function fixture(t) {
 test('bundled corpus works without external installations and preserves source invocation flags', async () => {
   const library = await SkillLibrary.open(DEFAULT_POLICY);
   const catalog = await library.catalog();
-  assert.equal(catalog.skills.length, 28);
-  const result = await library.find({ query: 'thinking-pre-mortem' });
+  assert.equal(catalog.skills.length, 155);
+  assert.ok(catalog.skills.every(card => card.collection !== 'decision-reflection'));
+  assert.deepEqual(catalog.skills.filter(card => card.collection === 'writing').map(card => card.id), ['writing/asd-ste100']);
+  assert.equal(catalog.skills.filter(card => card.collection === 'sentry').length, 6);
+  for (const id of ['decision-reflection/grilling', 'writing/writing-for-agents',
+    'sentry/improve-codebase-architecture', 'sentry/constraint-driven-development']) {
+    assert.ok(!catalog.skills.some(card => card.id === id));
+    await assert.rejects(library.read({ id, revision: catalog.skills[0].revision }), { code: 'UNKNOWN_SKILL' });
+  }
+  const browse = await library.find({ limit: 1 });
+  assert.deepEqual(browse.collections.map(item => item.id).sort(),
+    ['academic', 'active', 'emil', 'lateral-thinking',
+      'marketing', 'sentry', 'thinking', 'writing']);
+  // Jev evaluates one collection at a time; every collection must stay scannable.
+  for (const { count } of browse.collections) assert.ok(count <= 64, `collection of ${count} exceeds the Jev scope`);
+  const result = await library.find({ query: 'thinking-pre-mortem', collection: 'thinking' });
   assert.equal(result.mode, 'lexical');
   assert.equal(result.candidates.length, 1);
   const card = result.candidates[0];
@@ -46,6 +60,22 @@ test('bundled corpus works without external installations and preserves source i
   assert.equal(read.complete, true);
   assert.match(read.content, /Prospective hindsight/);
   assert.equal(read.readableFiles.length, 3);
+});
+
+test('every collection is discoverable and its bundled Aegis instructions read', async () => {
+  const library = await SkillLibrary.open(DEFAULT_POLICY);
+  for (const { id } of (await library.find({ limit: 1 })).collections) {
+    const browse = await library.find({ collection: id, limit: 20 });
+    assert.ok(browse.candidates.length > 0, `collection ${id} has no discoverable skills`);
+    for (const card of browse.candidates) assert.equal(card.collection, id);
+  }
+  const aegis = await library.find({ collection: 'active', query: 'using-aegis' });
+  assert.equal(aegis.candidates[0].id, 'active/using-aegis');
+  const card = aegis.candidates[0];
+  const read = await library.read({ id: card.id, revision: card.revision });
+  assert.equal(read.complete, true);
+  assert.match(read.content, /Aegis skill routing/);
+  assert.ok(read.readableFiles.some(item => item.file === 'using-aegis/references/skill-discipline.md'));
 });
 
 test('discovery ranks metadata, supports exact names, abstains on unrelated terms and pages descriptions', async t => {
@@ -131,6 +161,9 @@ test('bounded UTF-8 pages reconstruct the complete original and reject cross-fil
     first ??= page;
     assert.ok(page.bytes <= 257);
     assert.ok(!page.content.includes('�'));
+    assert.equal(Object.hasOwn(page, 'readableFiles'), cursor === undefined);
+    assert.equal(Object.hasOwn(page, 'compatibility'), cursor === undefined);
+    assert.equal(Object.hasOwn(page, 'invocationHints'), cursor === undefined);
     combined += page.content;
     cursor = page.nextCursor;
     if (!cursor) assert.equal(page.complete, true);
@@ -151,7 +184,7 @@ test('JSON escaping remains bounded and oversized or binary dependencies are rej
   assert.equal(page.complete, false);
   await fs.writeFile(path.join(pack, 'shared/reference.md'), Buffer.from([0xff]));
   await assert.rejects(library.catalog(), { code: 'UNSUPPORTED_CONTENT' });
-  await fs.writeFile(path.join(pack, 'shared/reference.md'), Buffer.alloc(1024 * 1024 + 1));
+  await fs.writeFile(path.join(pack, 'shared/reference.md'), Buffer.alloc(2 * 1024 * 1024 + 1));
   await assert.rejects(library.catalog(), { code: 'FILE_TOO_LARGE' });
 });
 

@@ -1,0 +1,3 @@
+# Imported Markdown retains upstream hard line breaks and final blank lines.
+# Keep normal whitespace checks for provider code and executable dependencies.
+skill-library/packs/**/*.md whitespace=-blank-at-eol,-blank-at-eof

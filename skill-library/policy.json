@@ -11,9 +11,9 @@
           "id": "thinking-bounded-rationality",
           "directory": "thinking-bounded-rationality",
           "readable": [
-            "thinking-bounded-rationality/SKILL.md",
             "LICENSE",
-            "PROVENANCE.md"
+            "PROVENANCE.md",
+            "thinking-bounded-rationality/SKILL.md"
           ],
           "compatibility": {
             "kind": "instruction-only",
@@ -25,9 +25,9 @@
           "id": "thinking-circle-of-competence",
           "directory": "thinking-circle-of-competence",
           "readable": [
-            "thinking-circle-of-competence/SKILL.md",
             "LICENSE",
-            "PROVENANCE.md"
+            "PROVENANCE.md",
+            "thinking-circle-of-competence/SKILL.md"
           ],
           "compatibility": {
             "kind": "instruction-only",
@@ -39,9 +39,9 @@
           "id": "thinking-cynefin",
           "directory": "thinking-cynefin",
           "readable": [
-            "thinking-cynefin/SKILL.md",
             "LICENSE",
-            "PROVENANCE.md"
+            "PROVENANCE.md",
+            "thinking-cynefin/SKILL.md"
           ],
           "compatibility": {
             "kind": "instruction-only",
@@ -53,9 +53,9 @@
           "id": "thinking-effectuation",
           "directory": "thinking-effectuation",
           "readable": [
-            "thinking-effectuation/SKILL.md",
             "LICENSE",
-            "PROVENANCE.md"
+            "PROVENANCE.md",
+            "thinking-effectuation/SKILL.md"
           ],
           "compatibility": {
             "kind": "instruction-only",
@@ -67,9 +67,9 @@
           "id": "thinking-first-principles",
           "directory": "thinking-first-principles",
           "readable": [
-            "thinking-first-principles/SKILL.md",
             "LICENSE",
-            "PROVENANCE.md"
+            "PROVENANCE.md",
+            "thinking-first-principles/SKILL.md"
           ],
           "compatibility": {
             "kind": "instruction-only",
@@ -81,9 +81,9 @@
           "id": "thinking-five-whys-plus",
           "directory": "thinking-five-whys-plus",
           "readable": [
-            "thinking-five-whys-plus/SKILL.md",
             "LICENSE",
-            "PROVENANCE.md"
+            "PROVENANCE.md",
+            "thinking-five-whys-plus/SKILL.md"
           ],
           "compatibility": {
             "kind": "instruction-only",
@@ -95,9 +95,9 @@
           "id": "thinking-jobs-to-be-done",
           "directory": "thinking-jobs-to-be-done",
           "readable": [
-            "thinking-jobs-to-be-done/SKILL.md",
             "LICENSE",
-            "PROVENANCE.md"
+            "PROVENANCE.md",
+            "thinking-jobs-to-be-done/SKILL.md"
           ],
           "compatibility": {
             "kind": "instruction-only",
@@ -109,9 +109,9 @@
           "id": "thinking-kepner-tregoe",
           "directory": "thinking-kepner-tregoe",
           "readable": [
-            "thinking-kepner-tregoe/SKILL.md",
             "LICENSE",
-            "PROVENANCE.md"
+            "PROVENANCE.md",
+            "thinking-kepner-tregoe/SKILL.md"
           ],
           "compatibility": {
             "kind": "instruction-only",
@@ -123,9 +123,9 @@
           "id": "thinking-lindy-effect",
           "directory": "thinking-lindy-effect",
           "readable": [
-            "thinking-lindy-effect/SKILL.md",
             "LICENSE",
-            "PROVENANCE.md"
+            "PROVENANCE.md",
+            "thinking-lindy-effect/SKILL.md"
           ],
           "compatibility": {
             "kind": "instruction-only",
@@ -137,9 +137,9 @@
           "id": "thinking-map-territory",
           "directory": "thinking-map-territory",
           "readable": [
-            "thinking-map-territory/SKILL.md",
             "LICENSE",
-            "PROVENANCE.md"
+            "PROVENANCE.md",
+            "thinking-map-territory/SKILL.md"
           ],
           "compatibility": {
             "kind": "instruction-only",
@@ -151,9 +151,9 @@
           "id": "thinking-margin-of-safety",
           "directory": "thinking-margin-of-safety",
           "readable": [
-            "thinking-margin-of-safety/SKILL.md",
             "LICENSE",
-            "PROVENANCE.md"
+            "PROVENANCE.md",
+            "thinking-margin-of-safety/SKILL.md"
           ],
           "compatibility": {
             "kind": "instruction-only",
@@ -165,9 +165,9 @@
           "id": "thinking-model-combination",
           "directory": "thinking-model-combination",
           "readable": [
-            "thinking-model-combination/SKILL.md",
             "LICENSE",
-            "PROVENANCE.md"
+            "PROVENANCE.md",
+            "thinking-model-combination/SKILL.md"
           ],
           "compatibility": {
             "kind": "instruction-only",
@@ -180,10 +180,10 @@
           "directory": "thinking-model-router",
           "adaptation": "thinking-model-router/WEBHARNESS.md",
           "readable": [
-            "thinking-model-router/SKILL.md",
-            "thinking-model-router/WEBHARNESS.md",
             "LICENSE",
-            "PROVENANCE.md"
+            "PROVENANCE.md",
+            "thinking-model-router/SKILL.md",
+            "thinking-model-router/WEBHARNESS.md"
           ],
           "compatibility": {
             "kind": "requires-tools",
@@ -198,9 +198,9 @@
           "id": "thinking-ooda",
           "directory": "thinking-ooda",
           "readable": [
-            "thinking-ooda/SKILL.md",
             "LICENSE",
-            "PROVENANCE.md"
+            "PROVENANCE.md",
+            "thinking-ooda/SKILL.md"
           ],
           "compatibility": {
             "kind": "instruction-only",
@@ -212,9 +212,9 @@
           "id": "thinking-opportunity-cost",
           "directory": "thinking-opportunity-cost",
           "readable": [
-            "thinking-opportunity-cost/SKILL.md",
             "LICENSE",
-            "PROVENANCE.md"
+            "PROVENANCE.md",
+            "thinking-opportunity-cost/SKILL.md"
           ],
           "compatibility": {
             "kind": "instruction-only",
@@ -226,9 +226,9 @@
           "id": "thinking-pre-mortem",
           "directory": "thinking-pre-mortem",
           "readable": [
-            "thinking-pre-mortem/SKILL.md",
             "LICENSE",
-            "PROVENANCE.md"
+            "PROVENANCE.md",
+            "thinking-pre-mortem/SKILL.md"
           ],
           "compatibility": {
             "kind": "instruction-only",
@@ -240,9 +240,9 @@
           "id": "thinking-probabilistic",
           "directory": "thinking-probabilistic",
           "readable": [
-            "thinking-probabilistic/SKILL.md",
             "LICENSE",
-            "PROVENANCE.md"
+            "PROVENANCE.md",
+            "thinking-probabilistic/SKILL.md"
           ],
           "compatibility": {
             "kind": "instruction-only",
@@ -254,9 +254,9 @@
           "id": "thinking-red-team",
           "directory": "thinking-red-team",
           "readable": [
-            "thinking-red-team/SKILL.md",
             "LICENSE",
-            "PROVENANCE.md"
+            "PROVENANCE.md",
+            "thinking-red-team/SKILL.md"
           ],
           "compatibility": {
             "kind": "instruction-only",
@@ -268,9 +268,9 @@
           "id": "thinking-reversibility",
           "directory": "thinking-reversibility",
           "readable": [
-            "thinking-reversibility/SKILL.md",
             "LICENSE",
-            "PROVENANCE.md"
+            "PROVENANCE.md",
+            "thinking-reversibility/SKILL.md"
           ],
           "compatibility": {
             "kind": "instruction-only",
@@ -282,9 +282,9 @@
           "id": "thinking-scientific-method",
           "directory": "thinking-scientific-method",
           "readable": [
-            "thinking-scientific-method/SKILL.md",
             "LICENSE",
-            "PROVENANCE.md"
+            "PROVENANCE.md",
+            "thinking-scientific-method/SKILL.md"
           ],
           "compatibility": {
             "kind": "instruction-only",
@@ -296,9 +296,9 @@
           "id": "thinking-second-order",
           "directory": "thinking-second-order",
           "readable": [
-            "thinking-second-order/SKILL.md",
             "LICENSE",
-            "PROVENANCE.md"
+            "PROVENANCE.md",
+            "thinking-second-order/SKILL.md"
           ],
           "compatibility": {
             "kind": "instruction-only",
@@ -310,9 +310,9 @@
           "id": "thinking-socratic",
           "directory": "thinking-socratic",
           "readable": [
-            "thinking-socratic/SKILL.md",
             "LICENSE",
-            "PROVENANCE.md"
+            "PROVENANCE.md",
+            "thinking-socratic/SKILL.md"
           ],
           "compatibility": {
             "kind": "instruction-only",
@@ -324,9 +324,9 @@
           "id": "thinking-steel-manning",
           "directory": "thinking-steel-manning",
           "readable": [
-            "thinking-steel-manning/SKILL.md",
             "LICENSE",
-            "PROVENANCE.md"
+            "PROVENANCE.md",
+            "thinking-steel-manning/SKILL.md"
           ],
           "compatibility": {
             "kind": "instruction-only",
@@ -338,9 +338,9 @@
           "id": "thinking-systems",
           "directory": "thinking-systems",
           "readable": [
-            "thinking-systems/SKILL.md",
             "LICENSE",
-            "PROVENANCE.md"
+            "PROVENANCE.md",
+            "thinking-systems/SKILL.md"
           ],
           "compatibility": {
             "kind": "instruction-only",
@@ -352,9 +352,9 @@
           "id": "thinking-theory-of-constraints",
           "directory": "thinking-theory-of-constraints",
           "readable": [
-            "thinking-theory-of-constraints/SKILL.md",
             "LICENSE",
-            "PROVENANCE.md"
+            "PROVENANCE.md",
+            "thinking-theory-of-constraints/SKILL.md"
           ],
           "compatibility": {
             "kind": "instruction-only",
@@ -366,9 +366,9 @@
           "id": "thinking-thought-experiment",
           "directory": "thinking-thought-experiment",
           "readable": [
-            "thinking-thought-experiment/SKILL.md",
             "LICENSE",
-            "PROVENANCE.md"
+            "PROVENANCE.md",
+            "thinking-thought-experiment/SKILL.md"
           ],
           "compatibility": {
             "kind": "instruction-only",
@@ -380,9 +380,9 @@
           "id": "thinking-triz",
           "directory": "thinking-triz",
           "readable": [
-            "thinking-triz/SKILL.md",
             "LICENSE",
-            "PROVENANCE.md"
+            "PROVENANCE.md",
+            "thinking-triz/SKILL.md"
           ],
           "compatibility": {
             "kind": "instruction-only",
@@ -394,14 +394,2922 @@
           "id": "thinking-via-negativa",
           "directory": "thinking-via-negativa",
           "readable": [
-            "thinking-via-negativa/SKILL.md",
             "LICENSE",
-            "PROVENANCE.md"
+            "PROVENANCE.md",
+            "thinking-via-negativa/SKILL.md"
           ],
           "compatibility": {
             "kind": "instruction-only",
             "requires": [],
             "verification": "reviewed"
+          }
+        }
+      ]
+    },
+    {
+      "id": "academic",
+      "root": "packs/academic",
+      "license": "Mixed upstream terms; operator import snapshot, per-skill notices retained",
+      "source": "JevShelf collection manifest + operator My Skills backup",
+      "skills": [
+        {
+          "id": "academic-paper",
+          "directory": "academic-paper",
+          "readable": [
+            "CONTRIBUTING.md",
+            "GOVERNANCE.md",
+            "LICENSE",
+            "POSITIONING.md",
+            "PROVENANCE.md",
+            "SECURITY.md",
+            "THIRD_PARTY.md",
+            "academic-paper/SKILL.md",
+            "academic-paper/agents/abstract_bilingual_agent.md",
+            "academic-paper/agents/argument_builder_agent.md",
+            "academic-paper/agents/citation_compliance_agent.md",
+            "academic-paper/agents/draft_writer_agent.md",
+            "academic-paper/agents/formatter_agent.md",
+            "academic-paper/agents/intake_agent.md",
+            "academic-paper/agents/literature_strategist_agent.md",
+            "academic-paper/agents/peer_reviewer_agent.md",
+            "academic-paper/agents/revision_coach_agent.md",
+            "academic-paper/agents/socratic_mentor_agent.md",
+            "academic-paper/agents/structure_architect_agent.md",
+            "academic-paper/agents/visualization_agent.md",
+            "academic-paper/examples/chinese_paper_example.md",
+            "academic-paper/examples/clinical_citation_verification_checklist.md",
+            "academic-paper/examples/clinical_epistemic_status_example.md",
+            "academic-paper/examples/commitment_ledger_example.md",
+            "academic-paper/examples/imrad_hei_example.md",
+            "academic-paper/examples/literature_review_example.md",
+            "academic-paper/examples/plan_mode_guided_writing.md",
+            "academic-paper/examples/revision_mode_example.md",
+            "academic-paper/examples/revision_recovery_example.md",
+            "academic-paper/examples/version_family_reconciliation_example.md",
+            "academic-paper/references/abstract_writing_guide.md",
+            "academic-paper/references/academic_writing_style.md",
+            "academic-paper/references/anti_leakage_protocol.md",
+            "academic-paper/references/apa7_chinese_citation_guide.md",
+            "academic-paper/references/apa7_extended_guide.md",
+            "academic-paper/references/changelog.md",
+            "academic-paper/references/citation_format_switcher.md",
+            "academic-paper/references/committee_correspondence_protocol.md",
+            "academic-paper/references/credit_authorship_guide.md",
+            "academic-paper/references/disclosure_mode_protocol.md",
+            "academic-paper/references/domain_evidence_profiles.md",
+            "academic-paper/references/failure_paths.md",
+            "academic-paper/references/funding_statement_guide.md",
+            "academic-paper/references/hei_domain_glossary.md",
+            "academic-paper/references/intro_title_rhetoric_guide.md",
+            "academic-paper/references/journal_submission_guide.md",
+            "academic-paper/references/latex_template_reference.md",
+            "academic-paper/references/mode_selection_guide.md",
+            "academic-paper/references/paper_structure_patterns.md",
+            "academic-paper/references/plan_mode_protocol.md",
+            "academic-paper/references/policy_anchor_disclosure_protocol.md",
+            "academic-paper/references/policy_anchor_table.md",
+            "academic-paper/references/revision_patch_protocol.md",
+            "academic-paper/references/statistical_visualization_standards.md",
+            "academic-paper/references/venue_disclosure_policies.md",
+            "academic-paper/references/vlm_figure_verification.md",
+            "academic-paper/references/workflow_phase_details.md",
+            "academic-paper/references/writing_judgment_framework.md",
+            "academic-paper/references/writing_quality_check.md",
+            "academic-paper/templates/bilingual_abstract_template.md",
+            "academic-paper/templates/case_study_template.md",
+            "academic-paper/templates/conference_paper_template.md",
+            "academic-paper/templates/credit_statement_template.md",
+            "academic-paper/templates/funding_statement_template.md",
+            "academic-paper/templates/imrad_template.md",
+            "academic-paper/templates/latex_article_template.tex",
+            "academic-paper/templates/literature_review_template.md",
+            "academic-paper/templates/policy_brief_template.md",
+            "academic-paper/templates/revision_tracking_template.md",
+            "academic-paper/templates/theoretical_paper_template.md",
+            "academic-pipeline/agents/pipeline_orchestrator_agent.md",
+            "academic-pipeline/examples/full_pipeline_example.md",
+            "academic-pipeline/references/adapters/overview.md",
+            "academic-pipeline/references/literature_corpus_consumers.md",
+            "academic-pipeline/references/passport_as_reset_boundary.md",
+            "academic-pipeline/references/pipeline_state_machine.md",
+            "academic-pipeline/references/plagiarism_detection_protocol.md",
+            "audits/iso42001-spirit-gap-assessment-2026-08-17.md",
+            "deep-research/agents/bibliography_agent.md",
+            "docs/ARCHITECTURE.md",
+            "docs/CONTROL_AVAILABILITY.md",
+            "docs/DATA_FLOWS.md",
+            "docs/PERFORMANCE.md",
+            "docs/SETUP.md",
+            "docs/cross-paper-workflow.md",
+            "docs/design/2026-04-26-ars-v3.6.5-consumer-integration-design.md",
+            "docs/design/2026-04-29-ars-v3.6.7-downstream-agent-pattern-protection-spec.md",
+            "docs/design/2026-04-30-ars-v3.6.7-step-6-orchestrator-hooks-spec.md",
+            "docs/design/2026-05-15-issue-103-claim-alignment-audit-decision.md",
+            "docs/design/2026-05-15-issue-103-claim-alignment-audit-spec.md",
+            "docs/design/2026-05-15-issue-111-slr-lineage-emission-design.md",
+            "docs/design/2026-06-02-co-scientist-220-l1-hidden-ranking.md",
+            "docs/design/2026-06-02-co-scientist-221-l2-feedback-propagation.md",
+            "docs/design/2026-06-02-co-scientist-222-l3-transfer-matrix.md",
+            "docs/design/2026-06-02-co-scientist-223-l4-control-plane-ownership.md",
+            "docs/design/2026-06-08-260-experiment-provenance-intake-spec.md",
+            "docs/design/2026-06-08-kong-255-l1-copilot-not-auto-research.md",
+            "docs/design/2026-06-08-kong-255-l2-advisory-not-generation.md",
+            "docs/design/2026-06-15-439-format-profile-design.md",
+            "examples/passport_with_experiment_provenance.yaml",
+            "examples/pi/README.md",
+            "examples/pi/inventory.json",
+            "examples/pi/model-portability.md",
+            "examples/pi/run-log.md",
+            "examples/pi/runtime/ars-pi-doctor.txt",
+            "examples/pi/runtime/package-load-validation.json",
+            "examples/pi/stage-01/revised-research-report.md",
+            "examples/pi/stage-02.5/focused-reverification-report.md",
+            "examples/pi/stage-02/course-paper-draft.md",
+            "examples/pi/stage-03/editorial-decision-and-revision-roadmap.md",
+            "examples/pi/stage-03p/verification-review-report.md",
+            "examples/pi/stage-04.5/final-integrity-verification-report.md",
+            "examples/pi/stage-04/response-to-reviewers.md",
+            "examples/pi/stage-04p/validation-report.md",
+            "examples/pi/stage-05/cite-time-gate-pass.json",
+            "examples/pi/stage-05/cite-time-gate-refusal-report.md",
+            "examples/pi/stage-05/cite-time-gate-refusal.json",
+            "examples/pi/stage-05/full-checkpoint.md",
+            "examples/pi/stage-05/package/format-validation.md",
+            "examples/pi/stage-05/package/paper.md",
+            "examples/pi/stage-06/process-record-en.md",
+            "examples/pi/stage-06/terminal-checkpoint.md",
+            "examples/pi/state/pipeline-state.json",
+            "pi/README.md",
+            "scripts/adapters/README.md",
+            "scripts/adapters/_common.py",
+            "scripts/adapters/examples/folder_scan/expected_passport.yaml",
+            "scripts/adapters/examples/folder_scan/expected_rejection_log.yaml",
+            "scripts/adapters/examples/folder_scan/input_fixture/Chen2024_AIAssessment.pdf",
+            "scripts/adapters/examples/folder_scan/input_fixture/Wang_2023_formative_feedback.pdf",
+            "scripts/adapters/examples/folder_scan/input_fixture/paper1.pdf",
+            "scripts/adapters/examples/folder_scan/input_fixture/\u4e2d\u6587\u6a94\u540d_2024.pdf",
+            "scripts/adapters/examples/obsidian/expected_passport.yaml",
+            "scripts/adapters/examples/obsidian/expected_rejection_log.yaml",
+            "scripts/adapters/examples/obsidian/input_fixture/vault/.gitkeep",
+            "scripts/adapters/examples/obsidian/input_fixture/vault/.obsidian/app.json",
+            "scripts/adapters/examples/obsidian/input_fixture/vault/_templates/tmpl.md",
+            "scripts/adapters/examples/obsidian/input_fixture/vault/chen2024ai.md",
+            "scripts/adapters/examples/obsidian/input_fixture/vault/invalid.md",
+            "scripts/adapters/examples/obsidian/input_fixture/vault/wang2023formative.md",
+            "scripts/adapters/examples/zotero/expected_passport.yaml",
+            "scripts/adapters/examples/zotero/expected_rejection_log.yaml",
+            "scripts/adapters/examples/zotero/input_fixture/.gitkeep",
+            "scripts/adapters/examples/zotero/input_fixture/export.json",
+            "scripts/adapters/folder_scan.py",
+            "scripts/adapters/obsidian.py",
+            "scripts/adapters/tests/.gitkeep",
+            "scripts/adapters/tests/conftest.py",
+            "scripts/adapters/tests/test_check_corpus_consumer_protocol.py",
+            "scripts/adapters/tests/test_check_literature_corpus_schema.py",
+            "scripts/adapters/tests/test_common.py",
+            "scripts/adapters/tests/test_conftest.py",
+            "scripts/adapters/tests/test_folder_scan.py",
+            "scripts/adapters/tests/test_literature_corpus_entry_schema.py",
+            "scripts/adapters/tests/test_obsidian.py",
+            "scripts/adapters/tests/test_rejection_log_schema.py",
+            "scripts/adapters/tests/test_sync_adapter_docs.py",
+            "scripts/adapters/tests/test_zotero.py",
+            "scripts/adapters/zotero.py",
+            "shared/agents/compliance_agent.md",
+            "shared/artifact_reproducibility_pattern.md",
+            "shared/benchmark_report_pattern.md",
+            "shared/bibliographic_integrity_signals.md",
+            "shared/compliance_checkpoint_protocol.md",
+            "shared/compliance_report.schema.json",
+            "shared/contracts/degradation_registry.json",
+            "shared/contracts/passport/audit_artifact_entry.schema.json",
+            "shared/contracts/passport/claim_audit_result.schema.json",
+            "shared/contracts/passport/claim_drift.schema.json",
+            "shared/contracts/passport/claim_intent_manifest.schema.json",
+            "shared/contracts/passport/constraint_violation.schema.json",
+            "shared/contracts/passport/excluded_source_entry.schema.json",
+            "shared/contracts/passport/experiment_alignment_result.schema.json",
+            "shared/contracts/passport/experiment_provenance_entry.schema.json",
+            "shared/contracts/passport/inquiry_ledger_ref.schema.json",
+            "shared/contracts/passport/literature_corpus_entry.schema.json",
+            "shared/contracts/passport/rejection_log.schema.json",
+            "shared/contracts/passport/reset_ledger_entry.schema.json",
+            "shared/contracts/passport/standing_constraint_entry.schema.json",
+            "shared/contracts/passport/uncited_assertion.schema.json",
+            "shared/contracts/re_review/traceability.schema.json",
+            "shared/contracts/reviewer/review_panel_provenance_carrier.schema.json",
+            "shared/contracts/revision/author_adjudication.schema.json",
+            "shared/contracts/revision/author_adjudication_input.schema.json",
+            "shared/contracts/revision/claim_surface_manifest.schema.json",
+            "shared/contracts/revision/integrity_correction_authorization.schema.json",
+            "shared/contracts/revision/revision_evidence_bundle.schema.json",
+            "shared/contracts/revision/revision_roadmap.schema.json",
+            "shared/cross_model_verification.md",
+            "shared/ground_truth_isolation_pattern.md",
+            "shared/handoff_schemas.md",
+            "shared/output_language_pair.md",
+            "shared/prisma_trAIce_protocol.md",
+            "shared/references/cross_document_consistency_advisory_protocol.md",
+            "shared/references/routing_core.md",
+            "shared/references/word_count_conventions.md",
+            "tests/fixtures/issue_133_routing/CALIBRATION_LOG.md"
+          ],
+          "compatibility": {
+            "kind": "host-specific",
+            "requires": [
+              "External runtime or host tools require configuration before execution"
+            ],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "academic-paper-reviewer",
+          "directory": "academic-paper-reviewer",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "academic-paper-reviewer/SKILL.md",
+            "academic-paper-reviewer/agents/devils_advocate_reviewer_agent.md",
+            "academic-paper-reviewer/agents/domain_reviewer_agent.md",
+            "academic-paper-reviewer/agents/editorial_synthesizer_agent.md",
+            "academic-paper-reviewer/agents/eic_agent.md",
+            "academic-paper-reviewer/agents/field_analyst_agent.md",
+            "academic-paper-reviewer/agents/methodology_reviewer_agent.md",
+            "academic-paper-reviewer/agents/perspective_reviewer_agent.md",
+            "academic-paper-reviewer/examples/hei_paper_review_example.md",
+            "academic-paper-reviewer/examples/interdisciplinary_review_example.md",
+            "academic-paper-reviewer/examples/subclaim_decomposition_example.md",
+            "academic-paper-reviewer/references/calibration_mode_protocol.md",
+            "academic-paper-reviewer/references/changelog.md",
+            "academic-paper-reviewer/references/editorial_decision_standards.md",
+            "academic-paper-reviewer/references/guided_mode_protocol.md",
+            "academic-paper-reviewer/references/integration_guide.md",
+            "academic-paper-reviewer/references/quality_rubrics.md",
+            "academic-paper-reviewer/references/re_review_mode_protocol.md",
+            "academic-paper-reviewer/references/review_criteria_framework.md",
+            "academic-paper-reviewer/references/review_panel_provenance_protocol.md",
+            "academic-paper-reviewer/references/review_quality_thinking.md",
+            "academic-paper-reviewer/references/reviewer_sprint_prompt_source.md",
+            "academic-paper-reviewer/references/sprint_contract_protocol.md",
+            "academic-paper-reviewer/references/statistical_reporting_standards.md",
+            "academic-paper-reviewer/references/top_journals_by_field.md",
+            "academic-paper-reviewer/templates/editorial_decision_template.md",
+            "academic-paper-reviewer/templates/peer_review_report_template.md",
+            "academic-paper-reviewer/templates/revision_response_template.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "academic-pipeline",
+          "directory": "academic-pipeline",
+          "readable": [
+            "CONTRIBUTING.md",
+            "GOVERNANCE.md",
+            "LICENSE",
+            "POSITIONING.md",
+            "PROVENANCE.md",
+            "SECURITY.md",
+            "THIRD_PARTY.md",
+            "academic-paper/agents/literature_strategist_agent.md",
+            "academic-paper/references/abstract_writing_guide.md",
+            "academic-paper/references/anti_leakage_protocol.md",
+            "academic-paper/references/policy_anchor_disclosure_protocol.md",
+            "academic-pipeline/SKILL.md",
+            "academic-pipeline/agents/claim_ref_alignment_audit_agent.md",
+            "academic-pipeline/agents/collaboration_depth_agent.md",
+            "academic-pipeline/agents/integrity_verification_agent.md",
+            "academic-pipeline/agents/pipeline_orchestrator_agent.md",
+            "academic-pipeline/agents/state_tracker_agent.md",
+            "academic-pipeline/examples/full_pipeline_example.md",
+            "academic-pipeline/examples/integrity_failure_recovery.md",
+            "academic-pipeline/examples/mid_entry_example.md",
+            "academic-pipeline/references/adapters/overview.md",
+            "academic-pipeline/references/ai_research_failure_modes.md",
+            "academic-pipeline/references/changelog.md",
+            "academic-pipeline/references/claim_audit_calibration_protocol.md",
+            "academic-pipeline/references/claim_verification_protocol.md",
+            "academic-pipeline/references/external_review_protocol.md",
+            "academic-pipeline/references/integrity_review_protocol.md",
+            "academic-pipeline/references/literature_corpus_consumers.md",
+            "academic-pipeline/references/mode_advisor.md",
+            "academic-pipeline/references/passport_as_reset_boundary.md",
+            "academic-pipeline/references/pipeline_state_machine.md",
+            "academic-pipeline/references/plagiarism_detection_protocol.md",
+            "academic-pipeline/references/process_summary_protocol.md",
+            "academic-pipeline/references/progress_dashboard_template.md",
+            "academic-pipeline/references/reinforcement_content.md",
+            "academic-pipeline/references/reproducibility_audit.md",
+            "academic-pipeline/references/score_trajectory_protocol.md",
+            "academic-pipeline/references/team_collaboration_protocol.md",
+            "academic-pipeline/references/two_stage_review_protocol.md",
+            "academic-pipeline/templates/pipeline_status_template.md",
+            "audits/iso42001-spirit-gap-assessment-2026-08-17.md",
+            "deep-research/agents/bibliography_agent.md",
+            "docs/ARCHITECTURE.md",
+            "docs/CONTROL_AVAILABILITY.md",
+            "docs/DATA_FLOWS.md",
+            "docs/PERFORMANCE.md",
+            "docs/SETUP.md",
+            "docs/cross-paper-workflow.md",
+            "docs/design/2026-04-26-ars-v3.6.5-consumer-integration-design.md",
+            "docs/design/2026-04-29-ars-v3.6.7-downstream-agent-pattern-protection-spec.md",
+            "docs/design/2026-04-30-ars-v3.6.7-step-6-orchestrator-hooks-spec.md",
+            "docs/design/2026-05-15-issue-103-claim-alignment-audit-decision.md",
+            "docs/design/2026-05-15-issue-103-claim-alignment-audit-spec.md",
+            "docs/design/2026-05-15-issue-111-slr-lineage-emission-design.md",
+            "docs/design/2026-06-02-co-scientist-220-l1-hidden-ranking.md",
+            "docs/design/2026-06-02-co-scientist-221-l2-feedback-propagation.md",
+            "docs/design/2026-06-02-co-scientist-222-l3-transfer-matrix.md",
+            "docs/design/2026-06-02-co-scientist-223-l4-control-plane-ownership.md",
+            "docs/design/2026-06-08-260-experiment-provenance-intake-spec.md",
+            "docs/design/2026-06-08-kong-255-l1-copilot-not-auto-research.md",
+            "docs/design/2026-06-08-kong-255-l2-advisory-not-generation.md",
+            "docs/design/2026-06-15-439-format-profile-design.md",
+            "examples/passport_with_experiment_provenance.yaml",
+            "examples/pi/README.md",
+            "examples/pi/inventory.json",
+            "examples/pi/model-portability.md",
+            "examples/pi/run-log.md",
+            "examples/pi/runtime/ars-pi-doctor.txt",
+            "examples/pi/runtime/package-load-validation.json",
+            "examples/pi/stage-01/revised-research-report.md",
+            "examples/pi/stage-02.5/focused-reverification-report.md",
+            "examples/pi/stage-02/course-paper-draft.md",
+            "examples/pi/stage-03/editorial-decision-and-revision-roadmap.md",
+            "examples/pi/stage-03p/verification-review-report.md",
+            "examples/pi/stage-04.5/final-integrity-verification-report.md",
+            "examples/pi/stage-04/response-to-reviewers.md",
+            "examples/pi/stage-04p/validation-report.md",
+            "examples/pi/stage-05/cite-time-gate-pass.json",
+            "examples/pi/stage-05/cite-time-gate-refusal-report.md",
+            "examples/pi/stage-05/cite-time-gate-refusal.json",
+            "examples/pi/stage-05/full-checkpoint.md",
+            "examples/pi/stage-05/package/format-validation.md",
+            "examples/pi/stage-05/package/paper.md",
+            "examples/pi/stage-06/process-record-en.md",
+            "examples/pi/stage-06/terminal-checkpoint.md",
+            "examples/pi/state/pipeline-state.json",
+            "pi/README.md",
+            "scripts/adapters/README.md",
+            "scripts/adapters/_common.py",
+            "scripts/adapters/examples/folder_scan/expected_passport.yaml",
+            "scripts/adapters/examples/folder_scan/expected_rejection_log.yaml",
+            "scripts/adapters/examples/folder_scan/input_fixture/Chen2024_AIAssessment.pdf",
+            "scripts/adapters/examples/folder_scan/input_fixture/Wang_2023_formative_feedback.pdf",
+            "scripts/adapters/examples/folder_scan/input_fixture/paper1.pdf",
+            "scripts/adapters/examples/folder_scan/input_fixture/\u4e2d\u6587\u6a94\u540d_2024.pdf",
+            "scripts/adapters/examples/obsidian/expected_passport.yaml",
+            "scripts/adapters/examples/obsidian/expected_rejection_log.yaml",
+            "scripts/adapters/examples/obsidian/input_fixture/vault/.gitkeep",
+            "scripts/adapters/examples/obsidian/input_fixture/vault/.obsidian/app.json",
+            "scripts/adapters/examples/obsidian/input_fixture/vault/_templates/tmpl.md",
+            "scripts/adapters/examples/obsidian/input_fixture/vault/chen2024ai.md",
+            "scripts/adapters/examples/obsidian/input_fixture/vault/invalid.md",
+            "scripts/adapters/examples/obsidian/input_fixture/vault/wang2023formative.md",
+            "scripts/adapters/examples/zotero/expected_passport.yaml",
+            "scripts/adapters/examples/zotero/expected_rejection_log.yaml",
+            "scripts/adapters/examples/zotero/input_fixture/.gitkeep",
+            "scripts/adapters/examples/zotero/input_fixture/export.json",
+            "scripts/adapters/folder_scan.py",
+            "scripts/adapters/obsidian.py",
+            "scripts/adapters/tests/.gitkeep",
+            "scripts/adapters/tests/conftest.py",
+            "scripts/adapters/tests/test_check_corpus_consumer_protocol.py",
+            "scripts/adapters/tests/test_check_literature_corpus_schema.py",
+            "scripts/adapters/tests/test_common.py",
+            "scripts/adapters/tests/test_conftest.py",
+            "scripts/adapters/tests/test_folder_scan.py",
+            "scripts/adapters/tests/test_literature_corpus_entry_schema.py",
+            "scripts/adapters/tests/test_obsidian.py",
+            "scripts/adapters/tests/test_rejection_log_schema.py",
+            "scripts/adapters/tests/test_sync_adapter_docs.py",
+            "scripts/adapters/tests/test_zotero.py",
+            "scripts/adapters/zotero.py",
+            "shared/agents/compliance_agent.md",
+            "shared/artifact_reproducibility_pattern.md",
+            "shared/benchmark_report_pattern.md",
+            "shared/bibliographic_integrity_signals.md",
+            "shared/compliance_checkpoint_protocol.md",
+            "shared/compliance_report.schema.json",
+            "shared/contracts/degradation_registry.json",
+            "shared/contracts/passport/audit_artifact_entry.schema.json",
+            "shared/contracts/passport/claim_audit_result.schema.json",
+            "shared/contracts/passport/claim_drift.schema.json",
+            "shared/contracts/passport/claim_intent_manifest.schema.json",
+            "shared/contracts/passport/constraint_violation.schema.json",
+            "shared/contracts/passport/excluded_source_entry.schema.json",
+            "shared/contracts/passport/experiment_alignment_result.schema.json",
+            "shared/contracts/passport/experiment_provenance_entry.schema.json",
+            "shared/contracts/passport/inquiry_ledger_ref.schema.json",
+            "shared/contracts/passport/literature_corpus_entry.schema.json",
+            "shared/contracts/passport/rejection_log.schema.json",
+            "shared/contracts/passport/reset_ledger_entry.schema.json",
+            "shared/contracts/passport/standing_constraint_entry.schema.json",
+            "shared/contracts/passport/uncited_assertion.schema.json",
+            "shared/contracts/re_review/traceability.schema.json",
+            "shared/contracts/reviewer/review_panel_provenance_carrier.schema.json",
+            "shared/contracts/revision/author_adjudication.schema.json",
+            "shared/contracts/revision/author_adjudication_input.schema.json",
+            "shared/contracts/revision/claim_surface_manifest.schema.json",
+            "shared/contracts/revision/integrity_correction_authorization.schema.json",
+            "shared/contracts/revision/revision_evidence_bundle.schema.json",
+            "shared/contracts/revision/revision_roadmap.schema.json",
+            "shared/cross_model_verification.md",
+            "shared/ground_truth_isolation_pattern.md",
+            "shared/handoff_schemas.md",
+            "shared/output_language_pair.md",
+            "shared/prisma_trAIce_protocol.md",
+            "shared/references/cross_document_consistency_advisory_protocol.md",
+            "shared/references/routing_core.md",
+            "shared/references/word_count_conventions.md",
+            "tests/fixtures/issue_133_routing/CALIBRATION_LOG.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "deep-research",
+          "directory": "deep-research",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "academic-paper/agents/literature_strategist_agent.md",
+            "academic-pipeline/references/literature_corpus_consumers.md",
+            "deep-research/SKILL.md",
+            "deep-research/agents/bibliography_agent.md",
+            "deep-research/agents/devils_advocate_agent.md",
+            "deep-research/agents/editor_in_chief_agent.md",
+            "deep-research/agents/ethics_review_agent.md",
+            "deep-research/agents/meta_analysis_agent.md",
+            "deep-research/agents/monitoring_agent.md",
+            "deep-research/agents/report_compiler_agent.md",
+            "deep-research/agents/research_architect_agent.md",
+            "deep-research/agents/research_question_agent.md",
+            "deep-research/agents/risk_of_bias_agent.md",
+            "deep-research/agents/socratic_mentor_agent.md",
+            "deep-research/agents/source_verification_agent.md",
+            "deep-research/agents/synthesis_agent.md",
+            "deep-research/agents/timeline_extraction_agent.md",
+            "deep-research/examples/exploratory_research.md",
+            "deep-research/examples/fact_check_mode.md",
+            "deep-research/examples/handoff_to_paper.md",
+            "deep-research/examples/idea_diversity_coverage_gap_advisory.md",
+            "deep-research/examples/policy_analysis.md",
+            "deep-research/examples/review_mode.md",
+            "deep-research/examples/socratic_guided_research.md",
+            "deep-research/examples/systematic_review.md",
+            "deep-research/references/apa7_style_guide.md",
+            "deep-research/references/argumentation_reasoning_framework.md",
+            "deep-research/references/arxiv_api_protocol.md",
+            "deep-research/references/changelog.md",
+            "deep-research/references/chinese_literature_api_protocol.md",
+            "deep-research/references/cross_agent_quality_definitions.md",
+            "deep-research/references/crossref_api_protocol.md",
+            "deep-research/references/equator_reporting_guidelines.md",
+            "deep-research/references/ethics_checklist.md",
+            "deep-research/references/failure_paths.md",
+            "deep-research/references/interdisciplinary_bridges.md",
+            "deep-research/references/irb_decision_tree.md",
+            "deep-research/references/literature_monitoring_strategies.md",
+            "deep-research/references/logical_fallacies.md",
+            "deep-research/references/methodology_patterns.md",
+            "deep-research/references/mode_selection_guide.md",
+            "deep-research/references/openalex_api_protocol.md",
+            "deep-research/references/preregistration_guide.md",
+            "deep-research/references/semantic_scholar_api_protocol.md",
+            "deep-research/references/socratic_mode_protocol.md",
+            "deep-research/references/socratic_questioning_framework.md",
+            "deep-research/references/source_quality_hierarchy.md",
+            "deep-research/references/systematic_review_protocol.md",
+            "deep-research/references/systematic_review_toolkit.md",
+            "deep-research/templates/evidence_assessment_template.md",
+            "deep-research/templates/literature_matrix_template.md",
+            "deep-research/templates/preregistration_template.md",
+            "deep-research/templates/prisma_protocol_template.md",
+            "deep-research/templates/prisma_report_template.md",
+            "deep-research/templates/research_brief_template.md",
+            "docs/design/2026-04-26-ars-v3.6.5-consumer-integration-design.md"
+          ],
+          "compatibility": {
+            "kind": "host-specific",
+            "requires": [
+              "External runtime or host tools require configuration before execution"
+            ],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "sr-screener",
+          "directory": "sr-screener",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "sr-screener/SKILL.md",
+            "sr-screener/agents/protocol_architect_agent.md",
+            "sr-screener/agents/qc_auditor_agent.md",
+            "sr-screener/agents/reporter_agent.md",
+            "sr-screener/agents/screening_reviewer_agent.md",
+            "sr-screener/examples/example_config_dta.json",
+            "sr-screener/examples/example_protocol_dta.md",
+            "sr-screener/examples/quick_screen_example.md",
+            "sr-screener/references/decision_rules.md",
+            "sr-screener/references/failure_paths.md",
+            "sr-screener/references/orchestration.md",
+            "sr-screener/references/protocol_template.md",
+            "sr-screener/references/quality_control.md",
+            "sr-screener/references/reporting_and_handoff.md",
+            "sr-screener/references/reviewer_roles.md",
+            "sr-screener/scripts/build_outputs.py",
+            "sr-screener/scripts/build_workflow.py",
+            "sr-screener/scripts/merge_decisions.py",
+            "sr-screener/scripts/prepare_fulltext.py",
+            "sr-screener/scripts/prepare_records.py",
+            "sr-screener/scripts/srlib.py",
+            "sr-screener/templates/prompts.md",
+            "sr-screener/templates/screening_config.template.json",
+            "sr-screener/templates/workflows/ft_screening.template.js",
+            "sr-screener/templates/workflows/ta_screening.template.js"
+          ],
+          "compatibility": {
+            "kind": "requires-tools",
+            "requires": [
+              "External runtime or host tools require configuration before execution"
+            ],
+            "verification": "unverified"
+          }
+        }
+      ]
+    },
+    {
+      "id": "active",
+      "root": "packs/active",
+      "license": "Mixed upstream terms; operator import snapshot, per-skill notices retained",
+      "source": "Operator My Skills backup: active Skillshare skills incl. the bundled Aegis method pack",
+      "skills": [
+        {
+          "id": "anti-entropy-governance",
+          "directory": "anti-entropy-governance",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "anti-entropy-governance/SKILL.md"
+          ],
+          "compatibility": {
+            "kind": "host-specific",
+            "requires": [
+              "Original host-specific tooling and paths must be adapted before execution"
+            ],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "archify",
+          "directory": "archify",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "archify/LICENSE",
+            "archify/SKILL.md",
+            "archify/THIRD_PARTY_NOTICES.md",
+            "archify/assets/JetBrainsMono-OFL.txt",
+            "archify/assets/template.html",
+            "archify/bin/archify.mjs",
+            "archify/bin/open-artifact.mjs",
+            "archify/bin/preview.mjs",
+            "archify/bin/visual-check.mjs",
+            "archify/brand-marks/README.md",
+            "archify/brand-marks/catalog.json",
+            "archify/delta/architecture-delta.mjs",
+            "archify/examples/agent-run.lifecycle.json",
+            "archify/examples/agent-tool-call.workflow.json",
+            "archify/examples/async-job-roundtrip.sequence.json",
+            "archify/examples/brand-aware-delivery.architecture.json",
+            "archify/examples/cache-miss-request.sequence.json",
+            "archify/examples/checkout-platform.base.architecture.json",
+            "archify/examples/checkout-platform.head.architecture.json",
+            "archify/examples/dataflow-product-analytics.html",
+            "archify/examples/deployment-release.lifecycle.json",
+            "archify/examples/event-stream.dataflow.json",
+            "archify/examples/incident-response.workflow.json",
+            "archify/examples/lifecycle-agent-run.html",
+            "archify/examples/product-analytics.dataflow.json",
+            "archify/examples/production-deployment.architecture.json",
+            "archify/examples/release-delivery.workflow.json",
+            "archify/examples/sequence-cache-miss-request.html",
+            "archify/examples/web-app-rendered.html",
+            "archify/examples/web-app.architecture.json",
+            "archify/examples/workflow-agent-tool-call-rendered.html",
+            "archify/migrations/workflow-v2.mjs",
+            "archify/package-lock.json",
+            "archify/package.json",
+            "archify/recipes/scenarios.mjs",
+            "archify/references/authoring-contract.md",
+            "archify/references/brand-marks.md",
+            "archify/references/delivery-contract.md",
+            "archify/references/viewer-runtime.md",
+            "archify/renderers/architecture/grid.mjs",
+            "archify/renderers/architecture/render-architecture.mjs",
+            "archify/renderers/dataflow/README.md",
+            "archify/renderers/dataflow/render-dataflow.mjs",
+            "archify/renderers/lifecycle/README.md",
+            "archify/renderers/lifecycle/render-lifecycle.mjs",
+            "archify/renderers/sequence/README.md",
+            "archify/renderers/sequence/render-sequence.mjs",
+            "archify/renderers/shared/brand-marks.mjs",
+            "archify/renderers/shared/cli.mjs",
+            "archify/renderers/shared/desktop-readability.mjs",
+            "archify/renderers/shared/diagnostics.mjs",
+            "archify/renderers/shared/engineering-profiles.mjs",
+            "archify/renderers/shared/generated-brand-marks.mjs",
+            "archify/renderers/shared/generated-validators.mjs",
+            "archify/renderers/shared/geometry.mjs",
+            "archify/renderers/shared/i18n.mjs",
+            "archify/renderers/shared/layout-report.mjs",
+            "archify/renderers/shared/legend.mjs",
+            "archify/renderers/shared/output-path.mjs",
+            "archify/renderers/shared/repository-evidence.mjs",
+            "archify/renderers/shared/repository-location.mjs",
+            "archify/renderers/shared/text-fit.mjs",
+            "archify/renderers/shared/utils.mjs",
+            "archify/renderers/shared/validator.mjs",
+            "archify/renderers/workflow/README.md",
+            "archify/renderers/workflow/render-workflow.mjs",
+            "archify/renderers/workflow/workflow-compiler.mjs",
+            "archify/renderers/workflow/workflow-migration-geometry.mjs",
+            "archify/schemas/README.md",
+            "archify/schemas/architecture.schema.json",
+            "archify/schemas/common.schema.json",
+            "archify/schemas/dataflow.schema.json",
+            "archify/schemas/lifecycle.schema.json",
+            "archify/schemas/sequence.schema.json",
+            "archify/schemas/workflow.schema.json",
+            "archify/scripts/check-render-output.mjs",
+            "archify/scripts/check-update.mjs",
+            "archify/scripts/generate-brand-marks.mjs",
+            "archify/scripts/generate-validators.mjs",
+            "archify/scripts/render-examples.mjs",
+            "archify/scripts/update-contract.mjs",
+            "archify/skill-release.json"
+          ],
+          "compatibility": {
+            "kind": "host-specific",
+            "requires": [
+              "External runtime or host tools require configuration before execution"
+            ],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "arm-webharness",
+          "directory": "arm-webharness",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "arm-webharness/SKILL.md"
+          ],
+          "compatibility": {
+            "kind": "host-specific",
+            "requires": [
+              "Original host-specific tooling and paths must be adapted before execution"
+            ],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "brainstorming",
+          "directory": "brainstorming",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "brainstorming/SKILL.md",
+            "brainstorming/expanded-design-guidance.md",
+            "brainstorming/spec-document-reviewer-prompt.md"
+          ],
+          "compatibility": {
+            "kind": "host-specific",
+            "requires": [
+              "Original host-specific tooling and paths must be adapted before execution"
+            ],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "cachebeat",
+          "directory": "cachebeat",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "cachebeat/SKILL.md",
+            "cachebeat/beat.sh"
+          ],
+          "compatibility": {
+            "kind": "requires-tools",
+            "requires": [
+              "External runtime or host tools require configuration before execution"
+            ],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "claive-orchestration",
+          "directory": "claive-orchestration",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "claive-orchestration/SKILL.md"
+          ],
+          "compatibility": {
+            "kind": "host-specific",
+            "requires": [
+              "Original host-specific tooling and paths must be adapted before execution"
+            ],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "claive-routing-codex",
+          "directory": "claive-routing-codex",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "claive-routing-codex/SKILL.md"
+          ],
+          "compatibility": {
+            "kind": "host-specific",
+            "requires": [
+              "Original host-specific tooling and paths must be adapted before execution"
+            ],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "codebase-memory",
+          "directory": "codebase-memory",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "codebase-memory/SKILL.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "communicating-concisely",
+          "directory": "communicating-concisely",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "communicating-concisely/SKILL.md"
+          ],
+          "compatibility": {
+            "kind": "host-specific",
+            "requires": [
+              "Original host-specific tooling and paths must be adapted before execution"
+            ],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "dispatching-parallel-agents",
+          "directory": "dispatching-parallel-agents",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "dispatching-parallel-agents/SKILL.md"
+          ],
+          "compatibility": {
+            "kind": "host-specific",
+            "requires": [
+              "Original host-specific tooling and paths must be adapted before execution"
+            ],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "establishing-project-context",
+          "directory": "establishing-project-context",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "establishing-project-context/CONTEXT-FORMAT.md",
+            "establishing-project-context/SKILL.md"
+          ],
+          "compatibility": {
+            "kind": "host-specific",
+            "requires": [
+              "Original host-specific tooling and paths must be adapted before execution"
+            ],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "executing-plans",
+          "directory": "executing-plans",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "executing-plans/SKILL.md"
+          ],
+          "compatibility": {
+            "kind": "host-specific",
+            "requires": [
+              "Original host-specific tooling and paths must be adapted before execution"
+            ],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "find-skills",
+          "directory": "find-skills",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "find-skills/SKILL.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "finishing-a-development-branch",
+          "directory": "finishing-a-development-branch",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "finishing-a-development-branch/SKILL.md"
+          ],
+          "compatibility": {
+            "kind": "host-specific",
+            "requires": [
+              "Original host-specific tooling and paths must be adapted before execution"
+            ],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "first-principles-review",
+          "directory": "first-principles-review",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "first-principles-review/SKILL.md"
+          ],
+          "compatibility": {
+            "kind": "host-specific",
+            "requires": [
+              "Original host-specific tooling and paths must be adapted before execution"
+            ],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "goal-framing",
+          "directory": "goal-framing",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "goal-framing/SKILL.md"
+          ],
+          "compatibility": {
+            "kind": "host-specific",
+            "requires": [
+              "Original host-specific tooling and paths must be adapted before execution"
+            ],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "impeccable",
+          "directory": "impeccable",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "impeccable/SKILL.md",
+            "impeccable/agents/impeccable_asset_producer.toml",
+            "impeccable/agents/impeccable_documenter.toml",
+            "impeccable/agents/impeccable_finish_reviewer.toml",
+            "impeccable/agents/impeccable_manual_edit_applier.toml",
+            "impeccable/agents/openai.yaml",
+            "impeccable/reference/adapt.md",
+            "impeccable/reference/adapt.native.md",
+            "impeccable/reference/android.md",
+            "impeccable/reference/animate.md",
+            "impeccable/reference/audit.md",
+            "impeccable/reference/audit.native.md",
+            "impeccable/reference/bolder.md",
+            "impeccable/reference/clarify.md",
+            "impeccable/reference/colorize.md",
+            "impeccable/reference/component-review.md",
+            "impeccable/reference/craft-floor.md",
+            "impeccable/reference/craft.md",
+            "impeccable/reference/critique.md",
+            "impeccable/reference/degraded/asset-producer.md",
+            "impeccable/reference/degraded/documenter.md",
+            "impeccable/reference/degraded/finish-reviewer.md",
+            "impeccable/reference/degraded/manual-edit-applier.md",
+            "impeccable/reference/delight.md",
+            "impeccable/reference/distill.md",
+            "impeccable/reference/doctor.md",
+            "impeccable/reference/document.md",
+            "impeccable/reference/extract.md",
+            "impeccable/reference/generate.md",
+            "impeccable/reference/harden.md",
+            "impeccable/reference/hooks.md",
+            "impeccable/reference/init.md",
+            "impeccable/reference/ios.md",
+            "impeccable/reference/layout.md",
+            "impeccable/reference/live-setup.md",
+            "impeccable/reference/live.md",
+            "impeccable/reference/mode-operate.md",
+            "impeccable/reference/mode-persuade.md",
+            "impeccable/reference/mode-read.md",
+            "impeccable/reference/new-work.md",
+            "impeccable/reference/onboard.md",
+            "impeccable/reference/operate.md",
+            "impeccable/reference/optimize.md",
+            "impeccable/reference/overdrive.md",
+            "impeccable/reference/polish.md",
+            "impeccable/reference/quieter.md",
+            "impeccable/reference/region-map.md",
+            "impeccable/reference/routing.md",
+            "impeccable/reference/shape.md",
+            "impeccable/reference/typeset.md",
+            "impeccable/reference/visualize.md",
+            "impeccable/scripts/VERSION",
+            "impeccable/scripts/command-metadata.json",
+            "impeccable/scripts/data/font-index-failures.json",
+            "impeccable/scripts/data/font-index.json",
+            "impeccable/scripts/impeccable",
+            "impeccable/scripts/impeccable.cmd",
+            "impeccable/scripts/live-browser-dom.js",
+            "impeccable/scripts/live-browser-ignores.js",
+            "impeccable/scripts/live-browser-session.js",
+            "impeccable/scripts/live-browser.js",
+            "impeccable/scripts/modern-screenshot.umd.js"
+          ],
+          "compatibility": {
+            "kind": "host-specific",
+            "requires": [
+              "External runtime or host tools require configuration before execution"
+            ],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "jevify",
+          "directory": "jevify",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "jevify/LICENSE",
+            "jevify/README.md",
+            "jevify/SKILL.md",
+            "jevify/assets/example-requests.json",
+            "jevify/assets/hero.svg",
+            "jevify/assets/message-signals.json",
+            "jevify/assets/question-cases.json",
+            "jevify/evals/evals.json",
+            "jevify/references/agent-workflows.md",
+            "jevify/references/community-discoveries.md",
+            "jevify/references/corpus-review.md",
+            "jevify/references/evaluation.md",
+            "jevify/references/field-notes.md",
+            "jevify/references/patterns.md",
+            "jevify/references/product-evidence.md",
+            "jevify/references/question-design.md",
+            "jevify/references/research-protocol.md",
+            "jevify/references/running-jev.md",
+            "jevify/references/validation-2026-09-21.md",
+            "jevify/references/worked-question-pack.md",
+            "jevify/scripts/jev_client.py",
+            "jevify/scripts/run_cases.py",
+            "jevify/scripts/scan.py",
+            "jevify/scripts/test_jev_client.py",
+            "jevify/scripts/test_scan.py"
+          ],
+          "compatibility": {
+            "kind": "host-specific",
+            "requires": [
+              "Original host-specific tooling and paths must be adapted before execution"
+            ],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "khiip",
+          "directory": "khiip",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "khiip/SKILL.md"
+          ],
+          "compatibility": {
+            "kind": "host-specific",
+            "requires": [
+              "Original host-specific tooling and paths must be adapted before execution"
+            ],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "long-task-continuation",
+          "directory": "long-task-continuation",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "long-task-continuation/SKILL.md",
+            "long-task-continuation/durable-work-guidance.md"
+          ],
+          "compatibility": {
+            "kind": "host-specific",
+            "requires": [
+              "Original host-specific tooling and paths must be adapted before execution"
+            ],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "open-websearch",
+          "directory": "open-websearch",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "open-websearch/SKILL.md",
+            "open-websearch/references/engine-selection.md",
+            "open-websearch/references/setup.md",
+            "open-websearch/references/tools.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "provenfast",
+          "directory": "provenfast",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "provenfast/SKILL.md",
+            "provenfast/references/browser.md",
+            "provenfast/references/field-lessons.md",
+            "provenfast/references/stacks.md",
+            "provenfast/references/tools-by-os.md",
+            "provenfast/scripts/call-counts.mjs",
+            "provenfast/scripts/doctor.ps1",
+            "provenfast/scripts/doctor.sh",
+            "provenfast/scripts/instr-count.sh",
+            "provenfast/scripts/ratchet.mjs"
+          ],
+          "compatibility": {
+            "kind": "requires-tools",
+            "requires": [
+              "External runtime or host tools require configuration before execution"
+            ],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "receiving-code-review",
+          "directory": "receiving-code-review",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "receiving-code-review/SKILL.md"
+          ],
+          "compatibility": {
+            "kind": "host-specific",
+            "requires": [
+              "Original host-specific tooling and paths must be adapted before execution"
+            ],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "recording-architecture-decisions",
+          "directory": "recording-architecture-decisions",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "recording-architecture-decisions/SKILL.md"
+          ],
+          "compatibility": {
+            "kind": "host-specific",
+            "requires": [
+              "Original host-specific tooling and paths must be adapted before execution"
+            ],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "requesting-code-review",
+          "directory": "requesting-code-review",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "requesting-code-review/SKILL.md",
+            "requesting-code-review/code-reviewer.md"
+          ],
+          "compatibility": {
+            "kind": "host-specific",
+            "requires": [
+              "Original host-specific tooling and paths must be adapted before execution"
+            ],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "satori",
+          "directory": "satori",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "satori/SKILL.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "skillshare",
+          "directory": "skillshare",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "skillshare/SKILL.md",
+            "skillshare/references/TROUBLESHOOTING.md",
+            "skillshare/references/audit.md",
+            "skillshare/references/backup.md",
+            "skillshare/references/extras.md",
+            "skillshare/references/hooks.md",
+            "skillshare/references/init.md",
+            "skillshare/references/install.md",
+            "skillshare/references/log.md",
+            "skillshare/references/mcp.md",
+            "skillshare/references/native-agents.md",
+            "skillshare/references/plugins.md",
+            "skillshare/references/status.md",
+            "skillshare/references/sync.md",
+            "skillshare/references/targets.md",
+            "skillshare/references/trash.md",
+            "skillshare/scripts/run.sh"
+          ],
+          "compatibility": {
+            "kind": "host-specific",
+            "requires": [
+              "Original host-specific tooling and paths must be adapted before execution"
+            ],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "subagent-driven-development",
+          "directory": "subagent-driven-development",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "subagent-driven-development/SKILL.md",
+            "subagent-driven-development/code-quality-reviewer-prompt.md",
+            "subagent-driven-development/implementer-prompt.md",
+            "subagent-driven-development/spec-reviewer-prompt.md"
+          ],
+          "compatibility": {
+            "kind": "host-specific",
+            "requires": [
+              "Original host-specific tooling and paths must be adapted before execution"
+            ],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "systematic-debugging",
+          "directory": "systematic-debugging",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "systematic-debugging/SKILL.md",
+            "systematic-debugging/advanced-debugging-governance.md",
+            "systematic-debugging/condition-based-waiting-example.ts",
+            "systematic-debugging/condition-based-waiting.md",
+            "systematic-debugging/defense-in-depth.md",
+            "systematic-debugging/feedback-loop-construction.md",
+            "systematic-debugging/find-polluter.sh",
+            "systematic-debugging/root-cause-claim-contract.md",
+            "systematic-debugging/root-cause-tracing.md"
+          ],
+          "compatibility": {
+            "kind": "host-specific",
+            "requires": [
+              "Original host-specific tooling and paths must be adapted before execution"
+            ],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "test-driven-development",
+          "directory": "test-driven-development",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "test-driven-development/SKILL.md"
+          ],
+          "compatibility": {
+            "kind": "host-specific",
+            "requires": [
+              "Original host-specific tooling and paths must be adapted before execution"
+            ],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "treg",
+          "directory": "treg",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "treg/SKILL.md"
+          ],
+          "compatibility": {
+            "kind": "host-specific",
+            "requires": [
+              "Original host-specific tooling and paths must be adapted before execution"
+            ],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "ui-ux-governance",
+          "directory": "ui-ux-governance",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "ui-ux-governance/SKILL.md",
+            "ui-ux-governance/references/experience-rules.md",
+            "ui-ux-governance/references/verification.md"
+          ],
+          "compatibility": {
+            "kind": "host-specific",
+            "requires": [
+              "Original host-specific tooling and paths must be adapted before execution"
+            ],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "update-aegis",
+          "directory": "update-aegis",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "update-aegis/SKILL.md"
+          ],
+          "compatibility": {
+            "kind": "host-specific",
+            "requires": [
+              "Original host-specific tooling and paths must be adapted before execution"
+            ],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "using-aegis",
+          "directory": "using-aegis",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "using-aegis/SKILL.md",
+            "using-aegis/references/antigravity-tools.md",
+            "using-aegis/references/codex-tools.md",
+            "using-aegis/references/complexity-governance.md",
+            "using-aegis/references/copilot-tools.md",
+            "using-aegis/references/skill-discipline.md"
+          ],
+          "compatibility": {
+            "kind": "host-specific",
+            "requires": [
+              "Original host-specific tooling and paths must be adapted before execution"
+            ],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "using-git-worktrees",
+          "directory": "using-git-worktrees",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "using-git-worktrees/SKILL.md"
+          ],
+          "compatibility": {
+            "kind": "host-specific",
+            "requires": [
+              "Original host-specific tooling and paths must be adapted before execution"
+            ],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "verification-before-completion",
+          "directory": "verification-before-completion",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "verification-before-completion/SKILL.md",
+            "verification-before-completion/expanded-closeout.md"
+          ],
+          "compatibility": {
+            "kind": "host-specific",
+            "requires": [
+              "Original host-specific tooling and paths must be adapted before execution"
+            ],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "wh-browser",
+          "directory": "wh-browser",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "wh-browser/SKILL.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "writing-plans",
+          "directory": "writing-plans",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "writing-plans/SKILL.md",
+            "writing-plans/expanded-planning-guidance.md",
+            "writing-plans/plan-document-reviewer-prompt.md"
+          ],
+          "compatibility": {
+            "kind": "host-specific",
+            "requires": [
+              "Original host-specific tooling and paths must be adapted before execution"
+            ],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "writing-skills",
+          "directory": "writing-skills",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "writing-skills/SKILL.md",
+            "writing-skills/testing-skills-with-subagents.md"
+          ],
+          "compatibility": {
+            "kind": "host-specific",
+            "requires": [
+              "Original host-specific tooling and paths must be adapted before execution"
+            ],
+            "verification": "unverified"
+          }
+        }
+      ]
+    },
+    {
+      "id": "emil",
+      "root": "packs/emil",
+      "license": "Mixed upstream terms; operator import snapshot, per-skill notices retained",
+      "source": "JevShelf collection manifest + operator My Skills backup",
+      "skills": [
+        {
+          "id": "animate",
+          "directory": "animate",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "animate/RECIPES.md",
+            "animate/SKILL.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "animate-expo",
+          "directory": "animate-expo",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "animate-expo/RECIPES.md",
+            "animate-expo/SKILL.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "animation-performance",
+          "directory": "animation-performance",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "animation-performance/SKILL.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "animation-vocabulary",
+          "directory": "animation-vocabulary",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "animation-vocabulary/SKILL.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "apple-design",
+          "directory": "apple-design",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "apple-design/SKILL.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "ask-sonner",
+          "directory": "ask-sonner",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "ask-sonner/API.md",
+            "ask-sonner/SKILL.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "break-ui",
+          "directory": "break-ui",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "break-ui/CATALOG.md",
+            "break-ui/SKILL.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "design-taste-frontend",
+          "directory": "design-taste-frontend",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "design-taste-frontend/SKILL.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "emil-design-eng",
+          "directory": "emil-design-eng",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "emil-design-eng/SKILL.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "find-animation-opportunities",
+          "directory": "find-animation-opportunities",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "find-animation-opportunities/SKILL.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "improve-animations",
+          "directory": "improve-animations",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "improve-animations/AUDIT.md",
+            "improve-animations/PLAN-TEMPLATE.md",
+            "improve-animations/SKILL.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "mobile-native",
+          "directory": "mobile-native",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "mobile-native/SKILL.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "no-vibe-code",
+          "directory": "no-vibe-code",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "no-vibe-code/SKILL.md",
+            "no-vibe-code/agents/openai.yaml",
+            "no-vibe-code/samples/clean.html",
+            "no-vibe-code/samples/slop.html",
+            "no-vibe-code/slop-check.mjs"
+          ],
+          "compatibility": {
+            "kind": "requires-tools",
+            "requires": [
+              "External runtime or host tools require configuration before execution"
+            ],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "pick-ui-library",
+          "directory": "pick-ui-library",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "pick-ui-library/SKILL.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "prototype",
+          "directory": "prototype",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "prototype/PICKER.md",
+            "prototype/SKILL.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "review-animations",
+          "directory": "review-animations",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "review-animations/SKILL.md",
+            "review-animations/STANDARDS.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "write-swift",
+          "directory": "write-swift",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "write-swift/SKILL.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "unverified"
+          }
+        }
+      ]
+    },
+    {
+      "id": "lateral-thinking",
+      "root": "packs/lateral-thinking",
+      "license": "Mixed upstream terms; operator import snapshot, per-skill notices retained",
+      "source": "JevShelf collection manifest + operator My Skills backup",
+      "skills": [
+        {
+          "id": "analogy",
+          "directory": "analogy",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "analogy/SKILL.md",
+            "analogy/references/domain-pool.md",
+            "analogy/references/worked-example.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "concept-fan",
+          "directory": "concept-fan",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "concept-fan/SKILL.md",
+            "concept-fan/references/worked-example.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "inversion",
+          "directory": "inversion",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "inversion/SKILL.md",
+            "inversion/references/worked-example.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "lateral",
+          "directory": "lateral",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "lateral/SKILL.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "provocation",
+          "directory": "provocation",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "provocation/SKILL.md",
+            "provocation/references/provocation-templates.md",
+            "provocation/references/worked-example.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "random-stimulus",
+          "directory": "random-stimulus",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "random-stimulus/SKILL.md",
+            "random-stimulus/references/stimulus-pools.md",
+            "random-stimulus/references/worked-example.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "scamper",
+          "directory": "scamper",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "scamper/SKILL.md",
+            "scamper/references/question-bank.md",
+            "scamper/references/worked-example.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "six-hats",
+          "directory": "six-hats",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "random-stimulus/SKILL.md",
+            "random-stimulus/references/stimulus-pools.md",
+            "random-stimulus/references/worked-example.md",
+            "six-hats/SKILL.md",
+            "six-hats/references/hats-guide.md",
+            "six-hats/references/worked-example.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "worst-idea",
+          "directory": "worst-idea",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "worst-idea/SKILL.md",
+            "worst-idea/references/worked-example.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "unverified"
+          }
+        }
+      ]
+    },
+    {
+      "id": "marketing",
+      "root": "packs/marketing",
+      "license": "Mixed upstream terms; operator import snapshot, per-skill notices retained",
+      "source": "Pinned public marketing source named in the JevShelf collection manifest",
+      "skills": [
+        {
+          "id": "ab-testing",
+          "directory": "ab-testing",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "ab-testing/SKILL.md",
+            "ab-testing/references/sample-size-guide.md",
+            "ab-testing/references/test-templates.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "ad-creative",
+          "directory": "ad-creative",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "ad-creative/SKILL.md",
+            "ad-creative/assets/creative-review-template.html",
+            "ad-creative/references/awareness-headlines.md",
+            "ad-creative/references/creative-review-page.md",
+            "ad-creative/references/creative-roadmap.md",
+            "ad-creative/references/generative-tools.md",
+            "ad-creative/references/hook-system.md",
+            "ad-creative/references/imessage-video-ads.md",
+            "ad-creative/references/meta-creative-formats.md",
+            "ad-creative/references/motion-video-ads.md",
+            "ad-creative/references/platform-specs.md",
+            "ad-creative/references/short-form-video-specs.md",
+            "ad-creative/references/static-ad-templates.md",
+            "ads/references/abm-playbook.md",
+            "ads/references/meta-decision-system.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "ads",
+          "directory": "ads",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "ad-creative/SKILL.md",
+            "ad-creative/assets/creative-review-template.html",
+            "ad-creative/references/awareness-headlines.md",
+            "ad-creative/references/creative-review-page.md",
+            "ad-creative/references/creative-roadmap.md",
+            "ad-creative/references/generative-tools.md",
+            "ad-creative/references/hook-system.md",
+            "ad-creative/references/imessage-video-ads.md",
+            "ad-creative/references/meta-creative-formats.md",
+            "ad-creative/references/motion-video-ads.md",
+            "ad-creative/references/platform-specs.md",
+            "ad-creative/references/short-form-video-specs.md",
+            "ad-creative/references/static-ad-templates.md",
+            "ads/SKILL.md",
+            "ads/references/abm-playbook.md",
+            "ads/references/ad-copy-templates.md",
+            "ads/references/audience-targeting.md",
+            "ads/references/audit-guardrails.md",
+            "ads/references/b2b-paid-playbook.md",
+            "ads/references/conversion-tracking.md",
+            "ads/references/creative-research-automation.md",
+            "ads/references/google-ads-audit-checklist.md",
+            "ads/references/google-search-playbook.md",
+            "ads/references/linkedin-b2b-playbook.md",
+            "ads/references/meta-andromeda-playbook.md",
+            "ads/references/meta-decision-system.md",
+            "ads/references/payback-period.md",
+            "ads/references/platform-setup-checklists.md",
+            "ads/references/reading-google-ads-data.md",
+            "ads/references/rsa-output-spec.md",
+            "competitor-profiling/SKILL.md",
+            "competitor-profiling/references/templates.md",
+            "competitor-profiling/references/tool-reference.md",
+            "copywriting/SKILL.md",
+            "copywriting/references/ai-tells.md",
+            "copywriting/references/copy-frameworks.md",
+            "copywriting/references/natural-transitions.md",
+            "customer-research/SKILL.md",
+            "product-marketing/SKILL.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "ai-seo",
+          "directory": "ai-seo",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "ai-seo/SKILL.md",
+            "ai-seo/references/agent-readiness.md",
+            "ai-seo/references/citations-vs-recommendations.md",
+            "ai-seo/references/content-patterns.md",
+            "ai-seo/references/content-types.md",
+            "ai-seo/references/format-volatility.md",
+            "ai-seo/references/linkedin-ai-citations.md",
+            "ai-seo/references/okf.md",
+            "ai-seo/references/platform-ranking-factors.md",
+            "ai-seo/references/positioning-and-consensus.md",
+            "ai-seo/references/youtube-ai-citations.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "analytics",
+          "directory": "analytics",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "analytics/SKILL.md",
+            "analytics/references/event-library.md",
+            "analytics/references/ga4-implementation.md",
+            "analytics/references/gtm-implementation.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "aso",
+          "directory": "aso",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "aso/SKILL.md",
+            "aso/references/apple-specs.md",
+            "aso/references/benchmarks.md",
+            "aso/references/google-play-specs.md",
+            "aso/references/report-template.md",
+            "aso/references/scoring-criteria.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "attribution",
+          "directory": "attribution",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "attribution/SKILL.md",
+            "attribution/references/attribution-models.md",
+            "attribution/references/by-business-type.md",
+            "attribution/references/first-party-tracking.md",
+            "attribution/references/measurement-paradigms.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "churn-prevention",
+          "directory": "churn-prevention",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "churn-prevention/SKILL.md",
+            "churn-prevention/references/cancel-flow-patterns.md",
+            "churn-prevention/references/dunning-playbook.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "co-marketing",
+          "directory": "co-marketing",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "co-marketing/SKILL.md",
+            "co-marketing/references/partnership-types.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "cold-email",
+          "directory": "cold-email",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "cold-email/SKILL.md",
+            "cold-email/references/benchmarks.md",
+            "cold-email/references/deliverability.md",
+            "cold-email/references/follow-up-sequences.md",
+            "cold-email/references/frameworks.md",
+            "cold-email/references/linkedin-outreach.md",
+            "cold-email/references/multichannel-cadence.md",
+            "cold-email/references/outbound-plays.md",
+            "cold-email/references/personalization.md",
+            "cold-email/references/reply-handling.md",
+            "cold-email/references/subject-lines.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "community-marketing",
+          "directory": "community-marketing",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "community-marketing/SKILL.md",
+            "community-marketing/references/community-models.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "competitor-profiling",
+          "directory": "competitor-profiling",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "competitor-profiling/SKILL.md",
+            "competitor-profiling/references/templates.md",
+            "competitor-profiling/references/tool-reference.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "competitors",
+          "directory": "competitors",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "competitors/SKILL.md",
+            "competitors/references/content-architecture.md",
+            "competitors/references/templates.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "content-strategy",
+          "directory": "content-strategy",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "content-strategy/SKILL.md",
+            "content-strategy/references/content-distribution.md",
+            "content-strategy/references/headless-cms.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "copy-editing",
+          "directory": "copy-editing",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "copy-editing/SKILL.md",
+            "copy-editing/references/checklist.md",
+            "copy-editing/references/content-refresh.md",
+            "copy-editing/references/plain-english-alternatives.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "copywriting",
+          "directory": "copywriting",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "copywriting/SKILL.md",
+            "copywriting/references/ai-tells.md",
+            "copywriting/references/copy-frameworks.md",
+            "copywriting/references/natural-transitions.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "cro",
+          "directory": "cro",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "cro/SKILL.md",
+            "cro/references/experiments.md",
+            "cro/references/form.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "customer-research",
+          "directory": "customer-research",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "customer-research/SKILL.md",
+            "customer-research/references/interviews-and-surveys.md",
+            "customer-research/references/source-guides.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "directory-submissions",
+          "directory": "directory-submissions",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "directory-submissions/SKILL.md",
+            "directory-submissions/references/directory-list.md",
+            "directory-submissions/references/positioning-variations.md",
+            "directory-submissions/references/submission-tracker-template.csv"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "emails",
+          "directory": "emails",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "emails/SKILL.md",
+            "emails/references/copy-guidelines.md",
+            "emails/references/email-types.md",
+            "emails/references/sequence-templates.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "events",
+          "directory": "events",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "events/SKILL.md",
+            "events/references/event-portfolio-strategy.md",
+            "events/references/speaking.md",
+            "events/references/sponsorship-roi.md",
+            "events/references/webinar-funnel.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "free-tools",
+          "directory": "free-tools",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "free-tools/SKILL.md",
+            "free-tools/references/tool-benchmarks.md",
+            "free-tools/references/tool-types.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "image",
+          "directory": "image",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "image/SKILL.md",
+            "image/references/ai-image-prompting.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "influencer-marketing",
+          "directory": "influencer-marketing",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "influencer-marketing/SKILL.md",
+            "influencer-marketing/references/ugc-creator-program.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "launch",
+          "directory": "launch",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "launch/SKILL.md",
+            "launch/references/shipped-changes.md",
+            "launch/references/site-launch-qa.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "lead-magnets",
+          "directory": "lead-magnets",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "lead-magnets/SKILL.md",
+            "lead-magnets/references/benchmarks.md",
+            "lead-magnets/references/content-to-skill-corpus-design.md",
+            "lead-magnets/references/content-to-skill-release.md",
+            "lead-magnets/references/content-to-skill.md",
+            "lead-magnets/references/format-guide.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "marketing-council",
+          "directory": "marketing-council",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "marketing-council/SKILL.md",
+            "marketing-council/references/advisor-template.md",
+            "marketing-council/references/advisors/alex-hormozi.md",
+            "marketing-council/references/advisors/ann-handley.md",
+            "marketing-council/references/advisors/april-dunford.md",
+            "marketing-council/references/advisors/byron-sharp.md",
+            "marketing-council/references/advisors/claude-hopkins.md",
+            "marketing-council/references/advisors/david-ogilvy.md",
+            "marketing-council/references/advisors/eugene-schwartz.md",
+            "marketing-council/references/advisors/gary-halbert.md",
+            "marketing-council/references/advisors/gary-vaynerchuk.md",
+            "marketing-council/references/advisors/rory-sutherland.md",
+            "marketing-council/references/advisors/russell-brunson.md",
+            "marketing-council/references/advisors/seth-godin.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "marketing-ideas",
+          "directory": "marketing-ideas",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "marketing-ideas/SKILL.md",
+            "marketing-ideas/references/guerrilla-marketing.md",
+            "marketing-ideas/references/ideas-by-category.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "marketing-loops",
+          "directory": "marketing-loops",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "marketing-loops/SKILL.md",
+            "marketing-loops/references/loop-catalog.md",
+            "marketing-loops/references/loop-guardrails.md",
+            "marketing-loops/references/loop-orchestration.md",
+            "marketing-loops/references/loop-state.md",
+            "marketing-loops/references/loop-template.md",
+            "marketing-loops/references/outbound-operator.md",
+            "marketing-loops/references/seo-operator.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "marketing-plan",
+          "directory": "marketing-plan",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "marketing-plan/SKILL.md",
+            "marketing-plan/references/aarrr-framework.md",
+            "marketing-plan/references/budget-planning.md",
+            "marketing-plan/references/client-types.md",
+            "marketing-plan/references/current-state-rubric.md",
+            "marketing-plan/references/example-quietude.md",
+            "marketing-plan/references/funding-stage-unlocks.md",
+            "marketing-plan/references/growth-patterns.md",
+            "marketing-plan/references/idea-cross-reference.md",
+            "marketing-plan/references/market-sizing.md",
+            "marketing-plan/references/measurement-framework.md",
+            "marketing-plan/references/methodology.md",
+            "marketing-plan/references/ops-stack-mapping.md",
+            "marketing-plan/references/plan-template.md",
+            "marketing-plan/references/team-and-agency-model.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "marketing-psychology",
+          "directory": "marketing-psychology",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "marketing-psychology/SKILL.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "offers",
+          "directory": "offers",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "offers/SKILL.md",
+            "offers/references/bonus-stacking.md",
+            "offers/references/examples.md",
+            "offers/references/guarantee-design.md",
+            "offers/references/offer-anatomy.md",
+            "offers/references/offer-formats.md",
+            "offers/references/saas-offers.md",
+            "offers/references/scarcity-urgency.md",
+            "offers/references/value-equation.md",
+            "pricing/SKILL.md",
+            "pricing/references/pricing-models.md",
+            "pricing/references/pricing-page-teardown.md",
+            "pricing/references/research-methods.md",
+            "pricing/references/tier-structure.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "onboarding",
+          "directory": "onboarding",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "onboarding/SKILL.md",
+            "onboarding/references/activation-models.md",
+            "onboarding/references/experiments.md",
+            "onboarding/references/minimum-path-to-value.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "paywalls",
+          "directory": "paywalls",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "paywalls/SKILL.md",
+            "paywalls/references/experiments.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "popups",
+          "directory": "popups",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "popups/SKILL.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "pricing",
+          "directory": "pricing",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "pricing/SKILL.md",
+            "pricing/references/pricing-models.md",
+            "pricing/references/pricing-page-teardown.md",
+            "pricing/references/research-methods.md",
+            "pricing/references/tier-structure.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "product-marketing",
+          "directory": "product-marketing",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "product-marketing/SKILL.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "programmatic-seo",
+          "directory": "programmatic-seo",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "programmatic-seo/SKILL.md",
+            "programmatic-seo/references/implementation-platforms.md",
+            "programmatic-seo/references/playbooks.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "prospecting",
+          "directory": "prospecting",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "ad-creative/assets/creative-review-template.html",
+            "ad-creative/references/creative-review-page.md",
+            "prospecting/SKILL.md",
+            "prospecting/references/account-research.md",
+            "prospecting/references/b2b-prospecting.md",
+            "prospecting/references/compliance.md",
+            "prospecting/references/data-sources.md",
+            "prospecting/references/demand-signals.md",
+            "prospecting/references/enrichment-playbook.md",
+            "prospecting/references/local-prospecting.md",
+            "prospecting/references/saas-prospecting.md",
+            "prospecting/references/signal-plays.md",
+            "prospecting/references/sourcing-and-enrichment.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "public-relations",
+          "directory": "public-relations",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "public-relations/SKILL.md",
+            "public-relations/references/crisis-communications.md",
+            "public-relations/references/journalist-pitching.md",
+            "public-relations/references/media-outlets.md",
+            "public-relations/references/newsjacking.md",
+            "public-relations/references/podcast-guest-prep.md",
+            "public-relations/references/press-platforms.md",
+            "public-relations/references/statement-templates.md",
+            "public-relations/references/story-angles.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "referrals",
+          "directory": "referrals",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "referrals/SKILL.md",
+            "referrals/references/affiliate-operations.md",
+            "referrals/references/affiliate-programs.md",
+            "referrals/references/program-examples.md",
+            "referrals/references/review-platform-rules.md",
+            "referrals/references/review-program-operations.md",
+            "referrals/references/review-programs.md",
+            "referrals/references/viral-mechanisms.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "revops",
+          "directory": "revops",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "revops/SKILL.md",
+            "revops/references/automation-playbooks.md",
+            "revops/references/inbound-routing.md",
+            "revops/references/lifecycle-definitions.md",
+            "revops/references/routing-rules.md",
+            "revops/references/scoring-models.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "sales-enablement",
+          "directory": "sales-enablement",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "sales-enablement/SKILL.md",
+            "sales-enablement/references/cold-call-scripts.md",
+            "sales-enablement/references/deck-frameworks.md",
+            "sales-enablement/references/demo-scripts.md",
+            "sales-enablement/references/objection-library.md",
+            "sales-enablement/references/one-pager-templates.md",
+            "sales-enablement/references/win-loss-analysis.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "schema",
+          "directory": "schema",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "schema/SKILL.md",
+            "schema/references/schema-examples.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "seo-audit",
+          "directory": "seo-audit",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "seo-audit/SKILL.md",
+            "seo-audit/references/ai-writing-detection.md",
+            "seo-audit/references/international-seo.md",
+            "seo-audit/references/local-seo-pages-and-measurement.md",
+            "seo-audit/references/local-seo-profile-and-citations.md",
+            "seo-audit/references/local-seo.md",
+            "seo-audit/references/rankings-push.md",
+            "seo-audit/references/title-tags.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "signup",
+          "directory": "signup",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "signup/SKILL.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "site-architecture",
+          "directory": "site-architecture",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "site-architecture/SKILL.md",
+            "site-architecture/references/mermaid-templates.md",
+            "site-architecture/references/navigation-patterns.md",
+            "site-architecture/references/platforms-and-migration.md",
+            "site-architecture/references/site-type-templates.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "sms",
+          "directory": "sms",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "sms/SKILL.md",
+            "sms/references/compliance.md",
+            "sms/references/platforms.md",
+            "sms/references/sequence-templates.md",
+            "sms/references/whatsapp.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "social",
+          "directory": "social",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "social/SKILL.md",
+            "social/references/carousel-frameworks.md",
+            "social/references/listening-sources-template.md",
+            "social/references/listening.md",
+            "social/references/platform-limits.md",
+            "social/references/platforms.md",
+            "social/references/post-templates.md",
+            "social/references/reverse-engineering.md",
+            "social/references/short-form-video.md",
+            "social/references/x-algorithm.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "video",
+          "directory": "video",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "video/SKILL.md",
+            "video/references/ai-video-prompting.md",
+            "video/references/edit-anatomy.md",
+            "video/references/product-demo-recording.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "unverified"
+          }
+        }
+      ]
+    },
+    {
+      "id": "sentry",
+      "root": "packs/sentry",
+      "license": "Mixed upstream terms; operator import snapshot, per-skill notices retained",
+      "source": "JevShelf collection manifest + operator My Skills backup",
+      "skills": [
+        {
+          "id": "backend-security-audit",
+          "directory": "backend-security-audit",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "backend-security-audit/SKILL.md",
+            "backend-security-audit/agents/openai.yaml",
+            "backend-security-audit/references/audit-checklist.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "code-simplifier",
+          "directory": "code-simplifier",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "code-simplifier/SKILL.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "find-bugs",
+          "directory": "find-bugs",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "find-bugs/SKILL.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "minimize-api-responses",
+          "directory": "minimize-api-responses",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "minimize-api-responses/SKILL.md",
+            "minimize-api-responses/agents/openai.yaml",
+            "minimize-api-responses/references/research.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "security-review",
+          "directory": "security-review",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "security-review/LICENSE",
+            "security-review/SKILL.md",
+            "security-review/infrastructure/docker.md",
+            "security-review/languages/javascript.md",
+            "security-review/languages/python.md",
+            "security-review/references/api-security.md",
+            "security-review/references/authentication.md",
+            "security-review/references/authorization.md",
+            "security-review/references/business-logic.md",
+            "security-review/references/cryptography.md",
+            "security-review/references/csrf.md",
+            "security-review/references/data-protection.md",
+            "security-review/references/deserialization.md",
+            "security-review/references/error-handling.md",
+            "security-review/references/file-security.md",
+            "security-review/references/injection.md",
+            "security-review/references/logging.md",
+            "security-review/references/misconfiguration.md",
+            "security-review/references/modern-threats.md",
+            "security-review/references/ssrf.md",
+            "security-review/references/supply-chain.md",
+            "security-review/references/xss.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "unverified"
+          }
+        },
+        {
+          "id": "skill-scanner",
+          "directory": "skill-scanner",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "skill-scanner/SKILL.md",
+            "skill-scanner/references/dangerous-code-patterns.md",
+            "skill-scanner/references/permission-analysis.md",
+            "skill-scanner/references/prompt-injection-patterns.md",
+            "skill-scanner/scripts/scan_skill.py"
+          ],
+          "compatibility": {
+            "kind": "host-specific",
+            "requires": [
+              "Original host-specific tooling and paths must be adapted before execution"
+            ],
+            "verification": "unverified"
+          }
+        }
+      ]
+    },
+    {
+      "id": "writing",
+      "root": "packs/writing",
+      "license": "Mixed upstream terms; operator import snapshot, per-skill notices retained",
+      "source": "JevShelf collection manifest + operator My Skills backup",
+      "skills": [
+        {
+          "id": "asd-ste100",
+          "directory": "asd-ste100",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "asd-ste100/LICENSE",
+            "asd-ste100/README.md",
+            "asd-ste100/SKILL.md",
+            "asd-ste100/examples/before-after.md",
+            "asd-ste100/examples/linter-edge-cases.md",
+            "asd-ste100/references/writing-rules.md",
+            "asd-ste100/scripts/ste-lint.py"
+          ],
+          "compatibility": {
+            "kind": "requires-tools",
+            "requires": [
+              "External runtime or host tools require configuration before execution"
+            ],
+            "verification": "unverified"
           }
         }
       ]

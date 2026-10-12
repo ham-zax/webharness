@@ -11,17 +11,17 @@ const annotations = { readOnlyHint: true, destructiveHint: false, idempotentHint
 export const TOOLS = [
   {
     name: 'find_skills',
-    description: 'Discover approved specialist guidance for the current step within the configured canonical workflow. Consider useful direct skills before searching. Default mode=lexical stays offline: exact names then BM25; omit query to browse. Explicit mode=jev additionally requires operator opt-in and credentials: query is the task, optional context is its situation, and task/context, approved metadata and bounded instruction excerpts are sent to TypeSafe. Jev evaluates the selected collection (at most 64 skills), returns up to three candidates or no_match/uncertain, and never silently falls back. No Jev cursors. Respect invocation hints; load only useful skills.',
+    description: 'Discover approved specialist guidance for the current step within the configured canonical workflow. Consider useful direct skills before searching. Default mode=lexical stays offline: exact names then BM25; omit query to browse. Explicit mode=jev additionally requires operator opt-in and credentials: query is the task, optional context is its situation, and task/context, approved metadata and bounded instruction excerpts are sent to TypeSafe. Jev requires collection because the corpus exceeds its 64-skill scope, evaluates that collection, returns up to three candidates or no_match/uncertain, and never silently falls back. No Jev cursors. Respect invocation hints; load only useful skills.',
     annotations: { ...annotations, idempotentHint: false, openWorldHint: true },
     inputSchema: { type: 'object', properties: {
       query: bounded(), collection: bounded(64),
-      limit: { type: 'integer', minimum: 1, maximum: 20, default: 8 }, cursor: bounded(2048),
+      limit: { type: 'integer', minimum: 1, maximum: 20, default: 3 }, cursor: bounded(2048),
       mode: { type: 'string', enum: ['lexical', 'jev'], default: 'lexical' }, context: bounded(4096),
     }, additionalProperties: false },
   },
   {
     name: 'read_skill',
-    description: 'Read one approved skill or declared text dependency using its discovered revision. Omit file for SKILL.md; readableFiles lists approved pack-relative references. An optional operator adaptation supplies host invocation mapping alongside unchanged source content. Reads verify the entire dependency set and never execute scripts or grant authority. Follow nextCursor until complete=true. STALE_REVISION requires rediscovery; POLICY_CHANGED requires restart.',
+    description: 'Read one selected skill or needed declared text dependency using its discovered revision. Omit file for SKILL.md; the first page lists readableFiles and optional host adaptation. Continuations return new text without repeating metadata. Read references only when needed for the current task. Reads verify the entire dependency set and never execute scripts or grant authority. Follow nextCursor until complete=true for a selected file. STALE_REVISION requires rediscovery; POLICY_CHANGED requires restart.',
     annotations,
     inputSchema: { type: 'object', properties: {
       id: bounded(129), revision: { type: 'string', pattern: '^[a-f0-9]{64}$' }, file: bounded(), cursor: bounded(2048),

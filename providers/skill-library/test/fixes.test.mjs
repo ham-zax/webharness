@@ -167,3 +167,40 @@ test('large libraries validate without a generated catalog file or its one MiB c
   assert.equal(checked.status, 'ok');
   assert.equal(checked.skills, 650);
 });
+
+test('large dependency sets remain readable, revision-bound and executable after export', async t => {
+  const files = Object.fromEntries(Array.from({ length: 90 }, (_, i) =>
+    [`one/lib/helper-${i}.mjs`, `export const value = ${i};\n`]));
+  files['one/bin/cli.mjs'] = "import { value } from '../lib/helper-89.mjs'; console.log(value);\n";
+  const { library, policyPath, root, packRoot } = await fixture(t, [{ id: 'one', files }]);
+  const catalog = await library.catalog();
+  assert.ok(Buffer.byteLength(JSON.stringify(catalog.skills[0].files)) > 8192,
+    'internal hashes must not consume the public inventory budget');
+  const card = (await library.find({ query: 'one' })).candidates[0];
+  const read = await library.read({ id: card.id, revision: card.revision });
+  assert.equal(read.readableFiles.length, 94);
+  assert.ok(Buffer.byteLength(JSON.stringify(read)) < 24 * 1024);
+  const destination = path.join(root, 'exported');
+  await runCli(['export', '--policy', policyPath, '--destination', destination]);
+  assert.equal((await execFile(process.execPath, [path.join(destination, 'packs/test/one/bin/cli.mjs')])).stdout, '89\n');
+  await fs.appendFile(path.join(packRoot, 'one/lib/helper-89.mjs'), '// changed dependency\n');
+  await assert.rejects(library.read({ id: card.id, revision: card.revision }), { code: 'STALE_REVISION' });
+});
+
+test('complete bundled exports preserve shared academic references and working Archify helpers', async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-library-complete-'));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const destination = path.join(root, 'exported');
+  const exported = await runCli(['export', '--destination', destination]);
+  assert.equal(exported.skills, 155);
+  const library = await SkillLibrary.open(path.join(destination, 'policy.json'));
+  const academic = (await library.find({ collection: 'academic', query: 'academic-paper' })).candidates[0];
+  const reference = await library.read({ id: academic.id, revision: academic.revision, file: 'shared/output_language_pair.md' });
+  assert.ok(reference.content.length > 0);
+  assert.ok(Buffer.byteLength(JSON.stringify(reference)) <= 24 * 1024);
+  const archify = path.join(destination, 'packs/active/archify');
+  const { stdout } = await execFile(process.execPath, [path.join(archify, 'bin/archify.mjs'),
+    'validate', 'architecture', path.join(archify, 'examples/web-app.architecture.json'), '--json'], { cwd: root });
+  assert.equal(JSON.parse(stdout).ok, true);
+  assert.ok((await fs.stat(path.join(destination, 'packs/active/impeccable/scripts/data/font-index.json'))).size > 1024 * 1024);
+});

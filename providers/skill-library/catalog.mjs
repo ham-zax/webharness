@@ -50,8 +50,10 @@ export async function inspectSkill(pack, skill, signal) {
   if (skill.adaptation && contents.get(skill.adaptation).length > 4096) {
     throw failure('ADAPTATION_TOO_LARGE', 'host adaptation must fit within 4 KiB');
   }
-  if (Buffer.byteLength(JSON.stringify(files)) > 8192) {
-    throw failure('DEPENDENCY_METADATA_TOO_LARGE', 'readable file metadata exceeds 8 KiB; narrow the declared dependency set');
+  // Bound the inventory actually returned to clients, not internal revision
+  // hashes and mode bits. Full dependencies still participate in the revision.
+  if (Buffer.byteLength(JSON.stringify(files.map(({ file, bytes }) => ({ file, bytes })))) > 16 * 1024) {
+    throw failure('DEPENDENCY_METADATA_TOO_LARGE', 'readable file metadata exceeds 16 KiB; narrow the declared dependency set');
   }
   // Policy mappings and all readable bytes participate, not just SKILL.md.
   const revision = digest(JSON.stringify({

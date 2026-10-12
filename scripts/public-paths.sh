@@ -4,12 +4,8 @@
 # scripts/stage-public.sh must consume this exact decision.
 is_public_path() {
   case "$1" in
-    skill-library/packs/private/* | skill-library/policy-personal.json | skill-library/PRIVATE-README.md)
-      # Operator-local Skillshare/backup imports must never be published.
-      return 1
-      ;;
     skill-library/*)
-      # Deliberately public, reviewed portable packs; skills/* stays private.
+      # Reviewed portable packs. skills/* stays private.
       return 0
       ;;
     docs/history/* | \

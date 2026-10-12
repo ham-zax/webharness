@@ -59,8 +59,8 @@ export async function loadPolicy(policyPath) {
       relativeFile(skill.directory);
       if (ids.has(skill.id)) throw failure('INVALID_POLICY', 'duplicate skill id');
       ids.add(skill.id);
-      if (!Array.isArray(skill.readable) || skill.readable.length === 0 || skill.readable.length > 128) {
-        throw failure('INVALID_POLICY', 'readable must declare 1..128 pack-relative files');
+      if (!Array.isArray(skill.readable) || skill.readable.length === 0 || skill.readable.length > 256) {
+        throw failure('INVALID_POLICY', 'readable must declare 1..256 pack-relative files');
       }
       const readable = [...new Set(skill.readable.map(relativeFile))].sort();
       const main = `${skill.directory}/SKILL.md`;

@@ -3,7 +3,7 @@ import { constants } from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 
-export const MAX_FILE_BYTES = 1024 * 1024;
+export const MAX_FILE_BYTES = 2 * 1024 * 1024;
 export const MAX_POLICY_BYTES = 256 * 1024;
 export const MAX_SET_BYTES = 16 * 1024 * 1024;
 

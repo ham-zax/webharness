@@ -1,0 +1,116 @@
+# Status & Inspection Commands
+
+Commands with auto-detection run in project mode when a project config (`.skillshare/config.yaml` or `skillshare/config.yaml`) is found. Use `-g` to force global.
+
+## status
+
+Overview of source, targets, and sync state.
+
+```bash
+skillshare status          # Auto-detects mode
+skillshare status -g       # Force global
+skillshare status --json   # JSON output (global and project)
+```
+
+Project mode output includes: source path, targets with sync mode, remote skills list.
+
+**Sync drift detection:** Warns when targets have fewer linked skills than source (merge mode). Example: `⚠ claude: 3 skill(s) not synced (12/15 linked)`. Run `skillshare sync` to fix.
+
+In Windows copy fallback, agent counts in `status` and `doctor` distinguish identical unowned files as `local preserved` (for example, `0/1 linked, 1 local preserved`). Up-to-date managed copies still count as linked.
+
+## diff
+
+Show differences between source and targets. Interactive TUI on TTY, plain text otherwise.
+
+```bash
+skillshare diff                # Interactive TUI (default on TTY)
+skillshare diff claude         # Specific target
+skillshare diff --stat         # File-level changes (plain text)
+skillshare diff --patch        # Full unified diff (plain text)
+skillshare diff --no-tui       # Plain text, skip TUI
+skillshare diff --json         # JSON output (implies --no-tui)
+skillshare diff -p             # Project mode
+skillshare diff -g             # Force global
+```
+
+TUI features: left panel target list with status icons (`✓`/`!`/`✗`), right panel detail with categorized diffs. Enter expands file-level diff. `--stat` and `--patch` imply `--no-tui`.
+
+## list
+
+List installed skills. Interactive TUI on TTY, plain text otherwise.
+
+```bash
+skillshare list                # Interactive TUI (default on TTY)
+skillshare list react          # Filter by name/path/source
+skillshare list --type local   # Filter by type: tracked, local, github
+skillshare list --status disabled # Filter by status: all (default), enabled, disabled
+skillshare list --sort newest  # Sort: name (default), newest, oldest
+skillshare list --verbose      # Detailed plain text view
+skillshare list --json         # JSON output (recommended for AI usage)
+skillshare list --no-tui       # Plain text, skip TUI
+skillshare list -g             # Force global
+```
+
+TUI features: fuzzy filter (type to search), detail panel (description, path, files, synced targets). Use `--json` for programmatic inspection: `skillshare list --json | jq '.[] | {name, source, type}'`.
+
+## search
+
+Search GitHub for skills (repos containing SKILL.md).
+
+```bash
+skillshare search <query>           # Interactive (select to install)
+skillshare search <query> --list    # List only
+skillshare search <query> --json    # JSON output
+skillshare search <query> -n 10     # Limit results (default: 20)
+```
+
+**Requires:** GitHub auth (`gh` CLI or `GITHUB_TOKEN` env var).
+
+**Query examples:**
+- `react performance` - Performance optimization
+- `pr review` - Code review skills
+- `commit` - Git commit helpers
+- `changelog` - Changelog generation
+
+## doctor
+
+Diagnose configuration and environment issues. Also checks sync drift for skills, agents and extras, plus MCP servers, hooks and plugins (offline; `mcp check --live` and `plugin check` go further).
+
+In global and project mode, each first-level symlink or Windows junction in the skills source gets a line. With `follow_source_links` off (default) it is info: discovery does not follow it, so its contents are invisible to skillshare; set `follow_source_links: true` in the global or project config to follow such links one level. With it on, the line says `followed as a directory`, or warns `not followed: <reason>` (target missing, source root, or sync target overlap); target links behind an unavailable link are reported as kept, not as broken links to prune. With no such links, it adds no output. In `doctor --json`, each link is an `undeclared_source_links` check with status `info` or `warning`.
+
+```bash
+skillshare doctor
+```
+
+## analyze
+
+Use `skillshare analyze --json` to inspect description/body size and estimated context
+cost per target. Estimates describe loaded skill text, not measured billing or cache savings.
+Use `--no-tui` for plain terminal output.
+
+## upgrade
+
+Upgrade CLI binary and/or built-in skillshare skill.
+
+The macOS/Linux install script defaults to `~/.local/bin`, so normal updates do not
+need `sudo`. Keep that directory first in PATH; the installer warns if an older
+binary takes precedence. Existing installations stay in place, and updates to a
+protected custom directory can still require `sudo`.
+
+```bash
+skillshare upgrade              # Both CLI + skill
+skillshare upgrade --cli        # CLI only
+skillshare upgrade --skill      # Skill only
+skillshare upgrade --force      # Skip confirmation
+skillshare upgrade --dry-run    # Preview
+```
+
+**Missing built-in skill:** `upgrade --skill` prompts before installing it;
+`upgrade --skill --force` installs without that prompt. Use this only when installation
+is requested. `init --skill` also opts in explicitly.
+
+**After upgrading skill:** `skillshare sync`
+
+`list` and `status` warn when an enabled `follow_source_links` policy skips an unavailable first-level source link; healthy skills remain in the inventory. With `--json`, warnings go to stderr so stdout stays valid JSON.
+
+The dashboard Updates tab lists followed Git checkouts as information only, with the link name and target path. It does not check, update, or force-retry them; manage them yourself or use `skillshare update <link>` explicitly.

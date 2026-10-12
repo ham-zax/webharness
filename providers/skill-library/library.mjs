@@ -57,7 +57,7 @@ export class SkillLibrary {
     context = optionalString(context, 'context', 4096);
     if (mode === 'lexical' && context !== undefined) throw failure('INVALID_ARGUMENT', 'context applies only to mode=jev');
     if (mode === 'jev' && (!query || cursor !== undefined)) throw failure('INVALID_ARGUMENT', 'mode=jev requires a task query and does not accept cursors');
-    const size = integer(limit, 8, 1, 20, 'limit');
+    const size = integer(limit, 3, 1, 20, 'limit');
     // Cover catalog inspection and the final revision check as well as HTTP.
     const routeSignal = mode === 'jev' ? AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(30000)]) : undefined;
     const catalog = await this.catalog(routeSignal);
@@ -151,10 +151,15 @@ export class SkillLibrary {
     let end = Math.min(bytes.length, offset + budget);
     while (end < bytes.length && (bytes[end] & 0xc0) === 0x80) end -= 1;
     const result = { id, revision, file: selected, content: utf8(bytes.subarray(offset, end)),
-      bytes: end - offset, totalBytes: bytes.length, complete: end === bytes.length,
-      readableFiles: inspected.files.map(item => ({ file: item.file, bytes: item.bytes })),
-      compatibility: skill.compatibility, invocationHints: inspected.card.invocationHints };
-    if (skill.adaptation) result.adaptation = { file: skill.adaptation, content: utf8(inspected.contents.get(skill.adaptation)) };
+      bytes: end - offset, totalBytes: bytes.length, complete: end === bytes.length };
+    // Continuations carry only new text; do not repeat the dependency inventory
+    // and instruction metadata on every page in the client's context.
+    if (cursor === undefined) {
+      result.readableFiles = inspected.files.map(item => ({ file: item.file, bytes: item.bytes }));
+      result.compatibility = skill.compatibility;
+      result.invocationHints = inspected.card.invocationHints;
+      if (skill.adaptation) result.adaptation = { file: skill.adaptation, content: utf8(inspected.contents.get(skill.adaptation)) };
+    }
     // JSON escaping also counts toward the response budget, not only UTF-8 bytes.
     while (Buffer.byteLength(JSON.stringify(result)) > RESPONSE_BYTES - 2048 && end > offset) {
       end = offset + Math.floor((end - offset) / 2);
