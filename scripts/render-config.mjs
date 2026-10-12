@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { loadPolicy } from '../providers/skill-library/policy.mjs';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { constants as fsConstants } from 'node:fs';
@@ -255,7 +256,7 @@ export async function renderConfig(options) {
   const deployment = {
     ...(await readEnvFile(envFile, { optional: true })),
     ...Object.fromEntries(
-      ['MCP_WORKSPACE_ROOT', 'MCP_PUBLIC_URL', 'MCP_TUNNEL_NAME', 'MCP_DEV_MAX_OUTPUT_BYTES', 'MCP_DEV_READ_DEFAULT_LINES', 'MCP_DEV_IMPORT_MAX_BYTES', 'MCP_DEV_MAX_SPOOL_BYTES', 'MCP_DEV_SPOOL_TTL_SECONDS', 'MCP_DEV_SPOOL_MAX_TOTAL_BYTES', 'MCP_ONE_MCP_PORT', 'MCP_ONE_MCP_LOG_MAX_SIZE_BYTES', 'MCP_ONE_MCP_LOG_MAX_FILES', 'MCP_PERSONAL_DEFAULT_CWD', 'MCP_TERMINAL_FRONTEND', 'MCP_OWNER_CONTEXT_FILE', 'MCP_OWNER_ENV_FILE', 'MCP_BROWSER_JEV_ENV_FILE', 'MCP_SKILL_JEV_ENABLED', 'MCP_SKILL_JEV_ENV_FILE', 'MCP_LOCAL_SERVERS_FILE', 'BRIDGE_ONE_MCP_ENTRY', 'BRIDGE_COLD_START', 'BRIDGE_BACKEND_PORT', 'BRIDGE_WAKE_IDLE_MS', 'MCP_LOCAL_INNER_IDLE_MS', 'MCP_DEV_WORKER_IDLE_MS', 'MCP_LIFECYCLE_LEASE_DIR'].filter((key) => process.env[key] !== undefined).map((key) => [key, process.env[key]]),
+      ['MCP_WORKSPACE_ROOT', 'MCP_PUBLIC_URL', 'MCP_TUNNEL_NAME', 'MCP_DEV_MAX_OUTPUT_BYTES', 'MCP_DEV_READ_DEFAULT_LINES', 'MCP_DEV_IMPORT_MAX_BYTES', 'MCP_DEV_MAX_SPOOL_BYTES', 'MCP_DEV_SPOOL_TTL_SECONDS', 'MCP_DEV_SPOOL_MAX_TOTAL_BYTES', 'MCP_ONE_MCP_PORT', 'MCP_ONE_MCP_LOG_MAX_SIZE_BYTES', 'MCP_ONE_MCP_LOG_MAX_FILES', 'MCP_PERSONAL_DEFAULT_CWD', 'MCP_TERMINAL_FRONTEND', 'MCP_OWNER_CONTEXT_FILE', 'MCP_OWNER_ENV_FILE', 'MCP_BROWSER_JEV_ENV_FILE', 'MCP_SKILL_POLICY_FILE', 'MCP_SKILL_JEV_ENABLED', 'MCP_SKILL_JEV_ENV_FILE', 'MCP_LOCAL_SERVERS_FILE', 'BRIDGE_ONE_MCP_ENTRY', 'BRIDGE_COLD_START', 'BRIDGE_BACKEND_PORT', 'BRIDGE_WAKE_IDLE_MS', 'MCP_LOCAL_INNER_IDLE_MS', 'MCP_DEV_WORKER_IDLE_MS', 'MCP_LIFECYCLE_LEASE_DIR'].filter((key) => process.env[key] !== undefined).map((key) => [key, process.env[key]]),
     ),
   };
   const profileValues = await readEnvFile(path.join(repoRoot, 'config', 'profiles', `${profile}.env`));
@@ -268,6 +269,11 @@ export async function renderConfig(options) {
   const isPersonal = profile === 'personal';
   const isServer = profile === 'server';
   const isLocal = isPersonal || isServer;
+  const skillPolicyFile = String(deployment.MCP_SKILL_POLICY_FILE ?? '').trim();
+  if (isLocal && skillPolicyFile && !path.isAbsolute(skillPolicyFile)) {
+    throw new Error('MCP_SKILL_POLICY_FILE must be an absolute path when set');
+  }
+  if (isLocal && skillPolicyFile) await loadPolicy(skillPolicyFile);
   const skillJevEnabled = String(deployment.MCP_SKILL_JEV_ENABLED ?? '0');
   const skillJevEnvFile = String(deployment.MCP_SKILL_JEV_ENV_FILE ?? '').trim();
   if (isLocal) {
@@ -443,6 +449,7 @@ export async function renderConfig(options) {
     __LOCAL_INNER_CONFIG__: localInnerConfigPath,
     __ONE_MCP_ENTRY__: oneMcpEntry,
     __BROWSER_JEV_ENV_FILE__: browserJevEnvFile,
+    __SKILL_POLICY_FILE__: skillPolicyFile,
     __SKILL_JEV_ENABLED__: skillJevEnabled,
     __SKILL_JEV_ENV_FILE__: skillJevEnvFile,
   };
@@ -453,6 +460,9 @@ export async function renderConfig(options) {
   const localRendered = localTemplateName
     ? replaceStrings(JSON.parse(await fs.readFile(path.join(repoRoot, 'config', 'templates', localTemplateName), 'utf8')), replacements)
     : null;
+
+  // Preserve the default provider environment when no custom operator policy is configured.
+  if (isLocal && !skillPolicyFile) delete localRendered.mcpServers['skill-library'].env.MCP_SKILL_POLICY_FILE;
 
   rendered.mcpServers.dev.env.MCP_LIFECYCLE_LEASE_DIR = lifecycleLeaseDir;
   rendered.mcpServers.dev.env.MCP_DEV_WORKER_IDLE_MS = String(devIdleMs);

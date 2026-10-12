@@ -48,10 +48,10 @@ export function skillExcerpt(body, task, context = '', budget = 900) {
   return chosen.sort((a, b) => a - b).map(start => window(body, start, width)).join(SEPARATOR);
 }
 
-function rankQuestions(cards) {
+function rankQuestions(cards, descriptionChars = Infinity) {
   return { rank: { type: 'choice', instructions: RANK, criteria: {
     [NONE]: 'No listed skill materially helps with the task',
-    ...Object.fromEntries(cards.map(card => [card.id, `${card.name}: ${card.description}`])),
+    ...Object.fromEntries(cards.map(card => [card.id, `${card.name}: ${card.description.slice(0, descriptionChars)}`])),
   } } };
 }
 
@@ -86,19 +86,39 @@ export class JevSelector {
     checkCancelled();
     const empty = { status: 'no_match', selected: [], considered: cards.length, shortlisted: 0, apiCalls: 0, models: [], usage: null };
     if (!cards.length) return empty;
-    const rank = rankQuestions(cards);
-    payload(config.model, state, rank);
-    // Preflight the six largest actual verification records before paid calls.
-    const excerpts = new Map();
+    // Preflight the request sizes before paying for either model call. Large
+    // personal collections can have verbose descriptions or rich SKILL.md files.
+    // Shrink ranking metadata and verification excerpts separately, without
+    // changing the underlying files, authorization, or 24 KiB wire limit.
+    let rank;
+    for (const chars of [Infinity, 600, 400, 260, 160, 100]) {
+      rank = rankQuestions(cards, chars);
+      try { payload(config.model, state, rank); break; }
+      catch (error) {
+        if (error.code !== 'JEV_SCOPE_TOO_LARGE' || chars === 100) throw error;
+      }
+    }
+    const bodies = new Map();
     for (const card of cards) {
       checkCancelled();
-      const body = await readBody(card);
-      excerpts.set(card.id, { instructions_excerpt: skillExcerpt(body, task, context), excerpt_truncated: body.length > 900 });
+      bodies.set(card.id, await readBody(card));
       checkCancelled();
     }
-    const worst = [...cards].sort((a, b) => Buffer.byteLength(JSON.stringify(verifyQuestions([b], excerpts)))
-      - Buffer.byteLength(JSON.stringify(verifyQuestions([a], excerpts)))).slice(0, 6);
-    payload(config.model, state, verifyQuestions(worst, excerpts));
+    let excerpts;
+    for (const budget of [900, 750, 600, 500, 400, 300, 220]) {
+      excerpts = new Map();
+      for (const card of cards) {
+        const body = bodies.get(card.id);
+        excerpts.set(card.id, { instructions_excerpt: skillExcerpt(body, task, context, budget),
+          excerpt_truncated: body.length > budget });
+      }
+      const worst = [...cards].sort((a, b) => Buffer.byteLength(JSON.stringify(verifyQuestions([b], excerpts)))
+        - Buffer.byteLength(JSON.stringify(verifyQuestions([a], excerpts)))).slice(0, 6);
+      try { payload(config.model, state, verifyQuestions(worst, excerpts)); break; }
+      catch (error) {
+        if (error.code !== 'JEV_SCOPE_TOO_LARGE' || budget === 220) throw error;
+      }
+    }
     checkCancelled();
     const ask = questions => askJev({ config, state, questions, signal: routeSignal, fetchImpl: this.fetchImpl });
     const ranked = await ask(rank);

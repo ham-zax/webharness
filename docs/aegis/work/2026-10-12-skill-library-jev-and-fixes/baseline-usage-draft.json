@@ -1,0 +1,20 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "taskId": "2026-10-12-skill-library-jev-and-fixes",
+  "requiredBaselineRefs": [
+    "docs/skill-library.md",
+    "docs/security.md",
+    "docs/configuration.md",
+    "docs/compatibility.md"
+  ],
+  "deliveredContextRefs": [],
+  "acknowledgedBeforePlanRefs": [],
+  "citedInPlanRefs": [],
+  "missingRefs": [
+    "docs/skill-library.md",
+    "docs/security.md",
+    "docs/configuration.md",
+    "docs/compatibility.md"
+  ],
+  "decision": "needs-baseline-readback"
+}

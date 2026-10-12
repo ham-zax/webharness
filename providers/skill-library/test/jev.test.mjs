@@ -59,8 +59,26 @@ test('all scope/request preflight limits reject before any model request', async
   const huge = Array.from({ length: 20 }, (_, i) => ({ id: `test/${i}`, name: `skill-${i}`, description: '依'.repeat(1024) }));
   await assert.rejects(selector.select({ cards: huge, task: 'Test', readBody }), { code: 'JEV_SCOPE_TOO_LARGE' });
   const hugeVerification = cards.map(card => ({ ...card, description: '依'.repeat(1024) }));
-  await assert.rejects(selector.select({ cards: hugeVerification, task: 'Test', readBody: async () => '依'.repeat(3000) }), { code: 'JEV_SCOPE_TOO_LARGE' });
   assert.equal(calls.length, 0);
+  // The bounded adaptive evidence window can now fit this valid subset.
+  const selected = await selector.select({ cards: hugeVerification, task: 'Test', readBody: async () => '依'.repeat(3000) });
+  assert.equal(selected.apiCalls, 2);
+  assert.equal(calls.length, 2);
+  assert.ok(calls.every(call => Buffer.byteLength(JSON.stringify(call.body)) <= 24000));
+});
+
+test('large approved collections fit inside the same hard Jev wire limits', async () => {
+  const many = Array.from({ length: 50 }, (_, i) => ({
+    id: `marketing/specialist-${i}`, name: `specialist-${i}`,
+    description: `Provide targeted guidance for marketing opportunity ${i}. ` + 'Detailed applicability criteria. '.repeat(25),
+  }));
+  const { selector, calls } = mockSelector();
+  const result = await selector.select({ cards: many, task: 'Improve customer lifecycle marketing',
+    readBody: async card => `# ${card.name}\n## When to Use\n` + 'Long instructions and exclusions. '.repeat(120) });
+  assert.equal(result.apiCalls, 2);
+  assert.equal(calls.length, 2);
+  assert.ok(calls.every(call => Buffer.byteLength(JSON.stringify(call.body)) <= 24000));
+  assert.ok(calls[0].body.questions.rank.criteria['marketing/specialist-0'].length < many[0].description.length);
 });
 
 test('invalid probability IDs and nonfinite/missing answers fail closed without exposing response text', async () => {

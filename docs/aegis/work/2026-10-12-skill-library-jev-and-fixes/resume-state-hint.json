@@ -1,0 +1,15 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "taskId": "2026-10-12-skill-library-jev-and-fixes",
+  "lastCheckpointRef": "docs/aegis/work/2026-10-12-skill-library-jev-and-fixes/todo-checkpoint-draft.json",
+  "resumeInstruction": "Task done in b4fe864. Read checkpoint for verification. Preserve user staged import prompt/guide hunk and untracked docs/aegis import work. No workers or verification commands remain running.",
+  "knownPartialWork": [],
+  "mustReadBeforeContinuing": [
+    "docs/aegis/work/2026-10-12-skill-library-jev-and-fixes/10-intent.md",
+    "docs/aegis/work/2026-10-12-skill-library-jev-and-fixes/20-checkpoint.md",
+    "docs/aegis/work/2026-10-12-skill-library-jev-and-fixes/todo-checkpoint-draft.json"
+  ],
+  "unsafeToAssume": [
+    "GitHub CI and fresh ChatGPT UI are unverified. User explicitly authorized live hosted Jev: enabled in real deployment; default shipped templates remain disabled."
+  ]
+}

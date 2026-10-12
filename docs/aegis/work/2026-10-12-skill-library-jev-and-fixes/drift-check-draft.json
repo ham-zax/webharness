@@ -1,0 +1,16 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "taskId": "2026-10-12-skill-library-jev-and-fixes",
+  "taskIntentRef": "docs/aegis/work/2026-10-12-skill-library-jev-and-fixes/task-intent-draft.json",
+  "baselineRefs": [
+    "docs/skill-library.md",
+    "docs/security.md",
+    "docs/configuration.md",
+    "docs/compatibility.md"
+  ],
+  "scopeStatus": "not-yet-verified",
+  "compatStatus": "not-yet-verified",
+  "retirementStatus": "not-yet-verified",
+  "newRiskSignals": [],
+  "decision": "needs-baseline-readback"
+}

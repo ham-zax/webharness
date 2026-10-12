@@ -1,0 +1,15 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "requestedOutcome": "Fix four reviewed defects through a Codex Luna max worker and implement opt-in Jev selection using minimal JevShelf code reuse.",
+  "goal": "Fix four reviewed defects through a Codex Luna max worker and implement opt-in Jev selection using minimal JevShelf code reuse.",
+  "successEvidence": [],
+  "stopCondition": "Stop when success evidence is satisfied or a blocker/risk requires pause.",
+  "nonGoals": [
+    "Bulk corpus import, binary asset support, live deployment changes, publishing, unrelated staged or untracked work."
+  ],
+  "scope": "Native skill provider, explicit adaptation/policy, optional ranking, targeted tests and required documentation/configuration.",
+  "changeKinds": [
+    "implementation"
+  ],
+  "riskHints": []
+}

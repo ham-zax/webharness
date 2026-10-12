@@ -190,6 +190,9 @@ skill, revision, file and offset. Checksums establish continuity, not trust.
 
 ## Operator commands and updates
 
+For a reusable prompt to import an installed Codex skill collection, see
+[Import an installed skill collection](prompts/skill-library-import.md).
+
 ```bash
 ./bin/webharness skills find --query thinking-first-principles
 ./bin/webharness skills find --collection thinking --limit 8

@@ -1,0 +1,11 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "candidateDocs": [
+    "docs/skill-library.md",
+    "docs/security.md",
+    "docs/configuration.md",
+    "docs/compatibility.md"
+  ],
+  "whyRelevant": "Baseline read-set requires agent review.",
+  "missingAuthority": []
+}

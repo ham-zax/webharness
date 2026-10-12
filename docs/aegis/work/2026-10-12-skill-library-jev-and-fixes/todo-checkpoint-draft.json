@@ -1,0 +1,13 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "taskId": "2026-10-12-skill-library-jev-and-fixes",
+  "currentTodo": "Finish independent review, live registration and semantic commit preserving staged user work.",
+  "completedTodos": [
+    "Full portable gate passed. Four fixes implemented and parent verified; minimal JevShelf port passed mock/integration tests and live TypeSafe query; catalog.json and compile removed; CI uv and explicit-use guidance added."
+  ],
+  "activeSlice": "Independent review and live provider registration.",
+  "evidenceRefs": [],
+  "blockedOn": null,
+  "nextStep": "Read reviewer results, resolve confirmed defects, register live provider preserving state, commit task paths only.",
+  "updatedAt": "2026-10-12"
+}

@@ -10,3 +10,8 @@ __pycache__/
 
 .worktrees/
 node_modules/
+
+# Operator-local, non-distributable skill corpus and policy. Private backup sources.
+/skill-library/packs/private/
+/skill-library/policy-personal.json
+/skill-library/PRIVATE-README.md
