@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { ownedBootstrapPage } from '../external-pinned-session.mjs';
+import { ownedBootstrapPage, cliBootstrapPage } from '../external-pinned-session.mjs';
 
 const owned = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
 const existing = 'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB';
@@ -31,4 +31,16 @@ test('provider refuses ambiguous, modified, foreign or changed-browser pages', (
   ]) {
     assert.throws(() => ownedBootstrapPage({ before, after, activeTargetId: active, selectedTargetId: selected }));
   }
+});
+
+test('raw CLI bootstrap is owned only when it is the one new blank page the session pinned', () => {
+  const before = snapshot([[existing, 'https://example.com']]);
+  const blank = snapshot([[existing, 'https://example.com'], [owned, 'about:blank']]);
+  assert.equal(cliBootstrapPage({ before, after: blank, pinnedTargetId: owned }), owned);
+  assert.equal(cliBootstrapPage({ before, after: before, pinnedTargetId: existing }), null);
+  assert.equal(cliBootstrapPage({ before, after: blank, pinnedTargetId: existing }), null);
+  assert.equal(cliBootstrapPage({ before, after: blank, pinnedTargetId: undefined }), null);
+  assert.equal(cliBootstrapPage({ before, after: snapshot([[existing, 'https://example.com'], [owned, 'https://x.com']]), pinnedTargetId: owned }), null);
+  assert.equal(cliBootstrapPage({ before, after: snapshot([...blank.pages, [unrelated, 'about:blank']]), pinnedTargetId: owned }), null);
+  assert.equal(cliBootstrapPage({ before, after: { ...blank, websocket: 'ws://127.0.0.1:9222/devtools/browser/restarted' }, pinnedTargetId: owned }), null);
 });

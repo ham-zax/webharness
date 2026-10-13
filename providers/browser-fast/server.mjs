@@ -14,7 +14,7 @@ import { resolveBrowserMemory } from './browser-memory.mjs';
 import { readTargetInfo } from './target-info.mjs';
 import { readExternalCdpPages, ownedBootstrapPage, closeExternalOwnedPage } from './external-pinned-session.mjs';
 
-export const AGENT_BROWSER_VERSION = '0.38.2';
+export const AGENT_BROWSER_VERSION = '0.39.0';
 export const DEFAULT_SESSION_PREFIX = 'mcp-browser-fast';
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -567,12 +567,12 @@ export class AgentBrowserRunner {
   }
 
   async ensureExternalPinnedSession(selected, session, sessionTab) {
-    // Managed Clearcote owns its context. External CDP 9222 is a separate,
-    // shared Chrome process: creating a pinned Agent Browser session silently
-    // adds an about:blank page that `agent-browser close` does not remove.
+    // Creating a pinned Agent Browser session on an already running browser
+    // (external CDP 9222 or a managed Clearcote runtime) silently adds an
+    // about:blank page that `agent-browser close` does not remove.
     // Initialize on the explicitly selected tab and reclaim ONLY the blank
     // target proven to have been allocated by this very session.
-    if (selected.managed === true || !/^\d{2,5}$/.test(String(selected.cdp || ''))
+    if (!/^\d{2,5}$/.test(String(selected.cdp || ''))
         || !/^[a-f0-9]{32}$/i.test(String(sessionTab || ''))) return;
     const previous = this.externalPinnedReady.get(session);
     if (previous) return previous;
@@ -614,6 +614,9 @@ export class AgentBrowserRunner {
     if (selected.managed === true) {
       const runtime = await this.clearcoteRuntime.ensure(selected);
       const backend = { ...selected, session, cdp: runtime.cdp };
+      // Serialized with tab allocation so the before/after inventory sees one new page.
+      await this.withClearcoteAllocation(selected.profileName,
+        () => this.ensureExternalPinnedSession(backend, session, sessionTab));
       const result = await this.managedLinuxBatch(backend, commands, { bail });
       return { ...result, browserBackend: selected.browser, browserProfile: selected.profileName };
     }

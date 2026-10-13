@@ -86,7 +86,7 @@ if (local) {
   if (fast.tags !== undefined) throw new Error('inner Browser Fast provider must not carry an outer OAuth tag');
   const fastPkg = JSON.parse(fs.readFileSync(path.join(repoRoot, 'providers', 'browser-fast', 'package.json'), 'utf8'));
   if (fastPkg.dependencies?.['@modelcontextprotocol/sdk'] !== '1.30.0') throw new Error('unexpected Browser Fast MCP SDK pin');
-  if (fastPkg.dependencies?.['agent-browser'] !== '0.38.2') throw new Error('unexpected Browser Fast Agent Browser pin');
+  if (fastPkg.dependencies?.['agent-browser'] !== '0.39.0') throw new Error('unexpected Browser Fast Agent Browser pin');
   if (fastPkg.dependencies?.zod !== '4.4.3') throw new Error('unexpected Browser Fast zod pin');
 
   const jev = inner.mcpServers['browser-jev'];

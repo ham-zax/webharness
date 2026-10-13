@@ -65,3 +65,13 @@ export async function closeExternalOwnedPage(websocket, targetId, { WebSocketImp
     socket.addEventListener('error', () => finish(new Error('CDP exact page cleanup connection failed')));
   });
 }
+
+// Raw `agent-browser --cdp <port> --session <name> --pin-tab` callers bypass the
+// provider above. Their first command allocates the same blank page and pins
+// it; Agent Browser reports the pinned target in <session>.target.
+export function cliBootstrapPage({ before, after, pinnedTargetId }) {
+  if (after.websocket !== before.websocket) return null;
+  const added = [...after.pages].filter(([id]) => !before.pages.has(id));
+  return added.length === 1 && added[0][0] === pinnedTargetId && added[0][1] === 'about:blank'
+    ? pinnedTargetId : null;
+}
