@@ -15,7 +15,7 @@ const validArgs = () => ({
   goal: 'Confirm the page and stop.',
   scenario: {
     browser_target: 'linux',
-    browser_backend: 'clearcote',
+    browser_backend: 'cloakbrowser',
     browser_profile: 'x-main',
     success: { title_contains: ['Example Domain'] }
   }

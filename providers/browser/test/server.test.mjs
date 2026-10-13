@@ -25,7 +25,7 @@ test('browser facade adds locality and deployment path guidance without changing
   assert.deepEqual(tool.inputSchema.properties.format, upstream.inputSchema.properties.format);
   assert.match(tool.inputSchema.properties.filePath.description, /selected target.*OS temporary directory/i);
   assert.deepEqual(tool.inputSchema.properties.browser_target.enum, ['windows', 'linux']);
-  assert.deepEqual(tool.inputSchema.properties.browser_backend.enum, ['chrome', 'clearcote']);
+  assert.deepEqual(tool.inputSchema.properties.browser_backend.enum, ['chrome', 'cloakbrowser']);
   assert.equal(tool.inputSchema.properties.browser_profile.maxLength, 64);
   assert.equal(upstream.inputSchema.properties.browser_target, undefined);
   assert.equal(upstream.inputSchema.properties.browser_backend, undefined);
@@ -63,16 +63,16 @@ test('browser router uses its configured default target, resolves Linux through 
     linuxBackendResolve: async ({ browser, profile }) => {
       assert.equal(browser, undefined);
       assert.equal(profile, undefined);
-      return { browser: 'clearcote', managed: true, profileName: 'x-main' };
+      return { browser: 'cloakbrowser', managed: true, profileName: 'x-main' };
     },
-    clearcoteEndpointResolve: async profileName => {
+    cloakbrowserEndpointResolve: async profileName => {
       assert.equal(profileName, 'x-main');
       return { browserUrl: 'http://127.0.0.1:42425' };
     }
   });
   const tools = await router.listTools();
   assert.deepEqual(tools[0].inputSchema.properties.browser_target.enum, ['windows', 'linux']);
-  assert.deepEqual(tools[0].inputSchema.properties.browser_backend.enum, ['chrome', 'clearcote']);
+  assert.deepEqual(tools[0].inputSchema.properties.browser_backend.enum, ['chrome', 'cloakbrowser']);
 
   const windowsResult = await router.call({ tool: 'take_screenshot', arguments: { format: 'png' } });
   assert.strictEqual(windowsResult, imageResult);
@@ -96,8 +96,8 @@ test('browser router uses its configured default target, resolves Linux through 
     childFactory,
     env: { DISPLAY: ':0' },
     defaultTarget: 'linux',
-    linuxBackendResolve: async () => ({ browser: 'clearcote', managed: true, profileName: 'x-main' }),
-    clearcoteEndpointResolve: async () => ({ browserUrl: 'http://127.0.0.1:42425' })
+    linuxBackendResolve: async () => ({ browser: 'cloakbrowser', managed: true, profileName: 'x-main' }),
+    cloakbrowserEndpointResolve: async () => ({ browserUrl: 'http://127.0.0.1:42425' })
   });
   await linuxDefault.call({ tool: 'take_screenshot', arguments: { format: 'png' } });
   assert.equal(calls.at(-1).target, 'linux');
@@ -119,8 +119,8 @@ test('browser router attaches to a V1 external CDP endpoint without resolving a 
   const router = new BrowserRouter({
     childFactory,
     env: { DISPLAY: ':99' },
-    linuxBackendResolve: async () => ({ browser: 'clearcote', cdp: '9222', session: 'mcp-browser-fast-linux-clearcote-9222' }),
-    clearcoteEndpointResolve: async () => { throw new Error('managed endpoint must not be resolved for external CDP'); }
+    linuxBackendResolve: async () => ({ browser: 'cloakbrowser', cdp: '9222', session: 'mcp-browser-fast-linux-cloakbrowser-9222' }),
+    cloakbrowserEndpointResolve: async () => { throw new Error('managed endpoint must not be resolved for external CDP'); }
   });
   await router.call({ tool: 'list_pages', arguments: { browser_target: 'linux' } });
   assert.deepEqual(calls.at(-1).config, childConfig('linux', { DISPLAY: ':99' }, [], { browserUrl: 'http://127.0.0.1:9222' }));

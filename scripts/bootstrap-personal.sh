@@ -81,7 +81,7 @@ if [ "${PERSONAL_BOOTSTRAP_SKIP_INSTALL:-0}" != "1" ]; then
   npm --prefix "$ROOT/providers/skill-library" ci --omit=dev
 
   echo "== installing pinned Personal Workstation native runtimes =="
-  "$ROOT/scripts/setup-clearcote-wsl.sh"
+  "$ROOT/scripts/setup-cloakbrowser.sh"
 else
   echo "== skipping toolbox/provider installation by PERSONAL_BOOTSTRAP_SKIP_INSTALL =="
 fi

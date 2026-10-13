@@ -55,7 +55,7 @@ Loopback wake proxy (always listening)
               `-- browser-devtools -----> Chrome DevTools MCP
                          |
                          +-- Windows: dedicated persistent MCP Chrome
-                         `-- Linux: configured Chrome/Clearcote backend and profile through WSLg
+                         `-- Linux: configured Chrome/CloakBrowser backend and profile through WSLg
 ```
 
 Cloudflare is the current public HTTPS transport and 1MCP is the OAuth/MCP gateway. The maintained workstation uses a locally-managed Cloudflare Tunnel configured outside the repository and leaves `MCP_TUNNEL_NAME` empty, so WebHarness runs `cloudflared tunnel run` against the operator-owned default Cloudflare configuration. OpenAI Secure MCP Tunnel is a separate future connector path that could keep 1MCP private behind a local `tunnel-client`; WebHarness does not currently implement or supervise that path. See [Getting Started](docs/getting-started.md#provision-the-cloudflare-transport-used-by-the-reference-deployment) for both boundaries. Providers remain local stdio processes. A small loopback wake proxy keeps the endpoint available while idle 1MCP and its providers release memory. Dev execution uses an idle worker, and general Local discovery does not wake its inner backend. See [idle configuration](docs/configuration.md#on-demand-runtimes). The Local broker exists so adding or upgrading a large downstream tool catalog does not force the entire catalog into every client session.
@@ -167,7 +167,7 @@ It launches visible Chrome with that custom `--user-data-dir` and `--remote-debu
 Both Windows browser surfaces share that one profile and endpoint:
 
 ```text
-browser-fast     -> Agent Browser 0.35.0 -> direct CDP WebSocket
+browser-fast     -> Agent Browser 0.39.0 -> direct CDP WebSocket
 browser-devtools -> Chrome DevTools MCP   -> loopback browser URL
 ```
 

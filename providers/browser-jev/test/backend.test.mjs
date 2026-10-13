@@ -29,21 +29,21 @@ test('Windows uses the managed Chrome runtime for the selected profile', async (
   });
 });
 
-test('Linux Clearcote resolves its live endpoint on every call', async () => {
+test('Linux CloakBrowser resolves its live endpoint on every call', async () => {
   const reads = [];
   let port = 9300;
-  const stateRoot = '/state/clearcote';
+  const stateRoot = '/state/cloakbrowser';
   const resolver = new BrowserJevBackendResolver({
     stateRoot,
-    resolveLinux: async () => ({ browser: 'clearcote', managed: true, profileName: 'x-main' }),
+    resolveLinux: async () => ({ browser: 'cloakbrowser', managed: true, profileName: 'x-main' }),
     readEndpoint: async (profileDir, options) => {
       reads.push({ profileDir, options });
       port += 1;
       return { browserUrl: `http://127.0.0.1:${port}` };
     },
-    runnerFactory: () => { throw new Error('must not construct AgentBrowserRunner for Clearcote'); }
+    runnerFactory: () => { throw new Error('must not construct AgentBrowserRunner for CloakBrowser'); }
   });
-  const selection = { browser_target: 'linux', browser_backend: 'clearcote', browser_profile: 'x-main' };
+  const selection = { browser_target: 'linux', browser_backend: 'cloakbrowser', browser_profile: 'x-main' };
   assert.equal((await resolver.resolve(selection)).browserUrl, 'http://127.0.0.1:9301');
   assert.equal((await resolver.resolve(selection)).browserUrl, 'http://127.0.0.1:9302');
   assert.deepEqual(reads, [
@@ -52,14 +52,14 @@ test('Linux Clearcote resolves its live endpoint on every call', async () => {
   ]);
 });
 
-test('inactive Clearcote fails with browser-fast initialization instructions', async () => {
+test('inactive CloakBrowser fails with browser-fast initialization instructions', async () => {
   const resolver = new BrowserJevBackendResolver({
-    resolveLinux: async () => ({ browser: 'clearcote', managed: true, profileName: 'x-main' }),
+    resolveLinux: async () => ({ browser: 'cloakbrowser', managed: true, profileName: 'x-main' }),
     readEndpoint: async () => null,
-    runnerFactory: () => { throw new Error('must not construct AgentBrowserRunner for Clearcote'); }
+    runnerFactory: () => { throw new Error('must not construct AgentBrowserRunner for CloakBrowser'); }
   });
   await assert.rejects(
-    resolver.resolve({ browser_target: 'linux', browser_backend: 'clearcote', browser_profile: 'x-main' }),
+    resolver.resolve({ browser_target: 'linux', browser_backend: 'cloakbrowser', browser_profile: 'x-main' }),
     error => error.code === 'LINUX_BROWSER_NOT_RUNNING' && /browser-fast/.test(error.message)
   );
 });

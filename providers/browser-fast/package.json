@@ -12,7 +12,8 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.30.0",
     "agent-browser": "0.39.0",
-    "clearcote": "0.27.0",
+    "cloakbrowser": "0.6.2",
+    "playwright-core": "1.64.0",
     "zod": "4.4.3"
   }
 }

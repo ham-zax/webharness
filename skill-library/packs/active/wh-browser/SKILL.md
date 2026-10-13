@@ -39,9 +39,9 @@ you create.
 | Target | Args | Notes |
 |---|---|---|
 | **Windows Chrome** (default) | omit `browser_target` | Dedicated MCP Chrome on Windows; reaches WSL dev servers at `http://localhost:<port>`. |
-| **Linux Clearcote** | `"browser_target":"linux","browser_backend":"clearcote","browser_profile":"x-main"` | Managed WSLg browser (config `~/.config/mcp-dev-bridge/browser-fast.json`). devtools and jev attach to it only after browser-fast has started it — run a fast `observe` first. |
+| **Linux CloakBrowser** | `"browser_target":"linux","browser_backend":"cloakbrowser","browser_profile":"x-main"` | Managed WSLg browser (config `~/.config/mcp-dev-bridge/browser-fast.json`). devtools and jev attach to it only after browser-fast has started it — run a fast `observe` first. |
 
-Choose Linux Clearcote when stealth matters (bot detection, anti-automation sites): it runs with a managed fingerprint and humanized input. Linux `browser_backend:"chrome"` currently fails to launch — use Clearcote.
+Choose Linux CloakBrowser when stealth matters (bot detection, anti-automation sites): it runs with a managed fingerprint and humanized input. Linux `browser_backend:"chrome"` currently fails to launch — use CloakBrowser.
 Pass identical target/backend/profile on every call within one task (for jev, inside `scenario`).
 
 ## fast
@@ -74,7 +74,7 @@ Standard Chrome DevTools MCP tools (`wh-browser devtools tools`). Flow: `new_pag
 - Direct agent-browser: read its installed core guide, use one named session per task/run, and reuse it. Worktree-derived IDs collide for concurrent agents in the same worktree; add a stable task/worker suffix. For shared CDP, use --pin-tab and record owned targetId values; naming a session does not isolate cookies or grant ownership of existing tabs. Close owned tabs explicitly before closing that session. Verify via WH observe or read-only CDP discovery rather than reattaching a closed pinned session and accidentally creating a new tab.
 - For a task-owned standalone browser, close its named session at the end. Idle timeouts are a backup, not cleanup; headed and attached sessions may be exempt. Never use close --all or kill the shared browser as routine cleanup.
 - Keep an explicitly requested page open only as a recorded handoff. If ownership is uncertain, inspect it before cleanup; never close an arbitrary newly appeared tab. Preserve the selected application browser transport and publication guards.
-- With an externally owned CDP browser, a pinned first attachment may create a tab: record that bound target as task-owned. Do not treat a named CDP session as an isolated browser. In WSL, use direct fallback with its own browser/profile; do not attach to managed Clearcote state or repoint WH configuration merely to share a session.
+- With an externally owned CDP browser, a pinned first attachment may create a tab: record that bound target as task-owned. Do not treat a named CDP session as an isolated browser. In WSL, use direct fallback with its own browser/profile; do not attach to managed CloakBrowser state or repoint WH configuration merely to share a session.
 
 ## Hygiene
 

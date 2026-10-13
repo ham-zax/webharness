@@ -3,9 +3,9 @@ import path from 'node:path';
 import { ensureWindowsChrome } from '../browser/windows-chrome-runtime.mjs';
 import { resolveLinuxBrowserBackend } from '../browser-fast/browser-backend-config.mjs';
 import {
-  DEFAULT_CLEARCOTE_STATE_ROOT,
-  readClearcoteEndpoint
-} from '../browser-fast/clearcote-runtime.mjs';
+  DEFAULT_CLOAKBROWSER_STATE_ROOT,
+  readCloakBrowserEndpoint
+} from '../browser-fast/cloakbrowser-runtime.mjs';
 import { AgentBrowserRunner } from '../browser-fast/server.mjs';
 
 function backendError(code, message, cause) {
@@ -63,8 +63,8 @@ export class BrowserJevBackendResolver {
   constructor({
     ensureWindows = ensureWindowsChrome,
     resolveLinux = resolveLinuxBrowserBackend,
-    readEndpoint = readClearcoteEndpoint,
-    stateRoot = DEFAULT_CLEARCOTE_STATE_ROOT,
+    readEndpoint = readCloakBrowserEndpoint,
+    stateRoot = DEFAULT_CLOAKBROWSER_STATE_ROOT,
     runnerFactory = () => new AgentBrowserRunner()
   } = {}) {
     this.ensureWindows = ensureWindows;
@@ -93,28 +93,28 @@ export class BrowserJevBackendResolver {
       browser: selection.browser_backend,
       profile: requestedProfile
     });
-    if (backend.browser === 'clearcote') {
+    if (backend.browser === 'cloakbrowser') {
       if (backend.managed !== true || typeof backend.profileName !== 'string') {
-        throw backendError('CLEARCOTE_BACKEND_INVALID', 'browser-fast did not resolve a managed Clearcote profile');
+        throw backendError('CLOAKBROWSER_BACKEND_INVALID', 'browser-fast did not resolve a managed CloakBrowser profile');
       }
       const profilesRoot = path.resolve(this.stateRoot, 'profiles');
       const profileDir = path.resolve(profilesRoot, backend.profileName);
       if (path.dirname(profileDir) !== profilesRoot) {
-        throw backendError('CLEARCOTE_PROFILE_INVALID', 'managed Clearcote profile must resolve beneath its profiles root');
+        throw backendError('CLOAKBROWSER_PROFILE_INVALID', 'managed CloakBrowser profile must resolve beneath its profiles root');
       }
       const endpoint = await this.readEndpoint(profileDir, { allowMissing: true });
       if (!endpoint) {
         throw backendError(
           'LINUX_BROWSER_NOT_RUNNING',
-          `managed Clearcote profile ${backend.profileName} is not active; initialize it once through browser-fast before starting browser-jev`
+          `managed CloakBrowser profile ${backend.profileName} is not active; initialize it once through browser-fast before starting browser-jev`
         );
       }
       return {
         browserTarget: 'linux',
-        browserBackend: 'clearcote',
+        browserBackend: 'cloakbrowser',
         browserProfile: backend.profileName,
         browserUrl: toLoopbackBrowserUrl(endpoint.browserUrl),
-        queueKey: `linux:clearcote:${backend.profileName}`
+        queueKey: `linux:cloakbrowser:${backend.profileName}`
       };
     }
     if (backend.browser !== 'chrome') {

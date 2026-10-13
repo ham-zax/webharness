@@ -1,19 +1,15 @@
 {
-  "_comment": "Keep managed Clearcote x-main as the shared Linux default. Select Chrome per call without rewriting this file. For explicit isolation, send browser_profile with browser_backend; Chrome creates persistent named profiles, while Clearcote names must be defined below.",
+  "_comment": "Keep managed CloakBrowser x-main as the shared Linux default. Select Chrome per call without rewriting this file. For explicit isolation, send browser_profile with browser_backend; Chrome creates persistent named profiles, while CloakBrowser names must be defined below.",
   "version": 2,
   "linux": {
-    "browser": "clearcote",
+    "browser": "cloakbrowser",
     "profile": "x-main"
   },
-  "clearcote": {
+  "cloakbrowser": {
     "profiles": {
       "x-main": {
-        "fingerprint": "x-main",
-        "platform": "linux",
-        "brand": "Chrome",
         "headless": false,
-        "humanize": true,
-        "lightStealth": false
+        "humanize": true
       }
     }
   }

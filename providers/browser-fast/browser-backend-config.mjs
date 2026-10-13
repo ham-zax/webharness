@@ -100,52 +100,59 @@ function resolveChrome(profileName) {
   };
 }
 
-function resolveManagedClearcote(config, requestedProfile) {
-  rejectUnknownKeys(config, new Set(['version', 'linux', 'clearcote', '_comment']), 'browser-fast config');
+function resolveManagedCloakBrowser(config, requestedProfile) {
+  rejectUnknownKeys(config, new Set(['version', 'linux', 'cloakbrowser', '_comment']), 'browser-fast config');
   rejectUnknownKeys(config.linux, new Set(['browser', 'profile']), 'browser-fast config linux');
 
   let profileName = requestedProfile;
-  if (profileName === undefined && config.linux.browser === 'clearcote') profileName = config.linux.profile;
-  if (profileName === undefined && isRecord(config.clearcote?.profiles)) {
-    const profiles = Object.keys(config.clearcote.profiles);
+  if (profileName === undefined && config.linux.browser === 'cloakbrowser') profileName = config.linux.profile;
+  if (profileName === undefined && isRecord(config.cloakbrowser?.profiles)) {
+    const profiles = Object.keys(config.cloakbrowser.profiles);
     if (profiles.length === 1) [profileName] = profiles;
   }
-  profileName = requiredProfileName(profileName, 'browser-fast Clearcote profile');
-  if (!isRecord(config.clearcote)) throw configError('BROWSER_FAST_CONFIG_INVALID', 'browser-fast config clearcote must be an object');
-  rejectUnknownKeys(config.clearcote, new Set(['profiles']), 'browser-fast config clearcote');
-  if (!isRecord(config.clearcote.profiles)) throw configError('BROWSER_FAST_CONFIG_INVALID', 'browser-fast config clearcote.profiles must be an object');
+  profileName = requiredProfileName(profileName, 'browser-fast CloakBrowser profile');
+  if (!isRecord(config.cloakbrowser)) throw configError('BROWSER_FAST_CONFIG_INVALID', 'browser-fast config cloakbrowser must be an object');
+  rejectUnknownKeys(config.cloakbrowser, new Set(['profiles']), 'browser-fast config cloakbrowser');
+  if (!isRecord(config.cloakbrowser.profiles)) throw configError('BROWSER_FAST_CONFIG_INVALID', 'browser-fast config cloakbrowser.profiles must be an object');
 
-  const raw = config.clearcote.profiles[profileName];
-  if (!isRecord(raw)) throw configError('BROWSER_FAST_CONFIG_INVALID', `clearcote profile is not defined: ${profileName}`);
+  const raw = config.cloakbrowser.profiles[profileName];
+  if (!isRecord(raw)) throw configError('BROWSER_FAST_CONFIG_INVALID', `cloakbrowser profile is not defined: ${profileName}`);
   rejectUnknownKeys(
     raw,
-    new Set(['fingerprint', 'platform', 'brand', 'headless', 'humanize', 'lightStealth', 'timezone', 'acceptLanguage', 'extensions']),
-    `browser-fast config clearcote.profiles.${profileName}`
+    new Set(['fingerprint', 'platform', 'headless', 'humanize', 'humanPreset', 'timezone', 'locale', 'extensions']),
+    `browser-fast config cloakbrowser.profiles.${profileName}`
   );
 
-  const platform = optionalString(raw.platform, `clearcote profile ${profileName}.platform`);
-  if (platform !== undefined && !['windows', 'linux', 'macos', 'android'].includes(platform)) {
-    throw configError('BROWSER_FAST_CONFIG_INVALID', `clearcote profile ${profileName}.platform must be windows, linux, macos, or android`);
+  // Seeds outside 10000..99999 are legal for the binary; the wrapper only draws from that range.
+  if (raw.fingerprint !== undefined && (!Number.isSafeInteger(raw.fingerprint) || raw.fingerprint < 1)) {
+    throw configError('BROWSER_FAST_CONFIG_INVALID', `cloakbrowser profile ${profileName}.fingerprint must be a positive integer seed`);
+  }
+  const platform = optionalString(raw.platform, `cloakbrowser profile ${profileName}.platform`);
+  if (platform !== undefined && !['windows', 'macos'].includes(platform)) {
+    throw configError('BROWSER_FAST_CONFIG_INVALID', `cloakbrowser profile ${profileName}.platform must be windows or macos`);
+  }
+  const humanPreset = optionalString(raw.humanPreset, `cloakbrowser profile ${profileName}.humanPreset`);
+  if (humanPreset !== undefined && !['default', 'careful'].includes(humanPreset)) {
+    throw configError('BROWSER_FAST_CONFIG_INVALID', `cloakbrowser profile ${profileName}.humanPreset must be default or careful`);
   }
 
   const profile = {
-    fingerprint: optionalString(raw.fingerprint, `clearcote profile ${profileName}.fingerprint`) ?? profileName,
+    ...(raw.fingerprint === undefined ? {} : { fingerprint: raw.fingerprint }),
     ...(platform === undefined ? {} : { platform }),
-    ...(raw.brand === undefined ? {} : { brand: optionalString(raw.brand, `clearcote profile ${profileName}.brand`) }),
-    headless: optionalBoolean(raw.headless, `clearcote profile ${profileName}.headless`) ?? false,
-    humanize: optionalBoolean(raw.humanize, `clearcote profile ${profileName}.humanize`) ?? true,
-    ...(raw.lightStealth === undefined ? {} : { lightStealth: optionalBoolean(raw.lightStealth, `clearcote profile ${profileName}.lightStealth`) }),
-    ...(raw.timezone === undefined ? {} : { timezone: optionalString(raw.timezone, `clearcote profile ${profileName}.timezone`) }),
-    ...(raw.acceptLanguage === undefined ? {} : { acceptLanguage: optionalString(raw.acceptLanguage, `clearcote profile ${profileName}.acceptLanguage`) }),
-    ...(raw.extensions === undefined ? {} : { extensions: optionalStringArray(raw.extensions, `clearcote profile ${profileName}.extensions`) })
+    headless: optionalBoolean(raw.headless, `cloakbrowser profile ${profileName}.headless`) ?? false,
+    humanize: optionalBoolean(raw.humanize, `cloakbrowser profile ${profileName}.humanize`) ?? true,
+    ...(humanPreset === undefined ? {} : { humanPreset }),
+    ...(raw.timezone === undefined ? {} : { timezone: optionalString(raw.timezone, `cloakbrowser profile ${profileName}.timezone`) }),
+    ...(raw.locale === undefined ? {} : { locale: optionalString(raw.locale, `cloakbrowser profile ${profileName}.locale`) }),
+    ...(raw.extensions === undefined ? {} : { extensions: optionalStringArray(raw.extensions, `cloakbrowser profile ${profileName}.extensions`) })
   };
 
   return {
-    browser: 'clearcote',
+    browser: 'cloakbrowser',
     managed: true,
     profileName,
     profile,
-    session: `mcp-browser-fast-linux-clearcote-${profileName}`
+    session: `mcp-browser-fast-linux-cloakbrowser-${profileName}`
   };
 }
 
@@ -156,8 +163,8 @@ export async function resolveLinuxBrowserBackend({
   browser: requestedBrowser,
   profile: requestedProfile
 } = {}) {
-  if (requestedBrowser !== undefined && !['chrome', 'clearcote'].includes(requestedBrowser)) {
-    throw configError('BROWSER_FAST_BACKEND_INVALID', 'browser backend must be chrome or clearcote');
+  if (requestedBrowser !== undefined && !['chrome', 'cloakbrowser'].includes(requestedBrowser)) {
+    throw configError('BROWSER_FAST_BACKEND_INVALID', 'browser backend must be chrome or cloakbrowser');
   }
   if (requestedProfile !== undefined) requiredProfileName(requestedProfile, 'browser profile');
   let stat;
@@ -165,8 +172,8 @@ export async function resolveLinuxBrowserBackend({
     stat = await lstat(configFile);
   } catch (error) {
     if (error?.code === 'ENOENT') {
-      if (requestedBrowser === 'clearcote') {
-        throw configError('BROWSER_FAST_CONFIG_UNAVAILABLE', 'managed Clearcote requires browser-fast configuration with at least one profile');
+      if (requestedBrowser === 'cloakbrowser') {
+        throw configError('BROWSER_FAST_CONFIG_UNAVAILABLE', 'managed CloakBrowser requires browser-fast configuration with at least one profile');
       }
       return resolveChrome(requestedProfile);
     }
@@ -195,31 +202,37 @@ export async function resolveLinuxBrowserBackend({
   }
   if (!isRecord(config)) throw configError('BROWSER_FAST_CONFIG_INVALID', `${configFile} must contain a JSON object`);
   if (!isRecord(config.linux)) throw configError('BROWSER_FAST_CONFIG_INVALID', 'browser-fast config linux must be an object');
+  if (config.clearcote !== undefined || config.linux.browser === 'clearcote') {
+    throw configError(
+      'BROWSER_FAST_CONFIG_INVALID',
+      'Clearcote was replaced by CloakBrowser; run node scripts/setup-browser-fast-config.mjs in the WebHarness checkout to convert this file'
+    );
+  }
 
   if (config.version === 2) {
     const configuredBrowser = config.linux.browser;
     if (configuredBrowser === 'firefox') {
       throw configError(
         'UNSUPPORTED_BROWSER_BACKEND',
-        'Firefox does not expose Chromium CDP and Agent Browser cannot drive it; use chrome or clearcote'
+        'Firefox does not expose Chromium CDP and Agent Browser cannot drive it; use chrome or cloakbrowser'
       );
     }
     if (configuredBrowser === 'chrome') {
-      rejectUnknownKeys(config, new Set(['version', 'linux', 'clearcote', '_comment']), 'browser-fast config');
+      rejectUnknownKeys(config, new Set(['version', 'linux', 'cloakbrowser', '_comment']), 'browser-fast config');
       rejectUnknownKeys(config.linux, new Set(['browser']), 'browser-fast config linux');
-    } else if (configuredBrowser === 'clearcote') {
-      rejectUnknownKeys(config, new Set(['version', 'linux', 'clearcote', '_comment']), 'browser-fast config');
+    } else if (configuredBrowser === 'cloakbrowser') {
+      rejectUnknownKeys(config, new Set(['version', 'linux', 'cloakbrowser', '_comment']), 'browser-fast config');
       rejectUnknownKeys(config.linux, new Set(['browser', 'profile']), 'browser-fast config linux');
       requiredProfileName(config.linux.profile, 'browser-fast config linux.profile');
     } else {
-      throw configError('BROWSER_FAST_CONFIG_INVALID', 'browser-fast config linux.browser must be chrome, clearcote, or firefox');
+      throw configError('BROWSER_FAST_CONFIG_INVALID', 'browser-fast config linux.browser must be chrome, cloakbrowser, or firefox');
     }
 
     const browser = requestedBrowser ?? configuredBrowser;
     if (browser === 'chrome') {
       return resolveChrome(requestedProfile);
     }
-    return resolveManagedClearcote(config, requestedProfile);
+    return resolveManagedCloakBrowser(config, requestedProfile);
   }
 
   rejectUnknownKeys(config, new Set(['version', 'linux', '_comment']), 'browser-fast config');
@@ -230,27 +243,27 @@ export async function resolveLinuxBrowserBackend({
   if (configuredBrowser === 'firefox') {
     throw configError(
       'UNSUPPORTED_BROWSER_BACKEND',
-      'Firefox does not expose Chromium CDP and Agent Browser cannot drive it; use chrome or clearcote'
+      'Firefox does not expose Chromium CDP and Agent Browser cannot drive it; use chrome or cloakbrowser'
     );
   }
-  if (!['chrome', 'clearcote'].includes(configuredBrowser)) {
-    throw configError('BROWSER_FAST_CONFIG_INVALID', 'browser-fast config linux.browser must be chrome, clearcote, or firefox');
+  if (!['chrome', 'cloakbrowser'].includes(configuredBrowser)) {
+    throw configError('BROWSER_FAST_CONFIG_INVALID', 'browser-fast config linux.browser must be chrome, cloakbrowser, or firefox');
   }
   const browser = requestedBrowser ?? configuredBrowser;
   if (browser === 'chrome') {
     return resolveChrome(requestedProfile);
   }
-  if (configuredBrowser !== 'clearcote' || requestedProfile !== undefined) {
-    throw configError('BROWSER_FAST_BACKEND_INVALID', 'V1 Clearcote can only use its configured external cdpPort; use V2 for per-call managed Clearcote profiles');
+  if (configuredBrowser !== 'cloakbrowser' || requestedProfile !== undefined) {
+    throw configError('BROWSER_FAST_BACKEND_INVALID', 'V1 CloakBrowser can only use its configured external cdpPort; use V2 for per-call managed CloakBrowser profiles');
   }
 
   const cdpPort = config.linux.cdpPort;
   if (!Number.isInteger(cdpPort) || cdpPort < 1 || cdpPort > 65535) {
-    throw configError('BROWSER_FAST_CONFIG_INVALID', 'clearcote requires linux.cdpPort to be an integer from 1 to 65535');
+    throw configError('BROWSER_FAST_CONFIG_INVALID', 'cloakbrowser requires linux.cdpPort to be an integer from 1 to 65535');
   }
   return {
     browser,
     cdp: String(cdpPort),
-    session: `mcp-browser-fast-linux-clearcote-${cdpPort}`
+    session: `mcp-browser-fast-linux-cloakbrowser-${cdpPort}`
   };
 }

@@ -9,7 +9,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { ensureWindowsChrome } from '../browser/windows-chrome-runtime.mjs';
 import { defaultBrowserTarget, resolveLinuxBrowserBackend } from './browser-backend-config.mjs';
-import { ManagedClearcoteRuntime } from './clearcote-runtime.mjs';
+import { ManagedCloakBrowserRuntime } from './cloakbrowser-runtime.mjs';
 import { resolveBrowserMemory } from './browser-memory.mjs';
 import { readTargetInfo } from './target-info.mjs';
 import { readExternalCdpPages, ownedBootstrapPage, closeExternalOwnedPage } from './external-pinned-session.mjs';
@@ -88,8 +88,8 @@ function browserSelection(target, backend, profile) {
     }
     return { browserBackend: 'chrome', browserProfile };
   }
-  if (backend !== undefined && !['chrome', 'clearcote'].includes(backend)) {
-    throw fastError('INVALID_ARGUMENT', 'browser_backend must be chrome or clearcote');
+  if (backend !== undefined && !['chrome', 'cloakbrowser'].includes(backend)) {
+    throw fastError('INVALID_ARGUMENT', 'browser_backend must be chrome or cloakbrowser');
   }
   if (browserProfile !== undefined && backend === undefined) {
     throw fastError('INVALID_ARGUMENT', 'browser_profile requires an explicit browser_backend for Linux');
@@ -256,7 +256,7 @@ export class AgentBrowserRunner {
     windowsChromeEnsure,
     linuxBackendResolve = resolveLinuxBrowserBackend,
     linuxChromeProfilesRoot = DEFAULT_LINUX_CHROME_PROFILES_ROOT,
-    clearcoteRuntime = new ManagedClearcoteRuntime()
+    cloakbrowserRuntime = new ManagedCloakBrowserRuntime()
   } = {}) {
     this.env = env;
     this.processRunner = processRunner;
@@ -265,14 +265,14 @@ export class AgentBrowserRunner {
     this.windowsChromeEnsure = windowsChromeEnsure ?? (profile => ensureWindowsChrome({ processRunner: this.processRunner, profile }));
     this.linuxBackendResolve = linuxBackendResolve;
     this.linuxChromeProfilesRoot = linuxChromeProfilesRoot;
-    this.clearcoteRuntime = clearcoteRuntime;
+    this.cloakbrowserRuntime = cloakbrowserRuntime;
     this.windowsAgentRuntimePromise = null;
     this.linuxSessions = new Map();
     this.externalPinnedReady = new Map();
     this.externalDefaultOwned = new Map();
     this.externalDefaultInspected = new Set();
-    this.clearcoteClaims = new Map();
-    this.clearcoteAllocationTails = new Map();
+    this.cloakbrowserClaims = new Map();
+    this.cloakbrowserAllocationTails = new Map();
   }
 
   async windowsAgentRuntime(chrome) {
@@ -394,7 +394,7 @@ export class AgentBrowserRunner {
       env.AGENT_BROWSER_PROFILE = profileDir;
     }
     this.linuxSessions.set(session, env);
-    const idleTimeout = backend.browser === 'clearcote' && backend.managed === true ? '0' : '1h';
+    const idleTimeout = backend.browser === 'cloakbrowser' && backend.managed === true ? '0' : '1h';
     const args = [
       AGENT_BROWSER_JS,
       '--session', session,
@@ -415,7 +415,7 @@ export class AgentBrowserRunner {
     return parseAgentBrowserBatch(result);
   }
 
-  isManagedClearcoteCommand(command) {
+  isManagedCloakBrowserCommand(command) {
     const op = command?.[0];
     return ['click', 'fill', 'type', 'check', 'uncheck', 'select', 'press', 'hover', 'drag'].includes(op)
       || (op === 'mouse' && command?.[1] === 'wheel');
@@ -429,7 +429,7 @@ export class AgentBrowserRunner {
     const active = tabs.find(tab => tab.active === true) ?? tabs[0];
     const targetId = active?.targetId ?? active?.tabId;
     if (!targetId) throw fastError('BROWSER_FAST_COMMAND_FAILED', 'browser has no active tab');
-    return this.clearcoteRuntime.pageForTarget(backend.profileName, targetId);
+    return this.cloakbrowserRuntime.pageForTarget(backend.profileName, targetId);
   }
 
   async managedRefBox(backend, ref) {
@@ -447,7 +447,7 @@ export class AgentBrowserRunner {
     return item?.success === true ? null : item?.error || `could not focus ${ref}`;
   }
 
-  async managedClearcoteCommand(backend, command) {
+  async managedCloakBrowserCommand(backend, command) {
     const op = command[0];
     const humanize = backend.profile?.humanize === true;
     const fail = error => ({ command, success: false, error });
@@ -487,16 +487,14 @@ export class AgentBrowserRunner {
         if (destination.error) return fail(destination.error);
         const sourcePoint = managedTargetPoint(source.box, humanize);
         const destinationPoint = managedTargetPoint(destination.box, humanize);
-        const persona = humanize ? page._clearcotePersona : null;
-        const heldGlide = humanize ? page._clearcoteHeldGlide : null;
+        // With humanize on, CloakBrowser curves every page.mouse.move, including this held one.
         await page.mouse.move(sourcePoint.x, sourcePoint.y);
         if (humanize) await localDelay(100 + Math.random() * 100);
         await page.mouse.down();
         try {
-          if (persona) await localDelay(persona.grabMinMs + Math.random() * (persona.grabMaxMs - persona.grabMinMs));
-          if (typeof heldGlide === 'function') await heldGlide(destinationPoint.x, destinationPoint.y);
-          else await page.mouse.move(destinationPoint.x, destinationPoint.y);
-          if (persona) await localDelay(persona.releaseMinMs + Math.random() * (persona.releaseMaxMs - persona.releaseMinMs));
+          if (humanize) await localDelay(80 + Math.random() * 120);
+          await page.mouse.move(destinationPoint.x, destinationPoint.y);
+          if (humanize) await localDelay(60 + Math.random() * 100);
         } finally {
           await page.mouse.up();
         }
@@ -542,8 +540,8 @@ export class AgentBrowserRunner {
     let index = 0;
 
     while (index < commands.length) {
-      if (this.isManagedClearcoteCommand(commands[index])) {
-        const item = await this.managedClearcoteCommand(backend, commands[index]);
+      if (this.isManagedCloakBrowserCommand(commands[index])) {
+        const item = await this.managedCloakBrowserCommand(backend, commands[index]);
         items.push(item);
         if (item?.success !== true) {
           exitCode = 1;
@@ -554,7 +552,7 @@ export class AgentBrowserRunner {
       }
 
       let end = index + 1;
-      while (end < commands.length && !this.isManagedClearcoteCommand(commands[end])) end += 1;
+      while (end < commands.length && !this.isManagedCloakBrowserCommand(commands[end])) end += 1;
       const batch = await this.linuxAgentBatch(backend, commands.slice(index, end), { bail });
       items.push(...batch.items);
       if (batch.stderr) stderr.push(batch.stderr);
@@ -568,7 +566,7 @@ export class AgentBrowserRunner {
 
   async ensureExternalPinnedSession(selected, session, sessionTab) {
     // Creating a pinned Agent Browser session on an already running browser
-    // (external CDP 9222 or a managed Clearcote runtime) silently adds an
+    // (external CDP 9222 or a managed CloakBrowser runtime) silently adds an
     // about:blank page that `agent-browser close` does not remove.
     // Initialize on the explicitly selected tab and reclaim ONLY the blank
     // target proven to have been allocated by this very session.
@@ -612,10 +610,10 @@ export class AgentBrowserRunner {
     const selected = await this.linuxBackendResolve({ browser: browserBackend, profile: browserProfile });
     const session = this.linuxSession(selected, sessionTab);
     if (selected.managed === true) {
-      const runtime = await this.clearcoteRuntime.ensure(selected);
+      const runtime = await this.cloakbrowserRuntime.ensure(selected);
       const backend = { ...selected, session, cdp: runtime.cdp };
       // Serialized with tab allocation so the before/after inventory sees one new page.
-      await this.withClearcoteAllocation(selected.profileName,
+      await this.withCloakBrowserAllocation(selected.profileName,
         () => this.ensureExternalPinnedSession(backend, session, sessionTab));
       const result = await this.managedLinuxBatch(backend, commands, { bail });
       return { ...result, browserBackend: selected.browser, browserProfile: selected.profileName };
@@ -645,18 +643,18 @@ export class AgentBrowserRunner {
     return { ...result, browserBackend: selected.browser, browserProfile: selected.profileName ?? null };
   }
 
-  async withClearcoteAllocation(profileName, operation) {
-    const previous = this.clearcoteAllocationTails.get(profileName) ?? Promise.resolve();
+  async withCloakBrowserAllocation(profileName, operation) {
+    const previous = this.cloakbrowserAllocationTails.get(profileName) ?? Promise.resolve();
     let release;
     const gate = new Promise(resolve => { release = resolve; });
     const tail = previous.catch(() => {}).then(() => gate);
-    this.clearcoteAllocationTails.set(profileName, tail);
+    this.cloakbrowserAllocationTails.set(profileName, tail);
     await previous.catch(() => {});
     try {
       return await operation();
     } finally {
       release();
-      if (this.clearcoteAllocationTails.get(profileName) === tail) this.clearcoteAllocationTails.delete(profileName);
+      if (this.cloakbrowserAllocationTails.get(profileName) === tail) this.cloakbrowserAllocationTails.delete(profileName);
     }
   }
 
@@ -676,11 +674,11 @@ export class AgentBrowserRunner {
       return { tab, browserBackend: selected.browser, browserProfile: selected.profileName };
     }
 
-    await this.clearcoteRuntime.ensure(selected);
-    return await this.withClearcoteAllocation(selected.profileName, async () => {
-      const liveTargets = await this.clearcoteRuntime.listTargets(selected.profileName);
+    await this.cloakbrowserRuntime.ensure(selected);
+    return await this.withCloakBrowserAllocation(selected.profileName, async () => {
+      const liveTargets = await this.cloakbrowserRuntime.listTargets(selected.profileName);
       const liveIds = new Set(liveTargets.map(item => item.targetId));
-      const claims = this.clearcoteClaims.get(selected.profileName) ?? new Set();
+      const claims = this.cloakbrowserClaims.get(selected.profileName) ?? new Set();
       for (const claimed of [...claims]) {
         if (!liveIds.has(claimed)) claims.delete(claimed);
       }
@@ -688,10 +686,10 @@ export class AgentBrowserRunner {
       let targetId = tab;
       if (targetId === undefined) {
         targetId = claims.size === 0 ? liveTargets[0]?.targetId : undefined;
-        if (targetId === undefined) targetId = (await this.clearcoteRuntime.newTarget(selected.profileName)).targetId;
+        if (targetId === undefined) targetId = (await this.cloakbrowserRuntime.newTarget(selected.profileName)).targetId;
       }
       claims.add(targetId);
-      this.clearcoteClaims.set(selected.profileName, claims);
+      this.cloakbrowserClaims.set(selected.profileName, claims);
       return {
         tab: targetId,
         browserBackend: selected.browser,
@@ -786,7 +784,7 @@ export class AgentBrowserRunner {
         await closeExternalOwnedPage(owned.websocket, owned.targetId);
       } catch {} // Never close other clients' tabs on ambiguous state.
     }
-    await this.clearcoteRuntime.close();
+    await this.cloakbrowserRuntime.close();
   }
 }
 
@@ -1173,36 +1171,36 @@ export function createBrowserFastServer({ browser } = {}) {
     { name: 'browser-fast', version: '0.1.0' },
     {
       capabilities: { tools: {} },
-      instructions: 'Fast resource-local browser interaction. On managed Linux Clearcote, an observe without tab allocates an independent tab workspace; reuse the returned active_tab for that task. Observe for stable refs/tabs plus bounded local site memory, execute mechanical sequences locally, and never assume failed or partial batches are safe to replay.'
+      instructions: 'Fast resource-local browser interaction. On managed Linux CloakBrowser, an observe without tab allocates an independent tab workspace; reuse the returned active_tab for that task. Observe for stable refs/tabs plus bounded local site memory, execute mechanical sequences locally, and never assume failed or partial batches are safe to replay.'
     }
   );
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: [
     {
       name: 'observe',
-      description: 'Return compact interactive browser state with stable tab IDs, element refs, and bounded read-only local policy/site/platform memory for the current URL when available. On managed Linux Clearcote, omitting tab allocates an independent tab workspace; pass a prior active_tab to continue that workspace. Unknown sites remain valid with empty memory.',
+      description: 'Return compact interactive browser state with stable tab IDs, element refs, and bounded read-only local policy/site/platform memory for the current URL when available. On managed Linux CloakBrowser, omitting tab allocates an independent tab workspace; pass a prior active_tab to continue that workspace. Unknown sites remain valid with empty memory.',
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
       inputSchema: {
         type: 'object',
         properties: {
-          browser_target: { type: 'string', enum: ['windows', 'linux'], description: 'Omit for the host default: windows on WSL, linux elsewhere. Use linux for a Linux Chrome or Clearcote backend.' },
-          browser_backend: { type: 'string', enum: ['chrome', 'clearcote'], description: 'Select Chrome or managed Clearcote. Windows supports only Chrome. On Linux, omit to use the configured default; set it explicitly whenever browser_profile is set.' },
-          browser_profile: { type: 'string', minLength: 1, maxLength: 64, pattern: '^[A-Za-z0-9._-]+$', description: 'Optional named persistent profile on Windows or Linux. Omit for the existing shared default. Windows and Linux Chrome create or reuse an isolated profile by this name; Linux Clearcote selects a profile defined in browser-fast.json.' },
+          browser_target: { type: 'string', enum: ['windows', 'linux'], description: 'Omit for the host default: windows on WSL, linux elsewhere. Use linux for a Linux Chrome or CloakBrowser backend.' },
+          browser_backend: { type: 'string', enum: ['chrome', 'cloakbrowser'], description: 'Select Chrome or managed CloakBrowser. Windows supports only Chrome. On Linux, omit to use the configured default; set it explicitly whenever browser_profile is set.' },
+          browser_profile: { type: 'string', minLength: 1, maxLength: 64, pattern: '^[A-Za-z0-9._-]+$', description: 'Optional named persistent profile on Windows or Linux. Omit for the existing shared default. Windows and Linux Chrome create or reuse an isolated profile by this name; Linux CloakBrowser selects a profile defined in browser-fast.json.' },
           scope: { type: 'string', enum: ['interactive', 'compact', 'full'], default: 'interactive' },
           include_urls: { type: 'boolean', default: true },
-          tab: { type: 'string', minLength: 1, description: 'Optional stable tab ID or CDP target ID to continue/select before observing. For managed Linux Clearcote, omit it to allocate an independent workspace; reuse the returned active_tab on later observations for the same task.' }
+          tab: { type: 'string', minLength: 1, description: 'Optional stable tab ID or CDP target ID to continue/select before observing. For managed Linux CloakBrowser, omit it to allocate an independent workspace; reuse the returned active_tab on later observations for the same task.' }
         },
         additionalProperties: false
       }
     },
     {
       name: 'execute',
-      description: 'Execute multiple mechanical browser actions locally in one call, including hover, wheel scroll, drag, and upload by logical approved artifact name rather than arbitrary path. Managed Clearcote routes supported input through its humanized Playwright layer while Agent Browser keeps refs and tab identity. After a click, exactly one new tab is followed before later actions only when Chromium verifies its opener is the clicked tab; multiple new tabs or unverifiable ownership stop the sequence without guessing. Defaults to fail-fast, never auto-retries, and reports completed/failed/unknown/not-run steps plus final compact state so partial external side effects are explicit.',
+      description: 'Execute multiple mechanical browser actions locally in one call, including hover, wheel scroll, drag, and upload by logical approved artifact name rather than arbitrary path. Managed CloakBrowser routes supported input through its humanized Playwright layer while Agent Browser keeps refs and tab identity. After a click, exactly one new tab is followed before later actions only when Chromium verifies its opener is the clicked tab; multiple new tabs or unverifiable ownership stop the sequence without guessing. Defaults to fail-fast, never auto-retries, and reports completed/failed/unknown/not-run steps plus final compact state so partial external side effects are explicit.',
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
       inputSchema: {
         type: 'object',
         properties: {
           browser_target: { type: 'string', enum: ['windows', 'linux'], description: 'Use the same target returned by observe.' },
-          browser_backend: { type: 'string', enum: ['chrome', 'clearcote'], description: 'Use the same backend returned by observe. Windows supports only Chrome.' },
+          browser_backend: { type: 'string', enum: ['chrome', 'cloakbrowser'], description: 'Use the same backend returned by observe. Windows supports only Chrome.' },
           browser_profile: { type: 'string', minLength: 1, maxLength: 64, pattern: '^[A-Za-z0-9._-]+$', description: 'Use the same named persistent profile returned by observe. Omit only when observe returned null.' },
           tab: { type: 'string', minLength: 1, description: 'Required tab ID from the latest observe result. Execution validates that the pinned Agent Browser session is still on this exact tab and fails closed on mismatch; it does not switch tabs.' },
           actions: { type: 'array', items: ACTION_SCHEMA, minItems: 1, maxItems: 64 },

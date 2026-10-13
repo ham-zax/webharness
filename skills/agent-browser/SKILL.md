@@ -34,7 +34,7 @@ process does not make its tools visible to the current client: stdio pipes
 belong to the client that started the process and cannot be recovered by PID.
 If WebHarness semantics are needed without public OAuth, register
 `providers/browser-fast/server.mjs` as a local stdio MCP entry and reload or
-reconnect the MCP host. A live `CLEARCOTE_PROFILE_IN_USE` endpoint belongs to
+reconnect the MCP host. A live `CLOAKBROWSER_PROFILE_IN_USE` endpoint belongs to
 another lifecycle owner: continue through that owner, or leave it untouched
 until the owner closes. Direct provider imports and raw CDP attachment are not
 substitute owners for managed state; the CLI fallback is explicitly isolated.
@@ -42,7 +42,7 @@ substitute owners for managed state; the CLI fallback is explicitly isolated.
 ## Route by browser state
 
 - Routine Windows interaction -> use Local logical `server="browser-fast"`. Omit `browser_profile` for the shared persistent MCP Chrome profile, or set `browser_target="windows"`, `browser_backend="chrome"`, and a stable `browser_profile` name for an isolated persistent profile. The full `browser-devtools` diagnostics surface targets only the shared default Windows profile.
-- Routine interaction with managed visible Linux/WSLg browser state -> use the same logical `server="browser-fast"` route with `browser_target="linux"`. Managed Clearcote is the default Linux backend. Honor an explicit `browser_backend="clearcote"|"chrome"`; do not infer or silently fall back to the other backend. For named isolation, set `browser_profile` together with the explicit backend. Read [references/clearcote.md](references/clearcote.md) before changing browser lifecycle, profile settings, or humanized input behavior.
+- Routine interaction with managed visible Linux/WSLg browser state -> use the same logical `server="browser-fast"` route with `browser_target="linux"`. Managed CloakBrowser is the default Linux backend. Honor an explicit `browser_backend="cloakbrowser"|"chrome"`; do not infer or silently fall back to the other backend. For named isolation, set `browser_profile` together with the explicit backend. Read [references/cloakbrowser.md](references/cloakbrowser.md) before changing browser lifecycle, profile settings, or humanized input behavior.
 - DevTools diagnostics such as network, console, performance, Lighthouse, heap, screenshots, or detailed debugging -> use Local logical `server="browser-devtools"`; omit `arguments.browser_target` for the dedicated Windows MCP profile or pass `"linux"` for WSLg.
 - If the user specifically asks to control everyday Windows Chrome, report that it is outside the MCP browser boundary; do not silently substitute it for the dedicated profile.
 - Isolated/fresh browser automation, CLI-specific workflows, or Electron automation that does not need either resource-local browser -> use the installed `agent-browser` CLI.
@@ -80,29 +80,29 @@ Treat tabs as bounded task resources rather than an append-only history.
 ## Concurrent agents and profile isolation
 
 - Omitted `browser_profile` preserves the existing shared default. Do not automatically create a profile merely because another agent is active.
-- An explicit stable profile name creates or reuses a separate persistent Chrome profile on Windows or Linux. A Clearcote profile name must already be defined in `browser-fast.json`; selecting different configured names runs separate persistent Clearcote processes.
+- An explicit stable profile name creates or reuses a separate persistent Chrome profile on Windows or Linux. A CloakBrowser profile name must already be defined in `browser-fast.json`; selecting different configured names runs separate persistent CloakBrowser processes.
 - A named profile is persistent, not fresh or incognito: its cookies, storage, and sign-ins survive restarts. Choose a new name only when the user or workflow explicitly wants separate state.
-- Agents sharing one profile also share cookies, storage, downloads, tabs, and one visible foreground. Different Clearcote tabs can execute concurrently, but account-level actions and `observe -> execute` are not transactional across agents. Coordinate consequential work and re-observe after interference.
+- Agents sharing one profile also share cookies, storage, downloads, tabs, and one visible foreground. Different CloakBrowser tabs can execute concurrently, but account-level actions and `observe -> execute` are not transactional across agents. Coordinate consequential work and re-observe after interference.
 - Windows operations serialize within one profile. Different named Windows profiles have separate processes, Agent Browser sessions, data directories, and operation queues.
 - On Linux, always send `browser_backend` when sending `browser_profile`, and reuse the exact target/backend/profile/tab tuple returned by `observe`.
 
-## Managed Linux Clearcote
+## Managed Linux CloakBrowser
 
-For managed Linux/WSLg state, default the selector to managed Clearcote. Treat managed Chrome as an explicit override only. When the selector resolves to managed Clearcote:
+For managed Linux/WSLg state, default the selector to managed CloakBrowser. Treat managed Chrome as an explicit override only. When the selector resolves to managed CloakBrowser:
 
-- Keep `browser-fast` as the model-facing surface. Agent Browser owns accessibility snapshots, refs, and target identity; Clearcote owns the persistent Chromium process/profile and supported trusted input.
-- One Clearcote profile has one managed browser process. Concurrent agents reuse that process and its cookies; Browser Fast claims a separate tab/target for each observation and pins later execution to that tab. A second provider process receives `CLEARCOTE_PROFILE_IN_USE` instead of creating another profile or taking over the existing process. Explicitly select another configured profile when isolation is required.
-- Treat `humanize: true` as the default for every managed Clearcote profile. A profile must explicitly set `humanize: false` to disable it. Do not add a second humanization default inside Agent Browser.
+- Keep `browser-fast` as the model-facing surface. Agent Browser owns accessibility snapshots, refs, and target identity; CloakBrowser owns the persistent Chromium process/profile and supported trusted input.
+- One CloakBrowser profile has one managed browser process. Concurrent agents reuse that process and its cookies; Browser Fast claims a separate tab/target for each observation and pins later execution to that tab. A second provider process receives `CLOAKBROWSER_PROFILE_IN_USE` instead of creating another profile or taking over the existing process. Explicitly select another configured profile when isolation is required.
+- Treat `humanize: true` as the default for every managed CloakBrowser profile. A profile must explicitly set `humanize: false` to disable it. Do not add a second humanization default inside Agent Browser.
 - Launch/reuse the GUI by calling `browser-fast` with `browser_target="linux"`; do not shell-launch a second browser against the same profile. The managed profile is persistent, so cookies and authenticated state survive runtime restarts.
 - For an explicit visible-desktop request, completion requires a host-desktop capture showing the window or the human's confirmation that it is visible. Accessibility snapshots, browser screenshots, successful CDP calls, `headless: false`, and an X11/Wayland mapped window prove rendering, not Windows desktop presentation. If desktop confirmation is unavailable, report it as unverified.
 - Let the human enter passwords, MFA, and challenge responses directly in the visible browser. Do not ask for or type credentials on their behalf.
-- Preserve Clearcote's functional humanization defaults: trusted native input, non-center targeting where geometry fallback is required, pointer acquisition before typing, drag grab/settle/release behavior, and scroll anchoring/easing. Automatic ambient motion remains opt-in because it can interfere with caller-directed actions.
-- Do not add `--no-sandbox`. Managed Clearcote launches Playwright with Chromium sandboxing enabled.
-- Agent Browser is an attached observer/executor for this backend, not the browser lifecycle owner. Its managed Clearcote CDP session must not impose idle browser shutdown; `ManagedClearcoteRuntime` owns close/restart.
-- Treat `lightStealth` as optional and default-off. Enabling it can relaunch the managed process while preserving profile state, and Clearcote 0.27.0 has a fingerprint-seed caveat documented in the reference.
+- Preserve CloakBrowser's functional humanization defaults: trusted native input, non-center targeting where geometry fallback is required, pointer acquisition before typing, drag grab/settle/release behavior, and scroll anchoring/easing. Automatic ambient motion remains opt-in because it can interfere with caller-directed actions.
+- CloakBrowser's own launch defaults include `--no-sandbox`; do not add sandbox flags on top.
+- Agent Browser is an attached observer/executor for this backend, not the browser lifecycle owner. Its managed CloakBrowser CDP session must not impose idle browser shutdown; `ManagedCloakBrowserRuntime` owns close/restart.
+- Leave `fingerprint` unset so each profile keeps its own stored seed. Changing a profile's options relaunches the managed process while preserving profile state.
 - Re-observe after backend/profile relaunches because prior tab IDs and refs are no longer valid.
 
-See [references/clearcote.md](references/clearcote.md) for the current Clearcote 0.27.0 contract and version-specific limits.
+See [references/cloakbrowser.md](references/cloakbrowser.md) for the current CloakBrowser 0.6.2 contract and version-specific limits.
 
 For DevTools work, use `server="browser-devtools"`. If the action is already known, reuse its schema and call it directly. Otherwise use a narrow `tool_list(server="browser-devtools", query=...)`, load the exact `tool_schema` once, then reuse it for the session.
 
@@ -165,7 +165,7 @@ PROFILE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/agent-browser/profiles/tango-
 Keep the namespace, session, and profile identical across commands. This avoids
 querying a newly launched blank session after navigation. Use a new stable
 profile name when another agent needs independent cookies or foreground state.
-Do not pass the managed Clearcote CDP endpoint or another agent's
+Do not pass the managed CloakBrowser CDP endpoint or another agent's
 `--user-data-dir` to this fallback.
 
 Core loop:

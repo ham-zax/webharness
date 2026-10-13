@@ -25,6 +25,8 @@ function exactKeys(value, expected) {
   return actual.length === wanted.length && actual.every((key, index) => key === wanted[index]);
 }
 
+// Clearcote was the managed backend before CloakBrowser. Its configs no longer load,
+// so they are converted here; a Clearcote profile directory is never reused.
 function isMaintainedV1Clearcote9222(config) {
   return exactKeys(config, ['version', 'linux'])
     && config.version === 1
@@ -51,12 +53,44 @@ function isMaintainedV2Chrome(config) {
 }
 
 function isCurrentMaintainedConfig(config) {
-  const profile = config?.clearcote?.profiles?.['x-main'];
   return config?.version === 2
-    && config?.linux?.browser === 'clearcote'
+    && config?.linux?.browser === 'cloakbrowser'
     && config?.linux?.profile === 'x-main'
-    && isRecord(profile)
-    && profile.fingerprint === 'x-main';
+    && isRecord(config?.cloakbrowser?.profiles?.['x-main']);
+}
+
+function usesClearcote(config) {
+  return config?.clearcote !== undefined || config?.linux?.browser === 'clearcote';
+}
+
+// Keeps what CloakBrowser understands. Clearcote's string fingerprint, brand, lightStealth
+// and linux/android platform have no equivalent and are dropped.
+function convertClearcoteProfile(profile) {
+  if (!isRecord(profile)) return {};
+  const locale = typeof profile.acceptLanguage === 'string' ? profile.acceptLanguage.split(/[,;]/)[0].trim() : '';
+  return {
+    ...(['windows', 'macos'].includes(profile.platform) ? { platform: profile.platform } : {}),
+    ...(profile.headless === undefined ? {} : { headless: profile.headless }),
+    ...(profile.humanize === undefined ? {} : { humanize: profile.humanize }),
+    ...(profile.timezone === undefined ? {} : { timezone: profile.timezone }),
+    ...(locale ? { locale } : {}),
+    ...(profile.extensions === undefined ? {} : { extensions: profile.extensions })
+  };
+}
+
+function convertClearcoteConfig(config) {
+  const { clearcote, linux, _comment, ...rest } = config;
+  const profiles = isRecord(clearcote?.profiles) ? clearcote.profiles : null;
+  return {
+    ...(typeof _comment === 'string' ? { _comment: _comment.replaceAll('Clearcote', 'CloakBrowser') } : {}),
+    ...rest,
+    linux: isRecord(linux) && linux.browser === 'clearcote' ? { ...linux, browser: 'cloakbrowser' } : linux,
+    ...(profiles === null ? {} : {
+      cloakbrowser: {
+        profiles: Object.fromEntries(Object.entries(profiles).map(([name, profile]) => [name, convertClearcoteProfile(profile)]))
+      }
+    })
+  };
 }
 
 async function readOwnedConfig(configFile) {
@@ -145,14 +179,23 @@ async function main() {
   }
 
   if (isCurrentMaintainedConfig(existing.config)) {
-    process.stdout.write(`browser-fast config already uses maintained clearcote/x-main policy: ${configFile}\n`);
+    process.stdout.write(`browser-fast config already uses maintained cloakbrowser/x-main policy: ${configFile}\n`);
     return;
   }
 
   if (isMaintainedV1Clearcote9222(existing.config) || isMaintainedV2Chrome(existing.config)) {
     const replaced = await replaceIfUnchanged(configFile, templateText, existing.text);
     process.stdout.write(replaced
-      ? `migrated maintained browser-fast config to clearcote/x-main: ${configFile}\n`
+      ? `migrated maintained browser-fast config to cloakbrowser/x-main: ${configFile}\n`
+      : `browser-fast config changed during migration check; preserved latest file: ${configFile}\n`);
+    return;
+  }
+
+  if (usesClearcote(existing.config)) {
+    const converted = `${JSON.stringify(convertClearcoteConfig(existing.config), null, 2)}\n`;
+    const replaced = await replaceIfUnchanged(configFile, converted, existing.text);
+    process.stdout.write(replaced
+      ? `converted owner-managed Clearcote browser-fast config to CloakBrowser: ${configFile}\n`
       : `browser-fast config changed during migration check; preserved latest file: ${configFile}\n`);
     return;
   }

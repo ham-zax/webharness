@@ -70,7 +70,7 @@ Qualification is limited to the headless Dev/Local/Terminal path. This profile d
 
 ## Optional headless Browser Fast (aarch64 or x86_64, no GPU)
 
-The `server` profile excludes browser providers. An owner can add `browser-fast` alone through `MCP_LOCAL_SERVERS_FILE`; `scripts/doctor.sh` accepts it in the `server` profile only when that variable is set in `.env`. Clearcote is x64-only and is not used. `browser-fast` stays the Linux-target `observe`/`execute` pair; on a non-WSL host an omitted `browser_target` already resolves to `linux`.
+The `server` profile excludes browser providers. An owner can add `browser-fast` alone through `MCP_LOCAL_SERVERS_FILE`; `scripts/doctor.sh` accepts it in the `server` profile only when that variable is set in `.env`. Managed CloakBrowser is not used here; sessions attach to the external Chromium below. `browser-fast` stays the Linux-target `observe`/`execute` pair; on a non-WSL host an omitted `browser_target` already resolves to `linux`.
 
 Requirements: `xvfb` plus fonts, a Chromium build for the host architecture (for example `npx playwright install chromium`), and `pnpm`/`npm install` in `providers/browser-fast`.
 
@@ -96,10 +96,10 @@ Restart=always
 WantedBy=default.target
 ```
 
-`~/.config/mcp-dev-bridge/browser-fast.json` selects the external endpoint (the `clearcote` label only means "external CDP port" in version 1):
+`~/.config/mcp-dev-bridge/browser-fast.json` selects the external endpoint (the `cloakbrowser` label only means "external CDP port" in version 1):
 
 ```json
-{"version":1,"linux":{"browser":"clearcote","cdpPort":9222}}
+{"version":1,"linux":{"browser":"cloakbrowser","cdpPort":9222}}
 ```
 
 `MCP_LOCAL_SERVERS_FILE` points at a JSON file with absolute paths:

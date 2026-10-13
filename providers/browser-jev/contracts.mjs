@@ -153,8 +153,8 @@ export function validateStartArguments(value, { defaultTarget = defaultBrowserTa
       throw invalid('Windows supports only the chrome backend');
     }
     browserBackend = 'chrome';
-  } else if (browserBackend !== undefined && !['chrome', 'clearcote'].includes(browserBackend)) {
-    throw invalid('browser_backend must be chrome or clearcote');
+  } else if (browserBackend !== undefined && !['chrome', 'cloakbrowser'].includes(browserBackend)) {
+    throw invalid('browser_backend must be chrome or cloakbrowser');
   }
   const browserProfile = validateProfile(scenario.browser_profile);
   if (browserTarget === 'linux' && browserProfile !== undefined && browserBackend === undefined) {

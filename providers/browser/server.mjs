@@ -7,7 +7,7 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { defaultBrowserTarget, resolveLinuxBrowserBackend } from '../browser-fast/browser-backend-config.mjs';
-import { DEFAULT_CLEARCOTE_STATE_ROOT, readClearcoteEndpoint } from '../browser-fast/clearcote-runtime.mjs';
+import { DEFAULT_CLOAKBROWSER_STATE_ROOT, readCloakBrowserEndpoint } from '../browser-fast/cloakbrowser-runtime.mjs';
 import { ensureWindowsChrome } from './windows-chrome-runtime.mjs';
 
 export const CHROME_DEVTOOLS_MCP_VERSION = '1.8.0';
@@ -105,17 +105,17 @@ function browserProfileName(value) {
   return value;
 }
 
-async function resolveClearcoteEndpoint(profileName) {
-  const profilesRoot = path.resolve(DEFAULT_CLEARCOTE_STATE_ROOT, 'profiles');
+async function resolveCloakBrowserEndpoint(profileName) {
+  const profilesRoot = path.resolve(DEFAULT_CLOAKBROWSER_STATE_ROOT, 'profiles');
   const userDataDir = path.resolve(profilesRoot, profileName);
   if (path.dirname(userDataDir) !== profilesRoot) {
-    throw browserError('INVALID_ARGUMENT', `invalid Clearcote profile: ${profileName}`);
+    throw browserError('INVALID_ARGUMENT', `invalid CloakBrowser profile: ${profileName}`);
   }
-  const endpoint = await readClearcoteEndpoint(userDataDir, { allowMissing: true });
+  const endpoint = await readCloakBrowserEndpoint(userDataDir, { allowMissing: true });
   if (!endpoint) {
     throw browserError(
       'LINUX_BROWSER_NOT_RUNNING',
-      `managed Clearcote profile ${profileName} is not active; initialize it once through browser-fast, then retry browser-devtools with the same backend/profile`
+      `managed CloakBrowser profile ${profileName} is not active; initialize it once through browser-fast, then retry browser-devtools with the same backend/profile`
     );
   }
   return endpoint;
@@ -156,8 +156,8 @@ export function addBrowserTarget(tool) {
         },
         [BROWSER_BACKEND_FIELD]: {
           type: 'string',
-          enum: ['chrome', 'clearcote'],
-          description: 'Linux only. Omit to use browser-fast.json; set explicitly to select Chrome or Clearcote.'
+          enum: ['chrome', 'cloakbrowser'],
+          description: 'Linux only. Omit to use browser-fast.json; set explicitly to select Chrome or CloakBrowser.'
         },
         [BROWSER_PROFILE_FIELD]: {
           type: 'string',
@@ -233,7 +233,7 @@ export class BrowserRouter {
     childFactory = (target, config) => ChromeChild.start({ target, config }),
     env = process.env,
     linuxBackendResolve = resolveLinuxBrowserBackend,
-    clearcoteEndpointResolve = resolveClearcoteEndpoint,
+    cloakbrowserEndpointResolve = resolveCloakBrowserEndpoint,
     linuxChromeProfilesRoot = DEFAULT_LINUX_CHROME_PROFILES_ROOT,
     // Resolved once so an invalid MCP_BROWSER_DEFAULT_TARGET fails at startup.
     defaultTarget = defaultBrowserTarget({ env })
@@ -243,7 +243,7 @@ export class BrowserRouter {
     this.env = env;
     this.defaultTarget = defaultTarget;
     this.linuxBackendResolve = linuxBackendResolve;
-    this.clearcoteEndpointResolve = clearcoteEndpointResolve;
+    this.cloakbrowserEndpointResolve = cloakbrowserEndpointResolve;
     this.linuxChromeProfilesRoot = linuxChromeProfilesRoot;
     this.children = new Map();
     this.childIdentities = new Map();
@@ -291,7 +291,7 @@ export class BrowserRouter {
     }
 
     const selected = await this.linuxBackendResolve({ browser: browserBackend, profile });
-    if (selected.browser === 'clearcote' && selected.cdp !== undefined) {
+    if (selected.browser === 'cloakbrowser' && selected.cdp !== undefined) {
       // V1 external CDP endpoint (e.g. the headless server's persistent Chromium): attach, never launch.
       const browserUrl = `http://127.0.0.1:${selected.cdp}`;
       return {
@@ -300,10 +300,10 @@ export class BrowserRouter {
         config: childConfig('linux', this.env, [], { browserUrl })
       };
     }
-    if (selected.browser === 'clearcote') {
-      const endpoint = await this.clearcoteEndpointResolve(selected.profileName);
+    if (selected.browser === 'cloakbrowser') {
+      const endpoint = await this.cloakbrowserEndpointResolve(selected.profileName);
       return {
-        key: `linux:clearcote:${selected.profileName}`,
+        key: `linux:cloakbrowser:${selected.profileName}`,
         identity: endpoint.browserUrl,
         config: childConfig('linux', this.env, [], { browserUrl: endpoint.browserUrl })
       };
@@ -389,7 +389,7 @@ export function createBrowserFacadeServer({ router } = {}) {
     { name: 'browser', version: '0.1.0' },
     {
       capabilities: { tools: {} },
-      instructions: 'One resource-local DevTools surface. On WSL, tools default to the dedicated persistent Windows MCP Chrome profile; on other hosts they default to the configured Linux browser. Pass browser_target to choose explicitly; browser_backend and browser_profile select the same Linux identity used by browser-fast. Managed Clearcote is attached through its live CDP endpoint. Path arguments are OS-temp-only.'
+      instructions: 'One resource-local DevTools surface. On WSL, tools default to the dedicated persistent Windows MCP Chrome profile; on other hosts they default to the configured Linux browser. Pass browser_target to choose explicitly; browser_backend and browser_profile select the same Linux identity used by browser-fast. Managed CloakBrowser is attached through its live CDP endpoint. Path arguments are OS-temp-only.'
     }
   );
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: await router.listTools() }));

@@ -11,7 +11,7 @@ const startArgs = (overrides = {}) => ({
   goal: 'Confirm the page and stop',
   scenario: {
     browser_target: 'linux',
-    browser_backend: 'clearcote',
+    browser_backend: 'cloakbrowser',
     browser_profile: 'x-main',
     success: { title_contains: ['Example'] },
     ...overrides
@@ -111,7 +111,7 @@ test('start creates a namespaced worker and returns only sanitized state', async
     TYPESAFE_API_KEY: 'server-secret',
     BU_CDP_URL: 'http://127.0.0.1:9222',
     BU_NAME: 'jev-abc123',
-    BROWSER_JEV_PROFILE_KEY: 'linux:clearcote:x-main',
+    BROWSER_JEV_PROFILE_KEY: 'linux:cloakbrowser:x-main',
     PYTHONUNBUFFERED: '1'
   });
   assert.deepEqual(worker.requests, [{ command: 'start', arguments: { url: 'https://example.com/', goal: 'Confirm the page and stop', wait_for_scroll: false } }]);

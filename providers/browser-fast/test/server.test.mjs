@@ -8,7 +8,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { resolveBrowserMemory } from '../browser-memory.mjs';
 import { defaultBrowserTarget, resolveLinuxBrowserBackend } from '../browser-backend-config.mjs';
-import { ManagedClearcoteRuntime } from '../clearcote-runtime.mjs';
+import { ManagedCloakBrowserRuntime } from '../cloakbrowser-runtime.mjs';
 import { ensureWindowsChrome } from '../../browser/windows-chrome-runtime.mjs';
 import { readTargetInfo } from '../target-info.mjs';
 import {
@@ -469,7 +469,7 @@ test('Windows Browser Fast passes the selected profile to Chrome and its Agent B
   assert.equal(result.browserProfile, 'agent-two');
 });
 
-test('Linux runner hot-switches from managed Chrome to a Clearcote CDP session', async t => {
+test('Linux runner hot-switches from managed Chrome to a CloakBrowser CDP session', async t => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'browser-fast-backend-switch-'));
   t.after(async () => { await fs.rm(root, { recursive: true, force: true }); });
   const configFile = path.join(root, 'browser-fast.json');
@@ -503,14 +503,14 @@ test('Linux runner hot-switches from managed Chrome to a Clearcote CDP session',
 
   await fs.writeFile(configFile, JSON.stringify({ version: 1, linux: { browser: 'chrome' } }));
   await runner.linuxBatch([['tab', 'list']]);
-  await fs.writeFile(configFile, JSON.stringify({ version: 1, linux: { browser: 'clearcote', cdpPort } }));
+  await fs.writeFile(configFile, JSON.stringify({ version: 1, linux: { browser: 'cloakbrowser', cdpPort } }));
   await runner.linuxBatch([['tab', 'list']]);
 
   assert.equal(calls.length, 2);
   assert.equal(calls[0].args.includes('mcp-browser-fast-linux'), true);
   assert.equal(calls[0].args.includes('--cdp'), false);
   assert.equal(calls[0].options.env.AGENT_BROWSER_EXECUTABLE_PATH, '/usr/bin/google-chrome');
-  assert.equal(calls[1].args.includes(`mcp-browser-fast-linux-clearcote-${cdpPort}`), true);
+  assert.equal(calls[1].args.includes(`mcp-browser-fast-linux-cloakbrowser-${cdpPort}`), true);
   assert.deepEqual(calls[1].args.slice(calls[1].args.indexOf('--cdp'), calls[1].args.indexOf('--cdp') + 2), ['--cdp', String(cdpPort)]);
   assert.equal(calls[1].options.env.AGENT_BROWSER_EXECUTABLE_PATH, undefined);
   assert.equal(calls[1].options.env.AGENT_BROWSER_PROFILE, undefined);
@@ -537,41 +537,41 @@ test('per-call Chrome selection stays profileless through Linux observation prep
   ]);
 });
 
-test('headless managed Clearcote keeps supported input on the Clearcote executor', async () => {
+test('headless managed CloakBrowser keeps supported input on the CloakBrowser executor', async () => {
   const runner = new AgentBrowserRunner({
-    processRunner: async () => { throw new Error('Agent Browser must not execute managed Clearcote input'); }
+    processRunner: async () => { throw new Error('Agent Browser must not execute managed CloakBrowser input'); }
   });
-  runner.managedClearcoteCommand = async command => ({
+  runner.managedCloakBrowserCommand = async command => ({
     command,
     success: true,
     error: null,
-    result: { executor: 'clearcote' }
+    result: { executor: 'cloakbrowser' }
   });
 
   const result = await runner.managedLinuxBatch({
-    browser: 'clearcote',
+    browser: 'cloakbrowser',
     managed: true,
     profileName: 'x-main',
     profile: { headless: true, humanize: true },
-    session: 'mcp-browser-fast-linux-clearcote-x-main',
+    session: 'mcp-browser-fast-linux-cloakbrowser-x-main',
     cdp: '43111'
   }, [['click', '@e1']]);
 
-  assert.deepEqual(result.items[0].result, { executor: 'clearcote' });
+  assert.deepEqual(result.items[0].result, { executor: 'cloakbrowser' });
 });
 
-test('managed Clearcote allocates a fresh tab for a second independent agent', async () => {
+test('managed CloakBrowser allocates a fresh tab for a second independent agent', async () => {
   const targets = [{ targetId: 'TARGET-A' }];
   let created = 0;
   const runner = new AgentBrowserRunner({
     linuxBackendResolve: async () => ({
-      browser: 'clearcote',
+      browser: 'cloakbrowser',
       managed: true,
       profileName: 'x-main',
       profile: { humanize: true },
-      session: 'mcp-browser-fast-linux-clearcote-x-main'
+      session: 'mcp-browser-fast-linux-cloakbrowser-x-main'
     }),
-    clearcoteRuntime: {
+    cloakbrowserRuntime: {
       async ensure() { return { cdp: '43111' }; },
       async listTargets() { return [...targets]; },
       async newTarget() {
@@ -594,8 +594,8 @@ test('managed Clearcote allocates a fresh tab for a second independent agent', a
   assert.equal(created, 1);
 });
 
-test('managed Clearcote coalesces concurrent startup of the same profile without a filesystem lock', async t => {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'browser-fast-clearcote-start-'));
+test('managed CloakBrowser coalesces concurrent startup of the same profile without a filesystem lock', async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'browser-fast-cloakbrowser-start-'));
   let port;
   const server = http.createServer((request, response) => {
     if (request.url !== '/json/version') {
@@ -624,9 +624,9 @@ test('managed Clearcote coalesces concurrent startup of the same profile without
     pages() { return []; },
     async close() { for (const listener of closeListeners) listener(); }
   };
-  const runtime = new ManagedClearcoteRuntime({
+  const runtime = new ManagedCloakBrowserRuntime({
     stateRoot: root,
-    launch: async userDataDir => {
+    launch: async ({ userDataDir }) => {
       launches += 1;
       markLaunchStarted();
       await launchGate;
@@ -636,7 +636,7 @@ test('managed Clearcote coalesces concurrent startup of the same profile without
   });
   t.after(async () => { await runtime.close(); });
   const backend = {
-    browser: 'clearcote',
+    browser: 'cloakbrowser',
     managed: true,
     profileName: 'x-main',
     profile: { humanize: true }
@@ -652,13 +652,13 @@ test('managed Clearcote coalesces concurrent startup of the same profile without
   assert.equal(firstRuntime, secondRuntime);
 });
 
-test('managed Clearcote launch supplies a stable WSLg application class', async t => {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'browser-fast-clearcote-wslg-class-'));
+test('managed CloakBrowser launch supplies a stable WSLg application class', async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'browser-fast-cloakbrowser-wslg-class-'));
   t.after(async () => { await fs.rm(root, { recursive: true, force: true }); });
   let launchOptions;
-  const runtime = new ManagedClearcoteRuntime({
+  const runtime = new ManagedCloakBrowserRuntime({
     stateRoot: root,
-    launch: async (_userDataDir, options) => {
+    launch: async options => {
       launchOptions = options;
       const error = new Error('launch options captured');
       error.code = 'TEST_CAPTURE_COMPLETE';
@@ -667,7 +667,7 @@ test('managed Clearcote launch supplies a stable WSLg application class', async 
   });
 
   await assert.rejects(runtime.ensure({
-    browser: 'clearcote',
+    browser: 'cloakbrowser',
     managed: true,
     profileName: 'x-main',
     profile: { headless: false, humanize: true }
@@ -929,7 +929,7 @@ test('browser selection is explicit and Windows profile locks are isolated', asy
     browser.operationKey('windows', { browserProfile: 'agent-two', tab: 'TARGET-B' })
   );
   await assert.rejects(
-    browser.observe({ browser_target: 'windows', browser_backend: 'clearcote' }),
+    browser.observe({ browser_target: 'windows', browser_backend: 'cloakbrowser' }),
     /Windows supports only the chrome backend/
   );
   await assert.rejects(
@@ -1073,7 +1073,7 @@ test('execute stops before following a new tab from another caller or an unverif
       }
     } });
     const result = await browser.execute({
-      browser_target: 'linux', browser_backend: 'clearcote', browser_profile: 'shared', tab: 'A',
+      browser_target: 'linux', browser_backend: 'cloakbrowser', browser_profile: 'shared', tab: 'A',
       final_state: 'none', actions: [{ op: 'click', target: 'e1' }, { op: 'press', key: 'Enter' }]
     });
     assert.equal(result.outcome, 'partial');

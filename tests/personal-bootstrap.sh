@@ -219,10 +219,14 @@ test_browser_config_migration_is_conservative_and_lock_free() {
   HOME="$migrated_home" node "$BROWSER_CONFIG_SETUP" >/dev/null || return 1
   cmp -s "$BROWSER_CONFIG_TEMPLATE" "$migrated" || return 1
 
-  printf '%s\n' '{"version":1,"linux":{"browser":"clearcote","cdpPort":43123}}' > "$external"
+  printf '%s\n' '{"version":1,"linux":{"browser":"cloakbrowser","cdpPort":43123}}' > "$external"
   cp "$external" "$root/external-before.json"
   HOME="$external_home" node "$BROWSER_CONFIG_SETUP" >/dev/null || return 1
   cmp -s "$root/external-before.json" "$external" || return 1
+
+  printf '%s\n' '{"version":1,"linux":{"browser":"clearcote","cdpPort":43123}}' > "$external"
+  HOME="$external_home" node "$BROWSER_CONFIG_SETUP" >/dev/null || return 1
+  [ "$(jq -c . "$external")" = '{"version":1,"linux":{"browser":"cloakbrowser","cdpPort":43123}}' ] || return 1
 
   printf '%s\n' '{"version":1,"linux":{"browser":"clearcote","cdpPort":9222}}' > "$concurrent"
   HOME="$concurrent_home" node "$BROWSER_CONFIG_SETUP" >"$root/concurrent-1.log" 2>&1 &
