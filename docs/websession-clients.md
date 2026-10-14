@@ -42,7 +42,8 @@ The adapter lifecycle is manual. Nothing starts it: not `webharness setup --enab
 For a finite client capability:
 
 ```bash
-bin/adapter issue-cap 3600
+bin/adapter issue-cap          # 24 hours, the default and the maximum
+bin/adapter issue-cap 3600     # or a shorter lifetime in seconds, minimum 60
 ```
 
 `issue-cap` prints:
@@ -167,39 +168,46 @@ First verify WSL access with `pwd` through native MCP. When a WebSession-path ch
 
 ## curl-only agent bootstrap prompt
 
-Use this for an agent with a shell and `curl` but no MCP client. The served client keeps the prompt short: it lists tool names first and fetches one schema only when needed. It provides parity for tools only, not MCP resources or prompts, and adapter calls run one at a time.
+Use this for an agent with a shell and `curl` but no MCP client. The served client keeps the prompt short: `wh tools` prints one signature line per tool, a full schema is fetched only when needed, shell scripts go through `wh sh` without JSON quoting, and large results are capped. It provides parity for tools only, not MCP resources or prompts, and adapter calls run one at a time.
 
-Start the adapter and issue a finite capability for one hour:
-
-```bash
-bin/adapter start
-bin/adapter issue-cap 3600
-```
-
-Replace `<HOST>` and `<CAPABILITY>` in the prompt below. Later, revoke the capability using its printed `capability_id` and stop the adapter:
-
-```bash
-bin/adapter revoke-cap <capability-id>
-bin/adapter stop
-```
+Replace `<HOST>` and paste the prompt as the first message. It contains no secret. The agent first asks you to run one command on the workstation, then does the setup itself once you reply:
 
 ```text
-You can reach my machine's tools over HTTPS with curl. Setup, once:
+You have a shell with curl. I want you to use the tools on my workstation through WebHarness at https://<HOST>.
+
+Step 1. Do nothing yet. Tell me to run this in the webharness checkout on my workstation, and to reply "did it" together with the output line that starts with `capability:`
+  bin/adapter start && bin/adapter issue-cap
+Tell me too that access lasts 24 hours and that the adapter keeps running until I stop it myself.
+
+Step 2. After I reply, set up once:
   mkdir -p ~/.wh && curl -fsS https://<HOST>/v1/client.sh -o ~/.wh/wh && chmod +x ~/.wh/wh
-  printf '%s' '<CAPABILITY>' | ~/.wh/wh login https://<HOST>
-Then: `~/.wh/wh tools` lists tool names, `~/.wh/wh instructions` prints the server's usage notes, `~/.wh/wh schema <tool>` shows one tool's arguments (read it before the first use of that tool), and `~/.wh/wh call <tool> '<json-arguments>'` runs it and prints only the result (`@file` or `-` reads the arguments from a file or stdin).
-Never print, echo or log the capability, and never put it in a URL.
+  printf '%s' '<capability from my reply>' | ~/.wh/wh login https://<HOST>
+It must print `ok: <N> tools`. If it does not, show me the error and stop. Then run `~/.wh/wh tools` and `~/.wh/wh instructions`, tell me briefly what you can now do, and ask what I want done.
+
+Shell work: pass the script on stdin so it needs no JSON quoting, and put several checks in one script instead of one call each:
+  ~/.wh/wh sh <<'EOF'
+  cd ~/repo/project && git status -sb
+  EOF
+Other tools: `~/.wh/wh tools` shows each tool's parameters on one line, `~/.wh/wh call <tool> '<json-arguments>'` runs one (`@file` or `-` reads the arguments from a file or stdin), and `~/.wh/wh schema <tool>` gives the full schema when the one-line form is not enough.
+Results print as plain text. One over 8 KB shows its start and end, and the full text is saved to `~/.wh/last`: search that file locally instead of repeating the call.
+One call must finish within 60 seconds. For anything longer, follow the long-running guidance in `~/.wh/wh instructions`.
+After login, never print, echo or log the capability, and never put it in a URL.
 Exit code 2 means the outcome is unknown: do not retry, check whether the effect happened first. Exit code 3 means the client timed out; run `~/.wh/wh status <status_url>` if it printed a status URL. If no status URL was available, do not retry automatically.
+When I say I am finished, remind me to run `bin/adapter revoke-cap <capability-id>` and `bin/adapter stop`.
 ```
+
+`issue-cap` also prints the `capability_id` needed for `revoke-cap`. To skip the guided step, issue the capability yourself and give the agent only Step 2 onwards with the capability filled in.
 
 | Client interface | Syntax or default | Meaning |
 |---|---|---|
-| Commands | `wh login <base-url>`, `wh tools`, `wh instructions`, `wh schema <tool>`, `wh call <tool> [arguments]`, `wh status <status_url>` | Login reads the capability from stdin. Call arguments may be inline JSON, `@file`, or `-` (stdin). |
+| Commands | `wh login <base-url>`, `wh tools`, `wh instructions`, `wh schema <tool>`, `wh sh [script]`, `wh call <tool> [arguments]`, `wh status <status_url>` | Login reads the capability from stdin. `wh tools` prints one signature line per tool. `wh sh` runs a script given as arguments or on stdin, with no JSON quoting. Call arguments may be inline JSON, `@file`, or `-` (stdin). |
+| `WH_MAX_OUTPUT` | `8192` bytes | Largest result printed in full. A larger one shows its first three quarters and last quarter of that size, and the full result is saved to `$WH_HOME/last`. `0` prints everything. |
+| `WH_SH_TOOL` | `dev_1mcp_bash` | Tool that `wh sh` calls; the script is sent as its `command` argument. |
 | `WH_HOME` | `$HOME/.wh` | Directory for the saved capability and base URL, stored with mode 600. |
 | `WH_WAIT` | `90` seconds (0..90) | Long-poll wait for each request. |
 | `WH_MAX_SECONDS` | `280` seconds | Positive-integer limit for the client run. |
 | Exit code `0` | Completed | The command completed successfully. |
-| Exit code `1` | Failed | A command, HTTP request, or tool call failed. |
+| Exit code `1` | Failed | A command, HTTP request, or tool call failed; the server's reason is printed on stderr. |
 | Exit code `2` | Unknown outcome | Do not retry; check whether the effect happened. |
 | Exit code `3` | Timed out | Use the printed status URL if available. |
 

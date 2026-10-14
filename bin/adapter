@@ -228,7 +228,7 @@ case "$ACTION" in
   status) adapter_status ;;
   auth) adapter_auth_command auth ;;
   auth-status) adapter_auth_command status ;;
-  issue-cap) adapter_issue_capability "${2:-3600}" ;;
+  issue-cap) adapter_issue_capability "${2:-86400}" ;;
   set-master-bearer) adapter_set_master_bearer "${@:2}" ;;
   revoke-cap) adapter_revoke_capability "$@" ;;
   *)

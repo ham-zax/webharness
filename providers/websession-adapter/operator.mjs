@@ -12,7 +12,7 @@ if (!stateDir) throw new Error('WEBSESSION_ADAPTER_STATE_DIR is required');
 const store = new AdapterStore(stateDir);
 try {
   if (action === 'issue') {
-    const ttlSeconds = process.argv[3] === undefined ? 3600 : Number(process.argv[3]);
+    const ttlSeconds = process.argv[3] === undefined ? 86400 : Number(process.argv[3]);
     const issued = store.issueMainCapability(ttlSeconds);
     process.stdout.write(`capability_id: ${issued.id}\ncapability: ${issued.token}\nscope: ${issued.scope}\nexpires_at: ${new Date(issued.expiresMs).toISOString()}\n`);
   } else if (action === 'set-master') {

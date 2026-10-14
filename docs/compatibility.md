@@ -55,6 +55,8 @@ MCP annotations are part of the contract when they communicate authority or side
 
 For enhanced JSON requests, the default request body limit is 1 MB, up from 16 KB, and is configurable with `WEBSESSION_ADAPTER_MAX_JSON_BODY_BYTES`. The MCP tool-call timeout is 120 seconds, up from 30 seconds, and can be configured with `WEBSESSION_ADAPTER_TOOL_TIMEOUT_MS` from 1000 to 600000 milliseconds. Results containing both text and non-text content are returned as JSON for the whole result instead of text only. The `universal-get-v1` call routes and request format are unchanged, and the `bin/websession-call` script is unchanged. The shared timeout and result handling changes also apply to calls through those paths.
 
+The served curl client changed what it prints. `wh tools` now prints one signature line per tool (from the new header-authenticated `GET /v1/signatures`) instead of bare names; `GET /v1/tools` is unchanged. A result over `WH_MAX_OUTPUT` bytes (default 8192) is printed as its start and end with the full text saved to `$WH_HOME/last`; set `WH_MAX_OUTPUT=0` for the previous behaviour. Failed calls and rejected requests now print the server's reason on stderr.
+
 ## Stable contract versus implementation identifiers
 
 Names such as `mcp-dev-bridge.service`, `mcp-dev-bridge` state directories, `%LOCALAPPDATA%\mcp-dev-bridge`, provider package paths, and `wsl-agent-*` are retained implementation compatibility identifiers. WebHarness branding does not require migrating them.

@@ -120,8 +120,8 @@ Pinned 1MCP 0.37.0 permits only loopback OAuth callback origins in its consent-p
 Local capability authority is a separate outer grant from Dev. Unscoped Local discovery plus ordinary call/batch expose public logical servers such as `terminal`, `host`, `browser-devtools`, `browser-fast`, and `browser-jev`. Exact read-only inspection may name the hidden Dev recovery server through `tool_list(server="dev")` or `tool_schema(server="dev", tool=...)`; this does not make Dev callable through ordinary Local routes. `fallback_dispatch` is the only Local execution path that bridges into that Dev mirror after `tag:local` authorization.
 
 The WebSession adapter serves `/v1/client.sh` publicly as a static shell client
-containing no credential. Header-authenticated `/v1/tools`, `/v1/tools/<name>`
-and `/v1/instructions` discovery accepts capabilities in the Authorization
+containing no credential. Header-authenticated `/v1/tools`, `/v1/tools/<name>`,
+`/v1/signatures` and `/v1/instructions` discovery accepts capabilities in the Authorization
 header, keeping them out of URLs and request-path logs.
 
 ## Sensitive state

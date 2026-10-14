@@ -133,7 +133,7 @@ export class AdapterStore {
     return { id, token, scope, expiresMs: now + ttlSeconds * 1000 };
   }
 
-  issueMainCapability(ttlSeconds = 3600) {
+  issueMainCapability(ttlSeconds = 86400) {
     return this.issueCapability('main', ttlSeconds, 86400);
   }
 

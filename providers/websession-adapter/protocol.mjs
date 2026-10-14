@@ -22,6 +22,32 @@ export function toolListSnapshot(tools, instructions = undefined) {
   return value;
 }
 
+function schemaType(schema) {
+  if (!schema || typeof schema !== 'object') return 'any';
+  if (Array.isArray(schema.enum) && schema.enum.length > 0 && schema.enum.length <= 6) {
+    return schema.enum.map(value => JSON.stringify(value)).join('|');
+  }
+  const variants = schema.anyOf || schema.oneOf;
+  if (Array.isArray(variants) && variants.length > 0) return [...new Set(variants.map(schemaType))].join('|');
+  if (Array.isArray(schema.type)) return schema.type.join('|');
+  if (schema.type === 'array') return `${schemaType(schema.items)}[]`;
+  if (schema.type === 'integer') return 'number';
+  return typeof schema.type === 'string' ? schema.type : 'any';
+}
+
+// One line per tool: name(required: type, optional?: type)  first sentence of the description.
+export function toolSignature(tool) {
+  const schema = tool?.inputSchema || {};
+  const required = new Set(Array.isArray(schema.required) ? schema.required : []);
+  const properties = schema.properties && typeof schema.properties === 'object' ? schema.properties : {};
+  const names = Object.keys(properties).sort((a, b) => Number(required.has(b)) - Number(required.has(a)));
+  const parameters = names.map(name => `${name}${required.has(name) ? '' : '?'}: ${schemaType(properties[name])}`);
+  const description = typeof tool?.description === 'string' ? tool.description.replace(/\s+/g, ' ').trim() : '';
+  const sentence = description.match(/^.*?[.;](?= |$)/)?.[0] || description;
+  const summary = sentence.length > 120 ? `${sentence.slice(0, 117)}...` : sentence;
+  return `${tool.name}(${parameters.join(', ')})${summary ? `  ${summary}` : ''}`;
+}
+
 export function decodeToolName(segment) {
   if (!segment || segment.length > 128 || !BASE64URL_RE.test(segment) || segment.includes('=')) {
     throw new Error('invalid encoded tool name');

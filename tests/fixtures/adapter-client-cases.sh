@@ -31,7 +31,7 @@ printf '%s\n' "$CLIENT_CAP" | "$CLIENT" login "$BASE" > "$TMP/login"
 printf 'ok: 4 tools\n' > "$TMP/login.expected"
 cmp "$TMP/login.expected" "$TMP/login"
 "$CLIENT" tools > "$TMP/tools"
-printf 'echo\nsleep\nbig\nmixed\n' > "$TMP/tools.expected"
+printf 'echo(text: string)\nsleep(seconds: number)\nbig()\nmixed()\n' > "$TMP/tools.expected"
 cmp "$TMP/tools.expected" "$TMP/tools"
 "$CLIENT" schema echo > "$TMP/schema"
 assert_json "$TMP/schema" 'value.name === "echo" && value.inputSchema.properties.text.type === "string"'
@@ -64,8 +64,13 @@ const { BIG_RESULT } = await import(pathToFileURL(`${root}/tests/fixtures/adapte
 if (Buffer.byteLength(BIG_RESULT) !== 102400 || !BIG_RESULT.includes('🌍')) throw new Error('bad big fixture');
 writeFileSync(output, BIG_RESULT);
 NODE
-"$CLIENT" call big > "$TMP/big"
+WH_MAX_OUTPUT=0 "$CLIENT" call big > "$TMP/big"
 test "$(sha256sum "$TMP/big" | cut -d' ' -f1)" = "$(sha256sum "$TMP/big.expected" | cut -d' ' -f1)"
+# By default a large result is capped and saved in full beside the capability.
+"$CLIENT" call big > "$TMP/big.capped"
+test "$(wc -c < "$TMP/big.capped")" -lt 9000
+grep -Fq '[wh: 8192 of 102400 bytes shown' "$TMP/big.capped"
+cmp "$TMP/big.expected" "$WH_HOME/last"
 "$CLIENT" call mixed > "$TMP/mixed"
 assert_json "$TMP/mixed" 'value.content.length === 2 && value.content[0].text === "mixed text" && value.content[1].type === "image" && value.content[1].data === "aGVsbG8="'
 
@@ -77,7 +82,7 @@ writeFileSync(`${directory}/large-arguments`, JSON.stringify({ text }));
 writeFileSync(`${directory}/large.expected`, text);
 writeFileSync(`${directory}/oversize`, JSON.stringify({ version: 1, tool: 'echo', arguments: { text: 'A'.repeat(2 * 1024 * 1024) } }));
 NODE
-"$CLIENT" call echo "@$TMP/large-arguments" > "$TMP/large"
+WH_MAX_OUTPUT=0 "$CLIENT" call echo "@$TMP/large-arguments" > "$TMP/large"
 cmp "$TMP/large.expected" "$TMP/large"
 HTTP_CODE=$(curl -sS --max-time 10 -o "$TMP/oversize-response" -w '%{http_code}' \
   -H "@$TMP/client-auth" -H 'Content-Type: application/json' -H 'Idempotency-Key: oversize' \

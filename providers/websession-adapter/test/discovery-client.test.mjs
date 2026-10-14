@@ -4,7 +4,7 @@ import { chmodSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync }
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { parseRequest, parseToolName, toolListSnapshot } from '../protocol.mjs';
+import { parseRequest, parseToolName, toolListSnapshot, toolSignature } from '../protocol.mjs';
 
 const client = new URL('../client.sh', import.meta.url);
 
@@ -140,4 +140,52 @@ test('client reports polling timeouts without retrying the call and rejects HTTP
   const invalidWait = run(['tools'], [], '', { WH_WAIT: '91' });
   assert.equal(invalidWait.status, 1);
   assert.match(invalidWait.stderr, /WH_WAIT/);
+});
+
+test('tool signatures put required parameters first and keep one summary sentence', () => {
+  assert.equal(toolSignature({
+    name: 'run',
+    description: 'Run a  program; prefer exec. More text.',
+    inputSchema: { type: 'object', required: ['command'], properties: {
+      cwd: { type: 'string' }, command: { type: 'string' }, argv: { type: 'array', items: { type: 'string' } },
+      mode: { enum: ['a', 'b'] }, count: { type: 'integer' },
+    } },
+  }), 'run(command: string, cwd?: string, argv?: string[], mode?: "a"|"b", count?: number)  Run a program;');
+  assert.equal(toolSignature({ name: 'bare' }), 'bare()');
+});
+
+test('client sh sends a script without JSON quoting and reports errors that lack a final newline', (t) => {
+  const { directory, run } = clientFixture(t);
+  const script = 'x="it\'s \\"q\\" $HOME"\n\tprintf \'%s\\\\n\' "$x" \u0001é';
+  for (const [args, input] of [[['sh'], script], [['sh', '-'], script], [['sh', script], '']]) {
+    const result = run(args, [response('completed', 'ok')], input);
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(JSON.parse(readFileSync(join(directory, 'request'), 'utf8')),
+      { version: 1, tool: 'dev_1mcp_bash', arguments: { command: script } });
+  }
+  assert.equal(run(['sh', 'echo', 'a b'], [response('completed')], '', { WH_SH_TOOL: 'other' }).status, 0);
+  assert.deepEqual(JSON.parse(readFileSync(join(directory, 'request'), 'utf8')),
+    { version: 1, tool: 'other', arguments: { command: 'echo a b' } });
+  assert.equal(run(['sh'], [], '').status, 1);
+  const failed = run(['call', 'echo'], ['WEBSESSION-MCP-BRIDGE/1\nstate: tool_failed\nerror: first line\nsecond line']);
+  assert.equal(failed.status, 1);
+  assert.equal(failed.stderr, 'tool_failed: first line\nsecond line\n');
+  const rejected = run(['call', 'echo', '{'], ['{"code":"invalid_request","message":"bad JSON"}\n'], '', { HTTP_CODE: '400' });
+  assert.equal(rejected.status, 1);
+  assert.equal(rejected.stderr, 'HTTP 400: {"code":"invalid_request","message":"bad JSON"}\n');
+});
+
+test('client caps large results, keeps head and tail, and saves the full output', (t) => {
+  const { directory, run } = clientFixture(t);
+  const big = `${'a'.repeat(60)}${'m'.repeat(200)}${'z'.repeat(20)}`;
+  const capped = run(['call', 'echo'], [response('completed', big)], '', { WH_MAX_OUTPUT: '80' });
+  assert.equal(capped.status, 0, capped.stderr);
+  const last = join(directory, 'home', 'last');
+  assert.equal(capped.stdout,
+    `${'a'.repeat(60)}\n[wh: 80 of 280 bytes shown, middle omitted; full output: ${last}; WH_MAX_OUTPUT=0 prints everything]\n${'z'.repeat(20)}`);
+  assert.equal(readFileSync(last, 'utf8'), big);
+  assert.equal(statSync(last).mode & 0o777, 0o600);
+  assert.equal(run(['call', 'echo'], [response('completed', big)], '', { WH_MAX_OUTPUT: '0' }).stdout, big);
+  assert.equal(run(['call', 'echo'], [response('completed', big)], '', { WH_MAX_OUTPUT: '280' }).stdout, big);
+  assert.equal(run(['tools'], [], '', { WH_MAX_OUTPUT: 'x' }).status, 1);
 });

@@ -4,7 +4,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { createServer } from 'node:http';
 import { OperationCore } from './core.mjs';
-import { decodeToolName, parseToolName, toolListSnapshot, enhancedSnapshot, parseWait, prefersPlainText, parseCapabilityToken, parseClientNonce, parseRequest, parseUniversalRequest, renderBridgeError, renderChunk, renderOperation } from './protocol.mjs';
+import { decodeToolName, parseToolName, toolListSnapshot, enhancedSnapshot, parseWait, prefersPlainText, parseCapabilityToken, parseClientNonce, parseRequest, parseUniversalRequest, renderBridgeError, renderChunk, renderOperation, toolSignature } from './protocol.mjs';
 
 const host = process.env.WEBSESSION_ADAPTER_HOST || '127.0.0.1';
 const port = Number.parseInt(process.env.WEBSESSION_ADAPTER_PORT || '3051', 10);
@@ -338,6 +338,10 @@ async function handleHeaderDiscovery(req, res, parts) {
     const instructions = access.instructions || '';
     if (text) sendPlainBody(res, instructions);
     else sendJson(res, 200, { protocol: 'WEBSESSION-MCP-BRIDGE/1', state: 'ready', instructions });
+  } else if (parts[1] === 'signatures') {
+    const signatures = access.tools.map(toolSignature);
+    if (text) sendPlainBody(res, signatures.map(line => `${line}\n`).join(''));
+    else sendJson(res, 200, { protocol: 'WEBSESSION-MCP-BRIDGE/1', state: 'ready', signatures });
   } else if (parts.length === 2) {
     if (text) sendPlainBody(res, access.tools.map(tool => `${tool.name}\n`).join(''));
     else sendJson(res, 200, toolListSnapshot(access.tools, access.instructions));
@@ -713,7 +717,7 @@ const server = createServer((req, res) => {
   }
 
   if (parts[0] === 'v1' && ((parts[1] === 'tools' && (parts.length === 2 || parts.length === 3))
-    || (parts[1] === 'instructions' && parts.length === 2))) {
+    || ((parts[1] === 'instructions' || parts[1] === 'signatures') && parts.length === 2))) {
     handleHeaderDiscovery(req, res, parts).catch(() => {
       if (!res.destroyed && !res.writableEnded) sendJson(res, 500, { protocol: 'WEBSESSION-MCP-BRIDGE/1', state: 'rejected', code: 'internal_error' });
     });
