@@ -190,7 +190,10 @@ Shell work: pass the script on stdin so it needs no JSON quoting, and put severa
   EOF
 Other tools: `~/.wh/wh tools` shows each tool's parameters on one line, `~/.wh/wh call <tool> '<json-arguments>'` runs one (`@file` or `-` reads the arguments from a file or stdin), and `~/.wh/wh schema <tool>` gives the full schema when the one-line form is not enough.
 Results print as plain text. One over 8 KB shows its start and end, and the full text is saved to `~/.wh/last`: search that file locally instead of repeating the call.
-One call must finish within 60 seconds. For anything longer, follow the long-running guidance in `~/.wh/wh instructions`.
+One call must finish within 60 seconds. For a build, test run or anything else that may take longer, start it detached, wait in short calls, then read the log:
+  ~/.wh/wh call dev_1mcp_exec '{"argv":["bash","-c","<command>"],"detach":true}'    # prints log and exit paths
+  ~/.wh/wh call dev_1mcp_wait '{"name":"job1","condition":{"kind":"file_exists","path":"<exit path>"},"hold_seconds":45}'
+Repeat the wait with only `{"name":"job1","hold_seconds":45}` until it prints `matched`; repeating a wait is always safe, even after exit code 2. Then `~/.wh/wh sh 'tail -50 <log path>; cat <exit path>'`.
 After login, never print, echo or log the capability, and never put it in a URL.
 Exit code 2 means the outcome is unknown: do not retry, check whether the effect happened first. Exit code 3 means the client timed out; run `~/.wh/wh status <status_url>` if it printed a status URL. If no status URL was available, do not retry automatically.
 When I say I am finished, remind me to run `bin/adapter revoke-cap <capability-id>` and `bin/adapter stop`.
