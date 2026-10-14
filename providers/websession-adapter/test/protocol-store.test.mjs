@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
+import { OperationCore, renderToolResult } from '../core.mjs';
 import { decodeToolName, parseRequest, parseUniversalRequest } from '../protocol.mjs';
 import { AdapterStore, requestHash } from '../store.mjs';
 
@@ -137,7 +138,10 @@ test('completed results are stored as immutable UTF-8 chunks', () => {
     const principal = store.resolveCapability(issued.token);
     const requestJson = JSON.stringify({ version: 1, tool: 'dev_1mcp_read', arguments: { path: '/tmp/large' } });
     const submitted = store.submitOperation(principal.id, 'chunk-nonce', requestJson, requestHash(requestJson));
+    assert.equal(store.getOperationResult('missing-operation'), undefined);
+    assert.equal(store.getOperationResult(submitted.operation.id), undefined);
     assert.equal(store.claimQueued(submitted.operation.id), true);
+    assert.equal(store.getOperationResult(submitted.operation.id), undefined);
 
     const result = `${'A'.repeat(9000)}${'✓'.repeat(4000)}`;
     store.completeOperation(submitted.operation.id, result);
@@ -154,9 +158,48 @@ test('completed results are stored as immutable UTF-8 chunks', () => {
       chunks.push(chunk.content);
     }
     assert.equal(chunks.join(''), result);
+    assert.deepEqual(Buffer.from(store.getOperationResult(operation.id), 'utf8'), Buffer.from(result, 'utf8'));
     assert.throws(() => store.completeOperation(operation.id, 'replacement'), /operation is not running/);
   } finally {
     store.close();
     rmSync(stateDir, { recursive: true, force: true });
   }
+});
+
+test('full-result reads require the operation continuation token', () => {
+  const stateDir = mkdtempSync(join(tmpdir(), 'websession-adapter-result-'));
+  const core = new OperationCore({ stateDir });
+  try {
+    const issued = core.store.issueMainCapability(60);
+    const requestJson = JSON.stringify({ version: 1, tool: 'dev_1mcp_read', arguments: {} });
+    const submitted = core.store.submitOperation(issued.id, 'result-nonce', requestJson, requestHash(requestJson));
+    const id = submitted.operation.id;
+    const continuation = core.store.continuationToken(id);
+    assert.equal(core.readOperationResult(id, continuation), undefined);
+    assert.equal(core.store.claimQueued(id), true);
+    const result = `${'A'.repeat(8191)}${'🌍✓'.repeat(4000)}`;
+    core.store.completeOperation(id, result);
+    assert.equal(core.readOperationResult(id, 'wrong-token'), undefined);
+    assert.equal(core.readOperationResult(id, core.store.continuationToken('other-operation')), undefined);
+    assert.deepEqual(Buffer.from(core.readOperationResult(id, continuation), 'utf8'), Buffer.from(result, 'utf8'));
+  } finally {
+    core.close();
+    rmSync(stateDir, { recursive: true, force: true });
+  }
+});
+
+test('tool results preserve text-only rendering and serialize non-text or empty content', () => {
+  const text = { type: 'text', text: 'hello' };
+  const image = { type: 'image', data: 'aGVsbG8=', mimeType: 'image/png' };
+  assert.equal(renderToolResult({ content: [text, { type: 'text', text: 'world' }] }), 'hello\nworld');
+  for (const result of [{ content: [text, image] }, { content: [image] }, { content: [] }, {}]) {
+    assert.equal(renderToolResult(result), JSON.stringify(result));
+  }
+});
+
+test('tool result errors and byte limits remain enforced', () => {
+  assert.throws(() => renderToolResult({ isError: true, content: [{ type: 'text', text: 'failed' }] }), /^Error: failed$/);
+  assert.throws(() => renderToolResult({ isError: true, content: [] }), /MCP tool failed/);
+  assert.throws(() => renderToolResult({ content: [{ type: 'text', text: '✓'.repeat(350000) }] }), /result_too_large/);
+  assert.throws(() => renderToolResult({ content: [{ type: 'image', data: 'A'.repeat(1024 * 1024), mimeType: 'image/png' }] }), /result_too_large/);
 });

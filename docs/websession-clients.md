@@ -19,6 +19,7 @@ For master-bearer lifetime, rotation, exchange, and storage rules, see [WebSessi
 |---|---|---|
 | HTTPS GET + POST + custom headers | enhanced JSON (`json-post-v1`) | master bearer exchange or finite capability |
 | Generic code/runtime HTTP client | enhanced JSON (`json-post-v1`) | master bearer exchange or finite capability |
+| Shell with curl only (no MCP client) | enhanced JSON via served client (`/v1/client.sh`) | finite capability issued by the operator |
 | HTTPS GET/open/fetch only | universal GET (`universal-get-v1`) | finite capability issued by the operator |
 | Native MCP client | direct `/mcp` preferred | normal MCP OAuth; WebSession optional |
 
@@ -161,6 +162,46 @@ Do not assume WebSession operations themselves execute concurrently; current ada
 
 First verify WSL access with `pwd` through native MCP. When a WebSession-path check is useful, run the wrapper `pwd` example above. Then proceed with my task autonomously.
 ```
+
+## curl-only agent bootstrap prompt
+
+Use this for an agent with a shell and `curl` but no MCP client. The served client keeps the prompt short: it lists tool names first and fetches one schema only when needed. It provides parity for tools only, not MCP resources or prompts, and adapter calls run one at a time.
+
+Start the adapter and issue a finite capability for one hour:
+
+```bash
+bin/adapter start
+bin/adapter issue-cap 3600
+```
+
+Replace `<HOST>` and `<CAPABILITY>` in the prompt below. Later, revoke the capability using its printed `capability_id` and stop the adapter:
+
+```bash
+bin/adapter revoke-cap <capability-id>
+bin/adapter stop
+```
+
+```text
+You can reach my machine's tools over HTTPS with curl. Setup, once:
+  mkdir -p ~/.wh && curl -fsS https://<HOST>/v1/client.sh -o ~/.wh/wh && chmod +x ~/.wh/wh
+  printf '%s' '<CAPABILITY>' | ~/.wh/wh login https://<HOST>
+Then: `~/.wh/wh tools` lists tool names, `~/.wh/wh instructions` prints the server's usage notes, `~/.wh/wh schema <tool>` shows one tool's arguments (read it before the first use of that tool), and `~/.wh/wh call <tool> '<json-arguments>'` runs it and prints only the result (`@file` or `-` reads the arguments from a file or stdin).
+Never print, echo or log the capability, and never put it in a URL.
+Exit code 2 means the outcome is unknown: do not retry, check whether the effect happened first. Exit code 3 means the client timed out; run `~/.wh/wh status <status_url>` if it printed a status URL. If no status URL was available, do not retry automatically.
+```
+
+| Client interface | Syntax or default | Meaning |
+|---|---|---|
+| Commands | `wh login <base-url>`, `wh tools`, `wh instructions`, `wh schema <tool>`, `wh call <tool> [arguments]`, `wh status <status_url>` | Login reads the capability from stdin. Call arguments may be inline JSON, `@file`, or `-` (stdin). |
+| `WH_HOME` | `$HOME/.wh` | Directory for the saved capability and base URL, stored with mode 600. |
+| `WH_WAIT` | `90` seconds (0..90) | Long-poll wait for each request. |
+| `WH_MAX_SECONDS` | `280` seconds | Positive-integer limit for the client run. |
+| Exit code `0` | Completed | The command completed successfully. |
+| Exit code `1` | Failed | A command, HTTP request, or tool call failed. |
+| Exit code `2` | Unknown outcome | Do not retry; check whether the effect happened. |
+| Exit code `3` | Timed out | Use the printed status URL if available. |
+
+The client long-polls `POST /v1/calls?wait=N`, where N can be up to the `long_poll_max_seconds` value advertised by `/v1/about` (currently 90). It needs no SSE or WebSocket; for WebSession HTTP requests, the capability travels only in the `Authorization` request header.
 
 ## GET/open-only agent bootstrap prompt
 

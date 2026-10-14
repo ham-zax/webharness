@@ -11,6 +11,17 @@ export function parseClientNonce(value) {
   return value;
 }
 
+export function parseToolName(value) {
+  if (typeof value !== 'string' || !/^[A-Za-z0-9._-]{1,128}$/.test(value)) throw new Error('invalid tool name');
+  return value;
+}
+
+export function toolListSnapshot(tools, instructions = undefined) {
+  const value = { protocol: 'WEBSESSION-MCP-BRIDGE/1', state: 'ready', tool_count: tools.length, tools: tools.map(tool => tool.name) };
+  if (instructions) value.instructions = instructions;
+  return value;
+}
+
 export function decodeToolName(segment) {
   if (!segment || segment.length > 128 || !BASE64URL_RE.test(segment) || segment.includes('=')) {
     throw new Error('invalid encoded tool name');
@@ -25,7 +36,7 @@ export function parseRequest(value) {
   const requestKeys = Object.keys(value).sort();
   if (requestKeys.join(',') !== 'arguments,tool,version') throw new Error('request fields must be exactly version, tool, arguments');
   if (value.version !== 1) throw new Error('only request version 1 is supported');
-  if (typeof value.tool !== 'string' || !/^[A-Za-z0-9._-]{1,128}$/.test(value.tool)) throw new Error('invalid tool name');
+  parseToolName(value.tool);
   if (!value.arguments || typeof value.arguments !== 'object' || Array.isArray(value.arguments)) throw new Error('arguments must be an object');
   const normalized = { version: 1, tool: value.tool, arguments: value.arguments };
   return { normalized, requestJson: JSON.stringify(normalized) };
@@ -47,7 +58,28 @@ export function parseUniversalRequest(segment) {
   return parseRequest(value);
 }
 
-export function renderOperation(operation, statusUrl, confirmation = undefined) {
+export function parseWait(searchParams) {
+  const values = searchParams.getAll('wait');
+  if (values.length === 0) return undefined;
+  if (values.length !== 1 || !/^[0-9]+$/.test(values[0]) || Number(values[0]) > 90) {
+    throw new Error('invalid_wait');
+  }
+  return Number(values[0]) * 1000;
+}
+
+export function prefersPlainText(accept = '') {
+  const value = String(accept).toLowerCase();
+  return value.includes('text/plain') && !value.includes('application/json');
+}
+
+function withFullResult(operation, fullResult) {
+  return operation.state === 'completed' && fullResult !== undefined
+    ? { ...operation, chunk_count: 1, result_text: fullResult }
+    : operation;
+}
+
+export function renderOperation(operation, statusUrl, confirmation = undefined, fullResult = undefined) {
+  operation = withFullResult(operation, fullResult);
   const lines = [
     'WEBSESSION-MCP-BRIDGE/1',
     `state: ${operation.state}`,
@@ -95,4 +127,30 @@ export function renderChunk(operationId, chunk) {
 
 export function renderBridgeError(code, message) {
   return ['WEBSESSION-MCP-BRIDGE/1', 'state: rejected', `code: ${code}`, `message: ${message}`].join('\n');
+}
+
+export function enhancedSnapshot(operation, statusUrl, confirmation = undefined, fullResult = undefined) {
+  operation = withFullResult(operation, fullResult);
+  const value = {
+    protocol: 'WEBSESSION-MCP-BRIDGE/1',
+    state: operation.state,
+    operation_id: operation.id,
+    status_url: statusUrl,
+  };
+  if (operation.state === 'confirmation_required' && confirmation) {
+    value.confirmation_base = confirmation.base;
+    value.challenge = confirmation.challenge;
+    value.confirmation_expires_at = new Date(confirmation.expiresMs).toISOString();
+    value.summary = confirmation.summary;
+    value.instruction = 'Construct confirmation_base + challenge, or use explicit POST confirmation.';
+  } else if (operation.state === 'completed') {
+    const chunkCount = Number(operation.chunk_count) || 1;
+    value.chunk_count = chunkCount;
+    if (chunkCount > 1) value.chunk_base_url = `${statusUrl}/chunk/`;
+    else value.result = operation.result_text || '';
+  }
+  if (['tool_failed', 'unknown_outcome', 'rejected', 'expired'].includes(operation.state)) {
+    value.error = operation.error_text || operation.state;
+  }
+  return value;
 }

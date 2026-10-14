@@ -1,10 +1,10 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { appendFileSync, chmodSync, mkdirSync, renameSync, rmSync, statSync } from 'node:fs';
+import { appendFileSync, chmodSync, mkdirSync, readFileSync, renameSync, rmSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { createServer } from 'node:http';
 import { OperationCore } from './core.mjs';
-import { decodeToolName, parseCapabilityToken, parseClientNonce, parseRequest, parseUniversalRequest, renderBridgeError, renderChunk, renderOperation } from './protocol.mjs';
+import { decodeToolName, parseToolName, toolListSnapshot, enhancedSnapshot, parseWait, prefersPlainText, parseCapabilityToken, parseClientNonce, parseRequest, parseUniversalRequest, renderBridgeError, renderChunk, renderOperation } from './protocol.mjs';
 
 const host = process.env.WEBSESSION_ADAPTER_HOST || '127.0.0.1';
 const port = Number.parseInt(process.env.WEBSESSION_ADAPTER_PORT || '3051', 10);
@@ -16,7 +16,9 @@ const maxEvidenceBytes = Number.parseInt(process.env.WEBSESSION_ADAPTER_MAX_EVID
 const configuredPublicBase = (process.env.WEBSESSION_ADAPTER_PUBLIC_URL || '').replace(/\/$/, '');
 const mcpUrl = process.env.WEBSESSION_ADAPTER_MCP_URL || '';
 const oauthCallbackUrl = process.env.WEBSESSION_ADAPTER_OAUTH_CALLBACK_URL || 'http://127.0.0.1:3052/callback';
-const maxJsonBodyBytes = Number.parseInt(process.env.WEBSESSION_ADAPTER_MAX_JSON_BODY_BYTES || String(16 * 1024), 10);
+const maxJsonBodyBytes = Number.parseInt(process.env.WEBSESSION_ADAPTER_MAX_JSON_BODY_BYTES || String(1024 * 1024), 10);
+const toolTimeoutMs = Number.parseInt(process.env.WEBSESSION_ADAPTER_TOOL_TIMEOUT_MS || '120000', 10);
+const clientScript = readFileSync(new URL('./client.sh', import.meta.url));
 const masterAccessTtlSeconds = 6 * 60 * 60;
 
 if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('WEBSESSION_ADAPTER_PORT must be 1..65535');
@@ -24,10 +26,13 @@ if (!Number.isInteger(maxEvidenceBytes) || maxEvidenceBytes < 4096) throw new Er
 if (!Number.isInteger(maxJsonBodyBytes) || maxJsonBodyBytes < 1024 || maxJsonBodyBytes > 1024 * 1024) {
   throw new Error('WEBSESSION_ADAPTER_MAX_JSON_BODY_BYTES must be 1024..1048576');
 }
+if (!Number.isInteger(toolTimeoutMs) || toolTimeoutMs < 1000 || toolTimeoutMs > 600000) {
+  throw new Error('WEBSESSION_ADAPTER_TOOL_TIMEOUT_MS must be 1000..600000');
+}
 
 mkdirSync(stateDir, { recursive: true, mode: 0o700 });
 chmodSync(stateDir, 0o700);
-const operationCore = new OperationCore({ stateDir, mcpUrl, callbackUrl: oauthCallbackUrl });
+const operationCore = new OperationCore({ stateDir, mcpUrl, callbackUrl: oauthCallbackUrl, toolTimeoutMs });
 operationCore.start();
 
 function rotateEvidenceIfNeeded() {
@@ -73,9 +78,9 @@ function requestLogPath(url) {
   return url.pathname;
 }
 
-function sendText(res, status, body) {
+function sendText(res, status, body, plain = false) {
   const req = res.req;
-  if (req?.headers?.accept?.includes('text/html')) {
+  if (!plain && req?.headers?.accept?.includes('text/html')) {
     res.writeHead(status, {
       'content-type': 'text/html; charset=utf-8',
       'cache-control': 'no-store',
@@ -153,6 +158,9 @@ async function handleUniversalGet(req, res, parts) {
       'inline_request_max_chars: 256',
       `enhanced_json_max_bytes: ${maxJsonBodyBytes}`,
       'fast_wait_ms: 1900',
+      'long_poll_max_seconds: 90',
+      `client_url: ${base}/v1/client.sh`,
+      `tool_timeout_ms: ${toolTimeoutMs}`,
     ].join('\n'));
     return true;
   }
@@ -306,36 +314,92 @@ async function handleUniversalGet(req, res, parts) {
   return true;
 }
 
-function enhancedSnapshot(operation, statusUrl, confirmation = undefined) {
-  const value = {
-    protocol: 'WEBSESSION-MCP-BRIDGE/1',
-    state: operation.state,
-    operation_id: operation.id,
-    status_url: statusUrl,
-  };
-  if (operation.state === 'confirmation_required' && confirmation) {
-    value.confirmation_base = confirmation.base;
-    value.challenge = confirmation.challenge;
-    value.confirmation_expires_at = new Date(confirmation.expiresMs).toISOString();
-    value.summary = confirmation.summary;
-    value.instruction = 'Construct confirmation_base + challenge, or use explicit POST confirmation.';
-  } else if (operation.state === 'completed') {
-    const chunkCount = Number(operation.chunk_count) || 1;
-    value.chunk_count = chunkCount;
-    if (chunkCount > 1) value.chunk_base_url = `${statusUrl}/chunk/`;
-    else value.result = operation.result_text || '';
+function sendPlainBody(res, body) {
+  res.writeHead(200, {
+    'content-type': 'text/plain; charset=utf-8',
+    'cache-control': 'no-store',
+    'referrer-policy': 'no-referrer',
+  });
+  res.end(body);
+}
+
+async function handleHeaderDiscovery(req, res, parts) {
+  const authorization = req.headers.authorization || '';
+  const capability = typeof authorization === 'string' && authorization.startsWith('Bearer ')
+    ? parseCapabilityToken(authorization.slice('Bearer '.length))
+    : undefined;
+  const access = capability ? await operationCore.permittedTools(capability) : undefined;
+  if (!access) {
+    sendJson(res, 401, { protocol: 'WEBSESSION-MCP-BRIDGE/1', state: 'rejected', code: 'authorization_required' });
+    return;
   }
-  if (['tool_failed', 'unknown_outcome', 'rejected', 'expired'].includes(operation.state)) {
-    value.error = operation.error_text || operation.state;
+  const text = prefersPlainText(req.headers.accept);
+  if (parts[1] === 'instructions') {
+    const instructions = access.instructions || '';
+    if (text) sendPlainBody(res, instructions);
+    else sendJson(res, 200, { protocol: 'WEBSESSION-MCP-BRIDGE/1', state: 'ready', instructions });
+  } else if (parts.length === 2) {
+    if (text) sendPlainBody(res, access.tools.map(tool => `${tool.name}\n`).join(''));
+    else sendJson(res, 200, toolListSnapshot(access.tools, access.instructions));
+  } else {
+    let name;
+    try {
+      name = parseToolName(decodeSegment(parts[2], 'tool name'));
+    } catch {
+      sendJson(res, 404, { protocol: 'WEBSESSION-MCP-BRIDGE/1', state: 'rejected', code: 'not_found' });
+      return;
+    }
+    const tool = access.tools.find(candidate => candidate.name === name);
+    if (!tool) {
+      sendJson(res, 404, { protocol: 'WEBSESSION-MCP-BRIDGE/1', state: 'rejected', code: 'not_found' });
+      return;
+    }
+    if (text) sendPlainBody(res, JSON.stringify(tool));
+    else sendJson(res, 200, { protocol: 'WEBSESSION-MCP-BRIDGE/1', state: 'ready', tool });
   }
-  return value;
 }
 
 function enhancedStatusUrl(base, continuationToken, operationId) {
   return `${base}/v1/operations/${continuationToken}/${operationId}`;
 }
 
-async function handleEnhancedCall(req, res) {
+function enhancedWait(res, url) {
+  try {
+    return { timeoutMs: parseWait(url.searchParams) };
+  } catch {
+    sendJson(res, 400, { protocol: 'WEBSESSION-MCP-BRIDGE/1', state: 'rejected', code: 'invalid_wait' });
+    return undefined;
+  }
+}
+
+async function waitForEnhancedResponse(res, operation, timeoutMs) {
+  if (res.destroyed || res.writableEnded) return undefined;
+  const controller = new AbortController();
+  const onClose = () => controller.abort();
+  res.once('close', onClose);
+  try {
+    if (operation.state === 'queued' || operation.state === 'running') {
+      operation = await operationCore.waitForOperation(operation.id, timeoutMs, controller.signal);
+    }
+    return res.destroyed || res.writableEnded || controller.signal.aborted ? undefined : operation;
+  } finally {
+    res.off('close', onClose);
+  }
+}
+
+function sendEnhancedOperation(req, res, operation, continuation, statusUrl, confirmation, full) {
+  if (res.destroyed || res.writableEnded) return;
+  const text = prefersPlainText(req.headers.accept);
+  const result = (full || text) && operation.state === 'completed'
+    ? operationCore.readOperationResult(operation.id, continuation)
+    : undefined;
+  if (text) sendPlainBody(res, renderOperation(operation, statusUrl, confirmation, result));
+  else sendJson(res, 200, enhancedSnapshot(operation, statusUrl, confirmation, result));
+}
+
+async function handleEnhancedCall(req, res, url) {
+  const wait = enhancedWait(res, url);
+  if (!wait) return;
   const authorization = req.headers.authorization || '';
   if (typeof authorization !== 'string' || !authorization.startsWith('Bearer ')) {
     sendJson(res, 401, { protocol: 'WEBSESSION-MCP-BRIDGE/1', state: 'rejected', code: 'authorization_required' });
@@ -394,9 +458,10 @@ async function handleEnhancedCall(req, res) {
 
   const base = publicBase(req);
   const statusUrl = enhancedStatusUrl(base, submitted.continuationToken, submitted.operation.id);
-  const operation = submitted.operation.state === 'queued'
-    ? await operationCore.waitForOperation(submitted.operation.id, 1900)
+  const operation = submitted.operation.state === 'queued' || wait.timeoutMs !== undefined
+    ? await waitForEnhancedResponse(res, submitted.operation, wait.timeoutMs ?? 1900)
     : submitted.operation;
+  if (!operation) return;
   const confirmation = submitted.confirmation
     ? {
         base: `${base}/v1/s/${submitted.confirmation.capability}/confirm/${submitted.operation.id}/`,
@@ -405,7 +470,7 @@ async function handleEnhancedCall(req, res) {
         summary: submitted.confirmation.summary,
       }
     : undefined;
-  sendJson(res, 200, enhancedSnapshot(operation, statusUrl, confirmation));
+  sendEnhancedOperation(req, res, operation, submitted.continuationToken, statusUrl, confirmation, wait.timeoutMs !== undefined);
 }
 
 function handleMasterAccess(req, res) {
@@ -475,7 +540,9 @@ async function handleEnhancedConfirm(req, res, operationId) {
   sendJson(res, 200, enhancedSnapshot(operation, statusUrl));
 }
 
-function handleEnhancedStatus(req, res, parts) {
+async function handleEnhancedStatus(req, res, parts, url) {
+  const wait = enhancedWait(res, url);
+  if (!wait) return;
   const continuation = parseCapabilityToken(parts[2]);
   const operationId = parts[3];
   if (!continuation || !operationId) {
@@ -483,14 +550,18 @@ function handleEnhancedStatus(req, res, parts) {
     return;
   }
 
-  const operation = operationCore.readOperation(operationId, continuation);
+  let operation = operationCore.readOperation(operationId, continuation);
   if (!operation) {
     sendJson(res, 404, { protocol: 'WEBSESSION-MCP-BRIDGE/1', state: 'rejected', code: 'not_found' });
     return;
   }
 
+  if (wait.timeoutMs !== undefined) {
+    operation = await waitForEnhancedResponse(res, operation, wait.timeoutMs);
+    if (!operation) return;
+  }
   const base = publicBase(req);
-  sendJson(res, 200, enhancedSnapshot(operation, enhancedStatusUrl(base, continuation, operationId)));
+  sendEnhancedOperation(req, res, operation, continuation, enhancedStatusUrl(base, continuation, operationId), undefined, wait.timeoutMs !== undefined);
 }
 
 function handleEnhancedChunk(req, res, parts) {
@@ -590,14 +661,16 @@ const server = createServer((req, res) => {
   }
 
   if (req.method === 'POST' && url.pathname === '/v1/calls') {
-    handleEnhancedCall(req, res).catch(() => {
-      sendJson(res, 500, { protocol: 'WEBSESSION-MCP-BRIDGE/1', state: 'rejected', code: 'internal_error' });
+    handleEnhancedCall(req, res, url).catch(() => {
+      if (!res.destroyed && !res.writableEnded) sendJson(res, 500, { protocol: 'WEBSESSION-MCP-BRIDGE/1', state: 'rejected', code: 'internal_error' });
     });
     return;
   }
 
   if (req.method === 'GET' && parts[0] === 'v1' && parts[1] === 'operations' && parts.length === 4) {
-    handleEnhancedStatus(req, res, parts);
+    handleEnhancedStatus(req, res, parts, url).catch(() => {
+      if (!res.destroyed && !res.writableEnded) sendJson(res, 500, { protocol: 'WEBSESSION-MCP-BRIDGE/1', state: 'rejected', code: 'internal_error' });
+    });
     return;
   }
 
@@ -626,6 +699,24 @@ const server = createServer((req, res) => {
     sendText(res, 405, parts[0] === 'v1'
       ? 'WEBSESSION-MCP-BRIDGE/1\nstate: rejected\ncode: method_not_allowed'
       : 'WEBSESSION-PROBE/1\nstate: rejected\ncode: method_not_allowed');
+    return;
+  }
+
+  if (url.pathname === '/v1/client.sh') {
+    res.writeHead(200, {
+      'content-type': 'text/x-shellscript; charset=utf-8',
+      'cache-control': 'no-store',
+      'referrer-policy': 'no-referrer',
+    });
+    res.end(clientScript);
+    return;
+  }
+
+  if (parts[0] === 'v1' && ((parts[1] === 'tools' && (parts.length === 2 || parts.length === 3))
+    || (parts[1] === 'instructions' && parts.length === 2))) {
+    handleHeaderDiscovery(req, res, parts).catch(() => {
+      if (!res.destroyed && !res.writableEnded) sendJson(res, 500, { protocol: 'WEBSESSION-MCP-BRIDGE/1', state: 'rejected', code: 'internal_error' });
+    });
     return;
   }
 

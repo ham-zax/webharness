@@ -8,26 +8,27 @@ function boundedError(error) {
   return text.slice(0, 2048);
 }
 
-function renderToolResult(result) {
+export function renderToolResult(result) {
   if (result?.isError) {
     const text = Array.isArray(result.content)
       ? result.content.filter(block => block?.type === 'text').map(block => block.text).join('\n')
       : 'MCP tool failed';
     throw new Error(text || 'MCP tool failed');
   }
-  const textBlocks = Array.isArray(result?.content)
-    ? result.content.filter(block => block?.type === 'text').map(block => block.text)
-    : [];
-  const text = textBlocks.length > 0 ? textBlocks.join('\n') : JSON.stringify(result);
+  const textOnly = Array.isArray(result?.content)
+    && result.content.length > 0
+    && result.content.every(block => block?.type === 'text');
+  const text = textOnly ? result.content.map(block => block.text).join('\n') : JSON.stringify(result);
   if (Buffer.byteLength(text, 'utf8') > MAX_RESULT_BYTES) throw new Error('result_too_large');
   return text;
 }
 
 export class OperationCore {
-  constructor({ stateDir, mcpUrl, callbackUrl }) {
+  constructor({ stateDir, mcpUrl, callbackUrl, toolTimeoutMs }) {
     this.store = new AdapterStore(stateDir);
     this.mcpUrl = mcpUrl;
     this.callbackUrl = callbackUrl;
+    this.toolTimeoutMs = toolTimeoutMs;
     this._active = new Map();
     this._tail = Promise.resolve();
   }
@@ -118,17 +119,29 @@ export class OperationCore {
     return this.store.getOperationChunk(operationId, chunkNumber);
   }
 
-  async waitForOperation(operationId, timeoutMs) {
+  readOperationResult(operationId, continuationToken) {
+    if (!this.store.continuationMatches(operationId, continuationToken)) return undefined;
+    return this.store.getOperationResult(operationId);
+  }
+
+  async waitForOperation(operationId, timeoutMs, signal = undefined) {
     const active = this._active.get(operationId);
-    if (active) {
+    if (active && !signal?.aborted) {
       let timer;
-      await Promise.race([
-        active.catch(() => {}),
-        new Promise(resolve => {
-          timer = setTimeout(resolve, timeoutMs);
-        }),
-      ]);
-      if (timer) clearTimeout(timer);
+      let onAbort;
+      try {
+        await Promise.race([
+          active.catch(() => {}),
+          new Promise(resolve => {
+            timer = setTimeout(resolve, timeoutMs);
+            onAbort = resolve;
+            signal?.addEventListener('abort', onAbort, { once: true });
+          }),
+        ]);
+      } finally {
+        if (timer) clearTimeout(timer);
+        if (onAbort) signal?.removeEventListener('abort', onAbort);
+      }
     }
     return this.store.getOperation(operationId);
   }
@@ -167,7 +180,7 @@ export class OperationCore {
     let result;
     try {
       result = await callMcpTool(
-        { mcpUrl: this.mcpUrl, stateDir: this.store.stateDir, callbackUrl: this.callbackUrl },
+        { mcpUrl: this.mcpUrl, stateDir: this.store.stateDir, callbackUrl: this.callbackUrl, timeoutMs: this.toolTimeoutMs },
         operation.tool,
         request.arguments,
         {

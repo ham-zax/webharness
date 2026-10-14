@@ -281,6 +281,13 @@ export class AdapterStore {
     `).get(id, chunkNumber);
   }
 
+  getOperationResult(id) {
+    const operation = this.getOperation(id);
+    if (!operation || operation.state !== 'completed') return undefined;
+    return this.db.prepare('SELECT content FROM operation_chunks WHERE operation_id = ? ORDER BY chunk_number')
+      .all(id).map(chunk => chunk.content).join('');
+  }
+
   claimQueued(id) {
     const now = Date.now();
     const result = this.db.prepare("UPDATE operations SET state = 'running', updated_ms = ? WHERE id = ? AND state = 'queued'").run(now, id);

@@ -56,7 +56,7 @@ export async function callMcpTool(options, name, args, hooks = {}) {
     const listed = await connection.client.listTools(undefined, { timeout: 15_000 });
     if (!listed.tools.some(tool => tool.name === name)) throw new Error(`MCP tool is unavailable: ${name}`);
     if (hooks.onBeforeDispatch) await hooks.onBeforeDispatch();
-    return await connection.client.callTool({ name, arguments: args }, undefined, { timeout: 30_000 });
+    return await connection.client.callTool({ name, arguments: args }, undefined, { timeout: options.timeoutMs ?? 120_000 });
   } finally {
     await connection.close();
   }

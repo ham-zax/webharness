@@ -5,6 +5,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP="$(mktemp -d)"
 PORT="$((41000 + ($$ % 1000)))"
 BASE="http://127.0.0.1:$PORT"
+STUB_PID=''
+MCP_URL=''
 
 mkdir -p "$TMP/home" "$TMP/state" "$TMP/run"
 
@@ -14,20 +16,47 @@ adapter() {
     XDG_STATE_HOME="$TMP/state" \
     XDG_RUNTIME_DIR="$TMP/run" \
     WEBSESSION_ADAPTER_PORT="$PORT" \
+    WEBSESSION_ADAPTER_MCP_URL="$MCP_URL" \
+    WEBSESSION_ADAPTER_LOG_FILE="$TMP/adapter.log" \
     WEBSESSION_ADAPTER_PUBLIC_URL="$BASE" \
     "$ROOT/bin/adapter" "$@"
 }
 
 cleanup() {
   adapter stop >/dev/null 2>&1 || true
+  if [[ -n $STUB_PID ]]; then
+    kill "$STUB_PID" 2>/dev/null || true
+    wait "$STUB_PID" 2>/dev/null || true
+  fi
   rm -rf "$TMP"
 }
 trap cleanup EXIT
+trap 'printf "adapter probe failed at %s:%s\n" "${BASH_SOURCE[0]}" "$LINENO" >&2' ERR
 
 if grep -Eq 'websession-adapter|bin/adapter' "$ROOT/bin/start" "$ROOT/bin/stop" "$ROOT/bin/status" "$ROOT/lib/bridge/watchdog.sh"; then
   echo "main bridge lifecycle must not reference the optional adapter" >&2
   exit 1
 fi
+
+node "$ROOT/tests/fixtures/adapter-mcp-stub.mjs" "$TMP/stub.port" >"$TMP/stub.log" 2>&1 &
+STUB_PID=$!
+for _ in {1..50}; do
+  [[ ! -s $TMP/stub.port ]] || break
+  kill -0 "$STUB_PID" 2>/dev/null || { cat "$TMP/stub.log" >&2; exit 1; }
+  sleep 0.1
+done
+test -s "$TMP/stub.port"
+MCP_URL="http://127.0.0.1:$(cat "$TMP/stub.port")/mcp"
+
+# Prove the unchanged production OAuth provider permits an unchallenged local server.
+node --input-type=module - "$ROOT" "$MCP_URL" "$TMP/oauth-check" <<'NODE'
+import { pathToFileURL } from 'node:url';
+const [root, mcpUrl, stateDir] = process.argv.slice(2);
+const { listMcpTools } = await import(pathToFileURL(`${root}/providers/websession-adapter/mcp-client.mjs`));
+const listed = await listMcpTools({ mcpUrl, stateDir, callbackUrl: 'http://127.0.0.1:3052/callback' });
+if (listed.tools.length !== 4) throw new Error('stub discovery failed');
+console.log('unauthenticated stub works with production OAuth provider');
+NODE
 
 adapter start >/dev/null
 adapter status >/dev/null
@@ -127,6 +156,9 @@ grep -Fq '"route":"delay"' "$EVIDENCE"
 grep -Fq '"route":"hit"' "$EVIDENCE"
 
 test ! -e "$TMP/run/mcp-dev-bridge/cloudflare-oauth.enabled"
+
+# shellcheck source=tests/fixtures/adapter-client-cases.sh
+source "$ROOT/tests/fixtures/adapter-client-cases.sh"
 
 adapter stop >/dev/null
 if curl -fsS -m 1 "$BASE/health/ready" >/dev/null 2>&1; then

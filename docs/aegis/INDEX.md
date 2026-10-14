@@ -16,3 +16,4 @@ Entries are workspace records, not authoritative runtime decisions.
 | 2026-10-12 | artifact | docs/aegis/work/2026-10-12-skill-library-jev-and-fixes/todo-checkpoint-draft.json | Optional Jev selection and four review fixes todo checkpoint draft |
 | 2026-10-12 | artifact | docs/aegis/work/2026-10-12-skill-library-jev-and-fixes/drift-check-draft.json | Optional Jev selection and four review fixes drift check draft |
 | 2026-10-12 | artifact | docs/aegis/work/2026-10-12-skill-library-jev-and-fixes/resume-state-hint.json | 2026-10-12-skill-library-jev-and-fixes resume state hint |
+| 2026-10-14 | plan | docs/aegis/plans/2026-10-14-websession-curl-client.md | WebSession curl client and long-poll calls |
