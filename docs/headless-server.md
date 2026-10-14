@@ -108,7 +108,7 @@ WantedBy=default.target
 {"version":"1.0.0","mcpServers":{"browser-fast":{"type":"stdio","command":"/usr/local/bin/node","args":["/abs/path/webharness/providers/browser-fast/server.mjs"],"env":{"XDG_RUNTIME_DIR":"/run/user/UID"}}}}
 ```
 
-To also add `browser-devtools`, register `providers/browser/server.mjs` the same way (`command` an absolute `node`, `env` with `XDG_RUNTIME_DIR`, `DISPLAY=:99` and a `PATH` that includes `npx`). With the version 1 config above it attaches to `http://127.0.0.1:9222` instead of launching a browser, so it sees the same tabs as `browser-fast`. `browser-jev` is not part of this setup: it needs the Python worker plus model credentials in `MCP_BROWSER_JEV_ENV_FILE`.
+To also add `browser-devtools`, register `providers/browser/server.mjs` the same way (`command` an absolute `node`, `env` with `XDG_RUNTIME_DIR`, `DISPLAY=:99` and a `PATH` that includes `npx`). With the version 1 config above it attaches to `http://127.0.0.1:9222` instead of launching a browser, so it sees the same tabs as `browser-fast`.
 
 Re-run setup so `local-1mcp/mcp.json` is re-rendered, then restart the bridge. The CDP port is loopback-only; never expose it. Verify with `observe` then a `navigate` through `execute`.
 

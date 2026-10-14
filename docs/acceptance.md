@@ -29,7 +29,7 @@ Required evidence:
 Use the live MCP connection and exercise each public capability boundary without destructive or consequential work:
 
 - **Dev:** read a known repository file or run a bounded `pwd`/Git inspection.
-- **Local discovery:** confirm the public logical catalog includes `terminal`, `host`, `browser-fast`, `browser-jev`, and `browser-devtools`, while `dev` remains hidden from ordinary discovery.
+- **Local discovery:** confirm the public logical catalog includes `terminal`, `host`, `browser-fast`, and `browser-devtools`, while `dev` remains hidden from ordinary discovery.
 - **Local Terminal:** open a named shell session through `server="terminal"`, print a harmless marker, and read it back.
 - **Local Host:** load the `host/pc_sleep` schema only; do not invoke sleep during harmless qualification.
 
@@ -56,21 +56,10 @@ code
 terminal
 host
 browser-fast
-browser-jev
 browser-devtools
 ```
 
 Load one harmless schema from Terminal, and each Browser server; load the Host schema without invoking it. A GUI launch or website mutation is not required for this discovery check. When browser execution itself changed, separately exercise the target that changed under the operator's normal browser policy.
-
-For a browser-jev runtime change, qualify the autonomous and stateful paths against an already-live managed browser profile:
-
-1. Use `jev_run` at `https://example.com` with a confirm-and-stop goal and a non-empty visible success check; require verified `done` and confirm the run-owned worker/daemon is already cleaned when the call returns.
-2. For dynamic-page/collection changes, use a public virtualized or lazy-loaded page with bounded `scenario.collection`, require deterministic collection completion, and confirm the final sanitized state retains unique records from multiple observations without hitting the worker output limit. Confirm that once matching records are present on the verified target page, subsequent mechanical traversal is recorded as provider-owned collection work rather than requiring a TypeSafe decision per scroll. Prefer a harmless read-only task; do not post, like, subscribe, or submit.
-3. Exercise autonomous cancellation with a deliberately long harmless read-only run or a caller cancellation signal; after the current bounded worker cycle finishes, confirm no `jev-<run-id>` worker or namespaced daemon survives the cancelled request.
-4. For abnormal-lifecycle cleanup changes, start a harmless test run, terminate only that run's worker/daemon before normal stop, and confirm its private ownership lease remains. Start a second run on the same managed profile and require the dead-owner lease and marked orphan targets to be reclaimed without closing any unrelated browser tab; then stop the second run and confirm the profile returns to its pre-test tab set.
-5. Use the stateful start/tick/state/stop path on Wikipedia with a search-and-open goal, require the destination article plus `required_operations: ["TYPE_TEXT"]`, tick until verified `done`, and stop the run.
-
-The fifth scenario proves the small text-model path was executed because browser-jev maps `TYPE_TEXT` to the recorded Jev history kind `fill`. Record only statuses, elapsed time, destination, bounded collection counts/items when the task requires them, and verification evidence. Do not record keys, worker environments, raw model responses, screenshots, or debugging endpoints. Confirm afterward that no `jev-<run-id>` Browser Harness daemon or worker process remains.
 
 ## 6. Public MCP/OAuth connectivity
 

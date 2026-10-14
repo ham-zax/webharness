@@ -234,7 +234,7 @@ No source files.
   second, open a follow-up for connection reuse; otherwise close that question.
 - Revoke the capability and stop the adapter.
 
-Result (2026-10-14, through `https://mcp.hamza.my.id`): login, `tools` (14),
+Result (2026-10-14, through the public hostname): login, `tools` (14),
 `instructions`, `schema` and a `pwd` call passed; the served client matched the
 repository file. Ten trivial calls: median 1234 ms (1174..1495); the same call
 against loopback took about 1000 ms and a public `/v1/about` about 430 ms, so

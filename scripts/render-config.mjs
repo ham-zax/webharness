@@ -62,12 +62,7 @@ const OWNER_RUNTIME_ENV_KEYS = ['GALLIUM_DRIVER', 'MOZ_ENABLE_WAYLAND'];
 const OWNER_BROWSER_ENV_KEYS = new Set(['GALLIUM_DRIVER', 'MCP_BROWSER_DEFAULT_TARGET']);
 const OWNER_BROWSER_FAST_ENV_KEYS = new Set(['GALLIUM_DRIVER', 'AGENT_BROWSER_PROFILE', 'AGENT_BROWSER_EXECUTABLE_PATH', 'MCP_BROWSER_DEFAULT_TARGET']);
 const OWNER_ENV_KEYS = new Set([...OWNER_RUNTIME_ENV_KEYS, ...OWNER_BROWSER_FAST_ENV_KEYS]);
-const BROWSER_JEV_ENV_KEYS = new Set([
-  'TYPESAFE_API_KEY', 'TYPESAFE_MODEL', 'TEXT_MODEL_API_KEY',
-  'TEXT_MODEL_BASE_URL', 'TEXT_MODEL', 'TEXT_MODEL_REASONING'
-]);
 const OWNER_ENV_MAX_BYTES = 64 * 1024;
-const BROWSER_JEV_ENV_MAX_BYTES = 64 * 1024;
 const LOCAL_SERVERS_MAX_BYTES = 128 * 1024;
 const LOCAL_SERVER_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 
@@ -104,19 +99,6 @@ function parseOwnerEnv(text) {
   }
   if (values.MCP_BROWSER_DEFAULT_TARGET !== undefined && !['windows', 'linux'].includes(values.MCP_BROWSER_DEFAULT_TARGET)) {
     throw new Error('MCP_BROWSER_DEFAULT_TARGET in MCP_OWNER_ENV_FILE must be windows or linux');
-  }
-  return values;
-}
-
-function parseBrowserJevEnv(text) {
-  const values = parseEnv(text);
-  for (const key of Object.keys(values)) {
-    if (!BROWSER_JEV_ENV_KEYS.has(key)) {
-      throw new Error(`MCP_BROWSER_JEV_ENV_FILE permits only: ${[...BROWSER_JEV_ENV_KEYS].join(', ')}`);
-    }
-  }
-  if (typeof values.TYPESAFE_API_KEY !== 'string' || values.TYPESAFE_API_KEY.length === 0) {
-    throw new Error('MCP_BROWSER_JEV_ENV_FILE must define a non-empty TYPESAFE_API_KEY');
   }
   return values;
 }
@@ -256,7 +238,7 @@ export async function renderConfig(options) {
   const deployment = {
     ...(await readEnvFile(envFile, { optional: true })),
     ...Object.fromEntries(
-      ['MCP_WORKSPACE_ROOT', 'MCP_PUBLIC_URL', 'MCP_TUNNEL_NAME', 'MCP_DEV_MAX_OUTPUT_BYTES', 'MCP_DEV_READ_DEFAULT_LINES', 'MCP_DEV_IMPORT_MAX_BYTES', 'MCP_DEV_MAX_SPOOL_BYTES', 'MCP_DEV_SPOOL_TTL_SECONDS', 'MCP_DEV_SPOOL_MAX_TOTAL_BYTES', 'MCP_ONE_MCP_PORT', 'MCP_ONE_MCP_LOG_MAX_SIZE_BYTES', 'MCP_ONE_MCP_LOG_MAX_FILES', 'MCP_PERSONAL_DEFAULT_CWD', 'MCP_TERMINAL_FRONTEND', 'MCP_OWNER_CONTEXT_FILE', 'MCP_OWNER_ENV_FILE', 'MCP_BROWSER_JEV_ENV_FILE', 'MCP_SKILL_POLICY_FILE', 'MCP_SKILL_JEV_ENABLED', 'MCP_SKILL_JEV_ENV_FILE', 'MCP_LOCAL_SERVERS_FILE', 'BRIDGE_ONE_MCP_ENTRY', 'BRIDGE_COLD_START', 'BRIDGE_BACKEND_PORT', 'BRIDGE_WAKE_IDLE_MS', 'MCP_LOCAL_INNER_IDLE_MS', 'MCP_DEV_WORKER_IDLE_MS', 'MCP_LIFECYCLE_LEASE_DIR'].filter((key) => process.env[key] !== undefined).map((key) => [key, process.env[key]]),
+      ['MCP_WORKSPACE_ROOT', 'MCP_PUBLIC_URL', 'MCP_TUNNEL_NAME', 'MCP_DEV_MAX_OUTPUT_BYTES', 'MCP_DEV_READ_DEFAULT_LINES', 'MCP_DEV_IMPORT_MAX_BYTES', 'MCP_DEV_MAX_SPOOL_BYTES', 'MCP_DEV_SPOOL_TTL_SECONDS', 'MCP_DEV_SPOOL_MAX_TOTAL_BYTES', 'MCP_ONE_MCP_PORT', 'MCP_ONE_MCP_LOG_MAX_SIZE_BYTES', 'MCP_ONE_MCP_LOG_MAX_FILES', 'MCP_PERSONAL_DEFAULT_CWD', 'MCP_TERMINAL_FRONTEND', 'MCP_OWNER_CONTEXT_FILE', 'MCP_OWNER_ENV_FILE', 'MCP_SKILL_POLICY_FILE', 'MCP_SKILL_JEV_ENABLED', 'MCP_SKILL_JEV_ENV_FILE', 'MCP_LOCAL_SERVERS_FILE', 'BRIDGE_ONE_MCP_ENTRY', 'BRIDGE_COLD_START', 'BRIDGE_BACKEND_PORT', 'BRIDGE_WAKE_IDLE_MS', 'MCP_LOCAL_INNER_IDLE_MS', 'MCP_DEV_WORKER_IDLE_MS', 'MCP_LIFECYCLE_LEASE_DIR'].filter((key) => process.env[key] !== undefined).map((key) => [key, process.env[key]]),
     ),
   };
   const profileValues = await readEnvFile(path.join(repoRoot, 'config', 'profiles', `${profile}.env`));
@@ -287,7 +269,6 @@ export async function renderConfig(options) {
   let terminalFrontend = 'kitty';
   let ownerContextFile = null;
   let ownerEnv = {};
-  let browserJevEnvFile = '';
   let localOwnerServers = {};
   if (isLocal) {
     if (!runtimeDir || !path.isAbsolute(runtimeDir)) {
@@ -328,16 +309,6 @@ export async function renderConfig(options) {
             throw new Error('AGENT_BROWSER_EXECUTABLE_PATH in MCP_OWNER_ENV_FILE must be executable');
           }
         }
-      }
-      browserJevEnvFile = String(deployment.MCP_BROWSER_JEV_ENV_FILE ?? '').trim();
-      if (browserJevEnvFile) {
-        parseBrowserJevEnv(
-          await readOwnedRegularTextFile(
-            browserJevEnvFile,
-            'MCP_BROWSER_JEV_ENV_FILE',
-            BROWSER_JEV_ENV_MAX_BYTES,
-          ),
-        );
       }
     }
     const localServersFile = String(deployment.MCP_LOCAL_SERVERS_FILE ?? '').trim() || null;
@@ -448,7 +419,6 @@ export async function renderConfig(options) {
     __RUNTIME_DIR__: runtimeDir ?? '',
     __LOCAL_INNER_CONFIG__: localInnerConfigPath,
     __ONE_MCP_ENTRY__: oneMcpEntry,
-    __BROWSER_JEV_ENV_FILE__: browserJevEnvFile,
     __SKILL_POLICY_FILE__: skillPolicyFile,
     __SKILL_JEV_ENABLED__: skillJevEnabled,
     __SKILL_JEV_ENV_FILE__: skillJevEnvFile,
@@ -474,7 +444,6 @@ export async function renderConfig(options) {
     rendered.mcpServers.dev.env.MCP_DEV_PATH_MODE = profileValues.MCP_DEV_PATH_MODE;
     rendered.mcpServers.dev.env.MCP_DEV_DEFAULT_CWD = personalDefaultCwd;
     if (isPersonal) {
-      localRendered.mcpServers['browser-jev'].env.MCP_LIFECYCLE_LEASE_DIR = lifecycleLeaseDir;
       if (ownerContextFile) rendered.mcpServers.dev.env.MCP_OWNER_CONTEXT_FILE = ownerContextFile;
       for (const key of OWNER_RUNTIME_ENV_KEYS) {
         if (ownerEnv[key] === undefined) continue;
@@ -496,7 +465,6 @@ export async function renderConfig(options) {
       for (const key of OWNER_BROWSER_FAST_ENV_KEYS) {
         if (ownerEnv[key] === undefined) continue;
         localRendered.mcpServers['browser-fast'].env[key] = ownerEnv[key];
-        localRendered.mcpServers['browser-jev'].env[key] = ownerEnv[key];
       }
     }
     for (const [name, server] of Object.entries(localOwnerServers)) {

@@ -166,7 +166,7 @@ TYPESAFE_MODEL=jev-latest
 The renderer stores only its path, never the key. Configuration is checked when
 the deployment is rendered and again for each Jev request. Ordinary retrieval
 does not read optional credentials or contact TypeSafe.
-An existing private Browser Jev environment file can be reused: known
+An existing private model environment file can be reused: known
 `TEXT_MODEL_*` assignments are accepted but never used or forwarded by selection.
 
 ```json

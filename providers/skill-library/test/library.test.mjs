@@ -36,7 +36,7 @@ async function fixture(t) {
 test('bundled corpus works without external installations and preserves source invocation flags', async () => {
   const library = await SkillLibrary.open(DEFAULT_POLICY);
   const catalog = await library.catalog();
-  assert.equal(catalog.skills.length, 150);
+  assert.equal(catalog.skills.length, 149);
   assert.ok(catalog.skills.every(card => card.collection !== 'decision-reflection'));
   assert.deepEqual(catalog.skills.filter(card => card.collection === 'writing').map(card => card.id), ['writing/asd-ste100']);
   assert.equal(catalog.skills.filter(card => card.collection === 'sentry').length, 6);

@@ -181,7 +181,7 @@ if (JSON.stringify(keys(outer)) !== JSON.stringify(expectedOuter)) process.exit(
 if (profile === 'personal') {
   const inner = JSON.parse(fs.readFileSync(innerFile, 'utf8'));
   const innerKeys = keys(inner);
-  for (const required of ['browser-devtools', 'browser-fast', 'browser-jev', 'terminal', 'host', 'dev', 'skill-library']) {
+  for (const required of ['browser-devtools', 'browser-fast', 'terminal', 'host', 'dev', 'skill-library']) {
     if (!innerKeys.includes(required)) process.exit(1);
   }
   if (inner.mcpServers.code || inner.mcpServers.codedb) process.exit(1);
@@ -194,7 +194,7 @@ if (profile === 'server') {
     if (!innerKeys.includes(required)) process.exit(1);
   }
   // An owner-added headless browser-fast (docs/headless-server.md) is allowed only via MCP_LOCAL_SERVERS_FILE.
-  const excludedServers = ['browser-devtools', 'browser-jev', 'host', 'code', 'codedb'];
+  const excludedServers = ['browser-devtools', 'host', 'code', 'codedb'];
   if (!ownerLocalServers) excludedServers.push('browser-fast');
   for (const excluded of excludedServers) {
     if (innerKeys.includes(excluded)) process.exit(1);

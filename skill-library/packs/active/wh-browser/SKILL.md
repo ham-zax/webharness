@@ -1,18 +1,18 @@
 ---
 name: wh-browser
-description: Use the WebHarness wh-browser CLI to drive a browser for any web task — open a site, click/fill, screenshot, verify a web UI, scrape, log in, or debug console/network/performance. Three tiers via the `wh-browser` CLI — fast (default, low context), jev (autonomous goal-driven agent), devtools (full Chrome DevTools/CDP diagnostics).
+description: Use the WebHarness wh-browser CLI to drive a browser for any web task — open a site, click/fill, screenshot, verify a web UI, scrape, log in, or debug console/network/performance. Two tiers via the `wh-browser` CLI — fast (default, low context), devtools (full Chrome DevTools/CDP diagnostics).
 ---
 
 # Browser tiers (`wh-browser` CLI)
 
 `~/.local/bin/wh-browser` is a CLI for the webharness providers (`~/repo/webharness/providers`).
 Nothing is registered as an MCP server; call it via Bash. The first call per tier starts a
-background daemon (idle-exits after 30 min) so browser state and jev runs persist between calls.
+background daemon (idle-exits after 30 min) so browser state persists between calls.
 
 ```bash
-wh-browser <fast|jev|devtools> tools               # tool names + arg names
-wh-browser <fast|jev|devtools> schema <tool>        # full input schema (only when needed)
-wh-browser <fast|jev|devtools> <tool> '<json>'      # call; use '-' to read JSON from stdin
+wh-browser <fast|devtools> tools               # tool names + arg names
+wh-browser <fast|devtools> schema <tool>        # full input schema (only when needed)
+wh-browser <fast|devtools> <tool> '<json>'      # call; use '-' to read JSON from stdin
 wh-browser status | wh-browser <tier|all> stop       # daemons
 ```
 Output is the tool's text (usually JSON) — pipe through `jq` to keep context small.
@@ -21,7 +21,6 @@ Exit code 1 on tool error.
 | Need | Tier |
 |---|---|
 | Routine: navigate, click, fill, read a page, verify UI | **fast** (default) |
-| Open-ended goal with an uncertain path (explore, search, infinite-scroll collection) | **jev** |
 | Console, network, performance trace / Web Vitals, Lighthouse, heap, `evaluate_script`, emulation, screenshots | **devtools** |
 
 Escalate only when the cheaper tier can't do it.
@@ -39,10 +38,10 @@ you create.
 | Target | Args | Notes |
 |---|---|---|
 | **Windows Chrome** (default) | omit `browser_target` | Dedicated MCP Chrome on Windows; reaches WSL dev servers at `http://localhost:<port>`. |
-| **Linux CloakBrowser** | `"browser_target":"linux","browser_backend":"cloakbrowser","browser_profile":"x-main"` | Managed WSLg browser (config `~/.config/mcp-dev-bridge/browser-fast.json`). devtools and jev attach to it only after browser-fast has started it — run a fast `observe` first. |
+| **Linux CloakBrowser** | `"browser_target":"linux","browser_backend":"cloakbrowser","browser_profile":"x-main"` | Managed WSLg browser (config `~/.config/mcp-dev-bridge/browser-fast.json`). devtools attaches to it only after browser-fast has started it — run a fast `observe` first. |
 
 Choose Linux CloakBrowser when stealth matters (bot detection, anti-automation sites): it runs with a managed fingerprint and humanized input. Linux `browser_backend:"chrome"` currently fails to launch — use CloakBrowser.
-Pass identical target/backend/profile on every call within one task (for jev, inside `scenario`).
+Pass identical target/backend/profile on every call within one task.
 
 ## fast
 1. `wh-browser fast observe '{"scope":"compact"}'` → `active_tab`, `refs`, `tabs`.
@@ -51,15 +50,6 @@ Pass identical target/backend/profile on every call within one task (for jev, in
    → new `final_state.active_tab`.
 3. `execute` with that `tab` and a batch of `actions` (`{op, target, value|url|key|text|…}`); ops: navigate back forward reload click fill type check uncheck select press hover drag scroll wait tab_list tab_new tab_switch tab_close. `target` = a ref from the latest observe/final_state only — never invented selectors. Fail-fast, never retries.
 4. Re-`observe` with `"tab"` when refs are stale. Finish with `{"op":"tab_close"}` on your tab.
-
-## jev
-Autonomous: `jev_run` (runs to completion in one call). Supervised: `jev_start` → `jev_tick {run_id}` (one decision each) → `jev_state` → always `jev_stop`.
-```bash
-wh-browser jev jev_run '{"url":"https://…","goal":"…","scenario":{"success":{"text_contains":["…"]}}}'
-```
-`scenario.success` needs deterministic checks (`url_contains`, `title_contains`, `text_contains`, `required_operations`, `scroll_exhausted`); `scenario.collection` gathers records across scrolling. Check `wh-browser jev schema jev_run` for the full shape.
-Text entry uses a free OpenRouter model (`TEXT_MODEL` in `~/.config/mcp-dev-bridge/owner/browser-jev.env`, with `TEXT_MODEL_REASONING=none`). Free models churn: on `HTTP 404` (model gone) or persistent `429`, test other `:free` models and swap `TEXT_MODEL`; on "no valid field value" keep reasoning off.
-It uses the owner's real signed-in Chrome profile: say what it may do first, and never aim it at purchases, trades, transfers, or account/security settings without explicit approval.
 
 ## devtools
 Standard Chrome DevTools MCP tools (`wh-browser devtools tools`). Flow: `new_page {url}` → `take_snapshot` (uids) → `click`/`fill`/`fill_form`, using `pageId` from `list_pages`. Diagnostics: `list_console_messages`, `list_network_requests` + `get_network_request`, `performance_start_trace`/`performance_stop_trace` + `performance_analyze_insight`, `lighthouse_audit`, `take_heapsnapshot`, `evaluate_script`, `emulate`. Write screenshots/traces/large output to `filePath` under the session scratchpad; images are not returned inline. `close_page` when done.

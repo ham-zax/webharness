@@ -199,7 +199,7 @@ test_server_bootstrap_startup_consent_contract() {
   contains "$script" 'loginctl enable-linger' && \
   contains "$script" 'systemctl --user enable --now' && \
   contains "$script" '\-\-profile server' && \
-  ! contains "$script" 'browser-fast|browser-jev|cloakbrowser|wsl-term|uv sync'
+  ! contains "$script" 'browser-fast|cloakbrowser|wsl-term|uv sync'
 }
 
 test_lifecycle_lock_is_used_everywhere() {

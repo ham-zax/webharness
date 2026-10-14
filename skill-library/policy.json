@@ -1402,20 +1402,6 @@
           }
         },
         {
-          "id": "satori",
-          "directory": "satori",
-          "readable": [
-            "LICENSE",
-            "PROVENANCE.md",
-            "satori/SKILL.md"
-          ],
-          "compatibility": {
-            "kind": "instruction-only",
-            "requires": [],
-            "verification": "unverified"
-          }
-        },
-        {
           "id": "skillshare",
           "directory": "skillshare",
           "readable": [

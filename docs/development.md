@@ -9,7 +9,6 @@ providers/pi-dev/    Dev read/edit/write/import_file/file_ops/review_changes/exe
 providers/terminal/  Terminal MCP, broker, tmux/transcript logic
 providers/browser/   Chrome DevTools facade + resource-local child routing
 providers/browser-fast/ compact observe/execute facade over Agent Browser on Windows + Linux
-providers/browser-jev/ stateful Jev loop over managed browser backends
 providers/local-tools/ stable Local tool broker over inner 1MCP
 providers/skill-library/ native read-only policy/catalog/search/reader
 skill-library/       reviewed distributable packs and explicit readable-file policy
@@ -32,8 +31,6 @@ npm --prefix providers/pi-dev ci --omit=dev
 npm --prefix providers/terminal ci --omit=dev
 npm --prefix providers/browser ci --omit=dev
 npm --prefix providers/browser-fast ci --omit=dev
-npm --prefix providers/browser-jev ci --omit=dev
-uv sync --frozen --project providers/browser-jev
 npm --prefix providers/local-tools ci --omit=dev
 npm --prefix providers/skill-library ci --omit=dev
 ```
@@ -56,13 +53,12 @@ bash tests/lifecycle.sh
 (cd providers/terminal && npm test)
 (cd providers/browser && npm test)
 (cd providers/browser-fast && npm test)
-(cd providers/browser-jev && npm test)
 (cd providers/local-tools && npm test)
 (cd providers/skill-library && npm test)
 ./bin/webharness skills check
 node scripts/check-doc-links.mjs
 bash -n bin/* lib/bridge/*.sh scripts/*.sh tests/*.sh
-node --check scripts/*.mjs providers/pi-dev/*.mjs providers/terminal/*.mjs providers/browser/*.mjs providers/browser-fast/*.mjs providers/browser-jev/*.mjs providers/local-tools/*.mjs
+node --check scripts/*.mjs providers/pi-dev/*.mjs providers/terminal/*.mjs providers/browser/*.mjs providers/browser-fast/*.mjs providers/local-tools/*.mjs
 git diff --check
 ```
 

@@ -114,13 +114,13 @@ test('model-facing broker exposes discovery, call, fallback, and batch', async t
 });
 
 test('tool_list without server discovers logical servers and filters only server names', async t => {
-  const configPath = await configFile(t, ['browser-devtools', 'satori', 'codebase-memory-mcp']);
+  const configPath = await configFile(t, ['browser-devtools', 'repo-search', 'codebase-memory-mcp']);
   const inner = fakeInner({ pages: {
     FIRST: {
       tools: [
         { name: '1mcp_1mcp_mcp_reload', description: 'private recovery tool' },
         { name: 'browser-devtools_1mcp_take_heapsnapshot', description: 'analyze browser memory distribution' },
-        { name: 'satori_1mcp_search_codebase', description: 'semantic repository search' }
+        { name: 'repo-search_1mcp_search_codebase', description: 'semantic repository search' }
       ]
     }
   } });
@@ -130,7 +130,7 @@ test('tool_list without server discovers logical servers and filters only server
   assert.deepEqual(all, {
     servers: [
       { server: 'browser-devtools', available: null, toolCount: null, backendState: 'unknown' },
-      { server: 'satori', available: null, toolCount: null, backendState: 'unknown' },
+      { server: 'repo-search', available: null, toolCount: null, backendState: 'unknown' },
       { server: 'codebase-memory-mcp', available: null, toolCount: null, backendState: 'unknown' }
     ],
     hasMore: false

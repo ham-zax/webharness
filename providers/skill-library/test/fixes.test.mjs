@@ -192,7 +192,7 @@ test('complete bundled exports preserve shared academic references and large ass
   t.after(() => fs.rm(root, { recursive: true, force: true }));
   const destination = path.join(root, 'exported');
   const exported = await runCli(['export', '--destination', destination]);
-  assert.equal(exported.skills, 150);
+  assert.equal(exported.skills, 149);
   const library = await SkillLibrary.open(path.join(destination, 'policy.json'));
   const academic = (await library.find({ collection: 'academic', query: 'academic-paper' })).candidates[0];
   const reference = await library.read({ id: academic.id, revision: academic.revision, file: 'shared/output_language_pair.md' });

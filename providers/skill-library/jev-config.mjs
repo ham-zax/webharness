@@ -3,7 +3,7 @@ import { constants } from 'node:fs';
 import path from 'node:path';
 import { failure } from './files.mjs';
 
-// Reuse an existing operator Browser Jev credential file without copying keys.
+// Read an existing operator model credential file without copying keys.
 // These optional text-model settings are accepted but never used or forwarded.
 const KEYS = new Set(['TYPESAFE_API_KEY', 'TYPESAFE_MODEL', 'TEXT_MODEL_API_KEY',
   'TEXT_MODEL_BASE_URL', 'TEXT_MODEL', 'TEXT_MODEL_REASONING']);
@@ -30,7 +30,7 @@ async function credentialFile(filename) {
       if (!line.trim() || line.trim().startsWith('#')) continue;
       const match = /^([A-Z_]+)=(.*)$/.exec(line);
       if (!match || !KEYS.has(match[1]) || Object.hasOwn(values, match[1])) {
-        throw failure('JEV_CONFIG_INVALID', 'Jev credential file permits unique TypeSafe and optional Browser Jev text-model assignments only');
+        throw failure('JEV_CONFIG_INVALID', 'Jev credential file permits unique TypeSafe and optional text-model assignments only');
       }
       let value = match[2];
       if (/^(".*"|'.*')$/.test(value)) value = value.slice(1, -1);
