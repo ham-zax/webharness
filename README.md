@@ -242,6 +242,7 @@ See [Security](docs/security.md) for the full trust model.
 - [MCP compatibility](docs/compatibility.md) — model-facing contract and breaking-change rules
 - [Operations](docs/operations.md) — run, inspect, restart, recover, and cut over source
 - [Security](docs/security.md) — authority profiles and trust boundaries
+- [WebSession clients](docs/websession-clients.md) — optional HTTPS/curl access for agents without an MCP client; the adapter is started and stopped manually with `bin/adapter` and is never started by the service
 - [Personal Workstation](docs/personal/harness.md) — full reference deployment details
 - [Acceptance](docs/acceptance.md) — portable gate plus real-WSL qualification
 - [Development](docs/development.md) — repository/publication workflow

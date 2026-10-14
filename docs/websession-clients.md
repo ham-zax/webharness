@@ -37,6 +37,8 @@ bin/adapter status
 
 The main `/mcp` endpoint is independent. The public `/v1/*` WebSession routes are available only while the adapter is running; when it is stopped those routes are intentionally unavailable (typically surfaced by the tunnel as an upstream error).
 
+The adapter lifecycle is manual. Nothing starts it: not `webharness setup --enable-startup`, the `mcp-dev-bridge` service, the watchdog, or a reboot. Nothing stops it either: it has no idle timer, and it keeps serving after every capability has expired or been revoked. It runs from `bin/adapter start` until `bin/adapter stop` or until the host or WSL session ends, and it is not restarted afterwards. A capability expiring ends that client's access only.
+
 For a finite client capability:
 
 ```bash
