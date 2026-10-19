@@ -3134,6 +3134,29 @@
           }
         }
       ]
+    },
+    {
+      "id": "anthropic",
+      "root": "packs/anthropic",
+      "license": "Apache License 2.0",
+      "source": "https://github.com/anthropics/skills (skills/frontend-design)",
+      "skills": [
+        {
+          "id": "frontend-design",
+          "directory": "frontend-design",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "frontend-design/LICENSE.txt",
+            "frontend-design/SKILL.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "unverified"
+          }
+        }
+      ]
     }
   ]
 }

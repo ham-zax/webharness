@@ -36,7 +36,7 @@ async function fixture(t) {
 test('bundled corpus works without external installations and preserves source invocation flags', async () => {
   const library = await SkillLibrary.open(DEFAULT_POLICY);
   const catalog = await library.catalog();
-  assert.equal(catalog.skills.length, 149);
+  assert.equal(catalog.skills.length, 150);
   assert.ok(catalog.skills.every(card => card.collection !== 'decision-reflection'));
   assert.deepEqual(catalog.skills.filter(card => card.collection === 'writing').map(card => card.id), ['writing/asd-ste100']);
   assert.equal(catalog.skills.filter(card => card.collection === 'sentry').length, 6);
@@ -47,7 +47,7 @@ test('bundled corpus works without external installations and preserves source i
   }
   const browse = await library.find({ limit: 1 });
   assert.deepEqual(browse.collections.map(item => item.id).sort(),
-    ['academic', 'active', 'emil', 'lateral-thinking',
+    ['academic', 'active', 'anthropic', 'emil', 'lateral-thinking',
       'marketing', 'sentry', 'thinking', 'writing']);
   // Jev evaluates one collection at a time; every collection must stay scannable.
   for (const { count } of browse.collections) assert.ok(count <= 64, `collection of ${count} exceeds the Jev scope`);

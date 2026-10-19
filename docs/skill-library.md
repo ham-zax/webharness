@@ -1,7 +1,7 @@
 # Skill library
 
-WebHarness ships a native read-only provider and a 150-definition skill corpus
-under `skill-library/`, spread across eight enabled collections. Source
+WebHarness ships a native read-only provider and a 151-definition skill corpus
+under `skill-library/`, spread across nine enabled collections. Source
 instructions, license, provenance and access policy travel with the repository.
 Metadata is calculated in memory; no `catalog.json` or compile step is needed.
 JevShelf, Skillshare, TypeSafe credentials, embeddings and hosted model calls
