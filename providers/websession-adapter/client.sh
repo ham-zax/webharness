@@ -7,6 +7,7 @@ WH_WAIT=${WH_WAIT:-90}
 WH_MAX_SECONDS=${WH_MAX_SECONDS:-280}
 WH_MAX_OUTPUT=${WH_MAX_OUTPUT:-8192}
 WH_SH_TOOL=${WH_SH_TOOL:-dev_1mcp_bash}
+WH_WARN_REQUEST=${WH_WARN_REQUEST:-12288}
 
 fail() { printf '%s\n' "$*" >&2; exit 1; }
 valid_tool() { [[ $1 =~ ^[A-Za-z0-9._-]{1,128}$ ]] || fail 'invalid tool name'; }
@@ -17,6 +18,7 @@ if [[ ! $WH_MAX_SECONDS =~ ^[0-9]{1,6}$ ]] || (( 10#$WH_MAX_SECONDS == 0 )); the
   fail 'WH_MAX_SECONDS must be a positive integer'
 fi
 [[ $WH_MAX_OUTPUT =~ ^[0-9]{1,9}$ ]] || fail 'WH_MAX_OUTPUT must be a byte count (0 prints everything)'
+[[ $WH_WARN_REQUEST =~ ^[0-9]{1,9}$ ]] || fail 'WH_WARN_REQUEST must be a byte count (0 turns the warning off)'
 wait_seconds=$((10#$WH_WAIT))
 max_output=$((10#$WH_MAX_OUTPUT))
 max_seconds=$((10#$WH_MAX_SECONDS))
@@ -191,6 +193,10 @@ case $command in
       *) printf '%s' "$arguments" >> "$work/request" ;;
     esac
     printf '}' >> "$work/request"
+    request_bytes=$(($(wc -c < "$work/request")))
+    if (( 10#$WH_WARN_REQUEST > 0 && request_bytes > 10#$WH_WARN_REQUEST )); then
+      printf 'wh: warning: this request is %s bytes and stays in your context. Do not rewrite whole files with a shell script. Change a file with dev_1mcp_edit (exact oldText/newText) and create small files with dev_1mcp_write. WH_WARN_REQUEST=0 turns this warning off.\n' "$request_bytes" >&2
+    fi
     if [[ -r /proc/sys/kernel/random/uuid ]]; then
       IFS= read -r nonce < /proc/sys/kernel/random/uuid
     else

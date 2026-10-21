@@ -194,6 +194,7 @@ One call must finish within 60 seconds. For a build, test run or anything else t
   ~/.wh/wh call dev_1mcp_exec '{"argv":["bash","-c","<command>"],"detach":true}'    # prints log and exit paths
   ~/.wh/wh call dev_1mcp_wait '{"name":"job1","condition":{"kind":"file_exists","path":"<exit path>"},"hold_seconds":45}'
 Repeat the wait with only `{"name":"job1","hold_seconds":45}` until it prints `matched`; repeating a wait is always safe, even after exit code 2. Then `~/.wh/wh sh 'tail -50 <log path>; cat <exit path>'`.
+Edit files with `dev_1mcp_edit` (exact `oldText` and `newText`) and create small files with `dev_1mcp_write`. Do not rewrite a whole file with a shell script: every byte you send stays in your context and is paid for again on every later call.
 After login, never print, echo or log the capability, and never put it in a URL.
 Exit code 2 means the outcome is unknown: do not retry, check whether the effect happened first. Exit code 3 means the client timed out; run `~/.wh/wh status <status_url>` if it printed a status URL. If no status URL was available, do not retry automatically.
 When I say I am finished, remind me to run `bin/adapter revoke-cap <capability-id>` and `bin/adapter stop`.
@@ -205,6 +206,7 @@ When I say I am finished, remind me to run `bin/adapter revoke-cap <capability-i
 |---|---|---|
 | Commands | `wh login <base-url>`, `wh tools`, `wh instructions`, `wh schema <tool>`, `wh sh [script]`, `wh call <tool> [arguments]`, `wh status <status_url>` | Login reads the capability from stdin. `wh tools` prints one signature line per tool. `wh sh` runs a script given as arguments or on stdin, with no JSON quoting. Call arguments may be inline JSON, `@file`, or `-` (stdin). |
 | `WH_MAX_OUTPUT` | `8192` bytes | Largest result printed in full. A larger one shows its first three quarters and last quarter of that size, and the full result is saved to `$WH_HOME/last`. `0` prints everything. |
+| `WH_WARN_REQUEST` | `12288` bytes | A request larger than this prints a warning on stderr. The warning tells the agent to use `dev_1mcp_edit` and `dev_1mcp_write` and not to rewrite whole files. The request is still sent. `0` turns the warning off. |
 | `WH_SH_TOOL` | `dev_1mcp_bash` | Tool that `wh sh` calls; the script is sent as its `command` argument. |
 | `WH_HOME` | `$HOME/.wh` | Directory for the saved capability and base URL, stored with mode 600. |
 | `WH_WAIT` | `90` seconds (0..90) | Long-poll wait for each request. |

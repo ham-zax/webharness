@@ -189,3 +189,15 @@ test('client caps large results, keeps head and tail, and saves the full output'
   assert.equal(run(['call', 'echo'], [response('completed', big)], '', { WH_MAX_OUTPUT: '280' }).stdout, big);
   assert.equal(run(['tools'], [], '', { WH_MAX_OUTPUT: 'x' }).status, 1);
 });
+
+test('client warns on a large request but still sends it', (t) => {
+  const { run } = clientFixture(t);
+  const args = ['call', 'echo', JSON.stringify({ text: 'x'.repeat(300) })];
+  const warned = run(args, [response('completed', 'ok')], '', { WH_WARN_REQUEST: '200' });
+  assert.equal(warned.status, 0, warned.stderr);
+  assert.equal(warned.stdout, 'ok');
+  assert.match(warned.stderr, /wh: warning: this request is \d+ bytes.*dev_1mcp_edit.*dev_1mcp_write/);
+  assert.equal(run(args, [response('completed', 'ok')], '', { WH_WARN_REQUEST: '0' }).stderr, '');
+  assert.equal(run(args, [response('completed', 'ok')]).stderr, '');
+  assert.equal(run(['tools'], [], '', { WH_WARN_REQUEST: 'x' }).status, 1);
+});
