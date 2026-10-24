@@ -7,6 +7,7 @@ import test from 'node:test';
 import { parseRequest, parseToolName, toolListSnapshot, toolSignature } from '../protocol.mjs';
 
 const client = new URL('../client.sh', import.meta.url);
+const clientPython = new URL('../client.py', import.meta.url);
 
 test('discovery tool names share request validation and snapshots expose names and optional instructions', () => {
   for (const name of ['dev_1mcp_read', 'tool.with-dashes', 'x'.repeat(128)]) {
@@ -26,6 +27,16 @@ test('discovery tool names share request validation and snapshots expose names a
 
 test('the public client exists with a bash shebang', () => {
   assert.match(readFileSync(client, 'utf8'), /^#!\/usr\/bin\/env bash\nset -euo pipefail\n/);
+});
+
+test('the public Python client exists with a python shebang and compiles', () => {
+  assert.match(readFileSync(clientPython, 'utf8'), /^#!\/usr\/bin\/env python3\n/);
+  const compiled = spawnSync(
+    'python3',
+    ['-c', 'import sys; compile(open(sys.argv[1]).read(), sys.argv[1], "exec")', clientPython.pathname],
+    { encoding: 'utf8' },
+  );
+  assert.equal(compiled.status, 0, compiled.stderr);
 });
 
 // A local curl shim tests shell parsing and arguments without an HTTP/MCP server.

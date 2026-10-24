@@ -19,6 +19,7 @@ const oauthCallbackUrl = process.env.WEBSESSION_ADAPTER_OAUTH_CALLBACK_URL || 'h
 const maxJsonBodyBytes = Number.parseInt(process.env.WEBSESSION_ADAPTER_MAX_JSON_BODY_BYTES || String(1024 * 1024), 10);
 const toolTimeoutMs = Number.parseInt(process.env.WEBSESSION_ADAPTER_TOOL_TIMEOUT_MS || '120000', 10);
 const clientScript = readFileSync(new URL('./client.sh', import.meta.url));
+const clientPython = readFileSync(new URL('./client.py', import.meta.url));
 const masterAccessTtlSeconds = 6 * 60 * 60;
 
 if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('WEBSESSION_ADAPTER_PORT must be 1..65535');
@@ -160,6 +161,7 @@ async function handleUniversalGet(req, res, parts) {
       'fast_wait_ms: 1900',
       'long_poll_max_seconds: 90',
       `client_url: ${base}/v1/client.sh`,
+      `client_python_url: ${base}/v1/client.py`,
       `tool_timeout_ms: ${toolTimeoutMs}`,
     ].join('\n'));
     return true;
@@ -713,6 +715,16 @@ const server = createServer((req, res) => {
       'referrer-policy': 'no-referrer',
     });
     res.end(clientScript);
+    return;
+  }
+
+  if (url.pathname === '/v1/client.py') {
+    res.writeHead(200, {
+      'content-type': 'text/x-python; charset=utf-8',
+      'cache-control': 'no-store',
+      'referrer-policy': 'no-referrer',
+    });
+    res.end(clientPython);
     return;
   }
 

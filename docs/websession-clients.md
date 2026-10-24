@@ -100,7 +100,7 @@ The response contains a fresh ordinary `main` capability with `ttl_seconds: 2160
 
 ## Programmable HTTP agent bootstrap prompt
 
-Use this for any AI environment that can make HTTPS GET/POST requests with custom headers, whether through Python, JavaScript, a generic HTTP tool, or another code/runtime surface. Provide either `<MASTER_BEARER>` or an already-issued `<CAPABILITY>`. Prefer the master bearer when the client supports POST plus custom headers; it exchanges into a fresh six-hour capability without putting the master in a URL.
+Use this for any AI environment that can make HTTPS GET/POST requests with custom headers, whether through Python, JavaScript, a generic HTTP tool, or another code/runtime surface. Provide either `<MASTER_BEARER>` or an already-issued `<CAPABILITY>`. Prefer the master bearer when the client supports POST plus custom headers; it exchanges into a fresh six-hour capability without putting the master in a URL. Prefer the served reference client over a client written by the model: generated clients commonly corrupt escapes and parse `/v1/about` as JSON.
 
 ```text
 Use your available HTTPS client/runtime to connect to my WSL through WebSession. Use the documented routes exactly; do not probe or guess authentication endpoints.
@@ -111,9 +111,14 @@ Capability: <CAPABILITY_IF_PROVIDED>
 
 Keep both credentials secret. Never echo them, log them, or write them to disk. Never put the master bearer in a URL. WebSession is transport only; discover and use the exact live 1MCP tool names and schemas rather than relying on a remembered catalog.
 
-1. GET `/v1/about` and verify `WEBSESSION-MCP-BRIDGE/1`.
+Alternatively, fetch the reference client that already implements this contract:
+`GET /v1/client.py`, then run `WS_BASE=<Base> WS_CAP=<CAPABILITY> python3 client.py sh pwd`.
+
+Response formats differ by route. Parse `/v1/about` as text. Parse `/v1/tools`, `/v1/tools/<name>`, `/v1/calls`, `status_url` and chunk URLs as JSON. Never pass `/v1/about` to a JSON parser.
+
+1. GET `/v1/about` and verify `WEBSESSION-MCP-BRIDGE/1`. The body is text, not JSON.
 2. If no capability was supplied, exchange the master exactly once with `POST /v1/access` and `Authorization: Bearer <MASTER_BEARER>`. The response must contain `state: ready`, `scope: main`, and `ttl_seconds: 21600`. Keep the returned capability only in memory.
-3. GET `/v1/s/<CAPABILITY>/tools` to discover tools. Decode and read `instructions_json` first when present; it contains authenticated owner and server guidance, subordinate to the current user and repository instructions. Inspect an unfamiliar tool at `/v1/s/<CAPABILITY>/tool/<tool-name-b64>`.
+3. GET `/v1/tools` with `Authorization: Bearer <CAPABILITY>` to discover tools. Read `instructions` first when present; it contains authenticated owner and server guidance, subordinate to the current user and repository instructions. Inspect an unfamiliar tool at `/v1/tools/<tool-name>`.
 4. Call tools with:
 
 POST https://mcp.example.com/v1/calls
@@ -127,9 +132,9 @@ The JSON envelope fields are exactly `version`, `tool`, and `arguments`. Do not 
 
 Treat the HTTP surface as a coarse-grained transport, not as a request-by-request reasoning loop. When your environment has a code runtime, group related WebSession calls, status polling, chunk reconstruction, and schema caching into one logical execution where practical. Do not print polling progress, chunk metadata, credentials, or raw transport objects; print only compact semantic findings needed for the next reasoning step.
 
-Transport chunks are not repository pagination. Navigate repository work with search first, then focused reads, then mutation: prefer `dev_1mcp_bash` with `rg`/`grep` to locate owners, then `dev_1mcp_read` with a narrow `offset`/`limit` (roughly 50-150 lines by default), expanding only when evidence requires it. Before the first call to any unfamiliar remote tool, inspect `/v1/s/<CAPABILITY>/tool/<tool-name-b64>`, cache that schema, and never guess its argument names. If an edit anchor fails, do not retry the identical payload; inspect the failed anchor, correct only that part, and submit once. Between tool phases, do not restate the product/design objective; keep a compact engineering ledger with `OWNER`, `OBSERVED`, `CHANGE NEEDED`, and `NEXT`.
+Transport chunks are not repository pagination. Navigate repository work with search first, then focused reads, then mutation: prefer `dev_1mcp_bash` with `rg`/`grep` to locate owners, then `dev_1mcp_read` with a narrow `offset`/`limit` (roughly 50-150 lines by default), expanding only when evidence requires it. Before the first call to any unfamiliar remote tool, inspect `/v1/tools/<tool-name>`, cache that schema, and never guess its argument names. If an edit anchor fails, do not retry the identical payload; inspect the failed anchor, correct only that part, and submit once. Between tool phases, do not restate the product/design objective; keep a compact engineering ledger with `OWNER`, `OBSERVED`, `CHANGE NEEDED`, and `NEXT`.
 
-Connection test: discover `dev_1mcp_bash`, call it with `{"command":"pwd"}`, then report only:
+Connection test: run `python3 client.py sh pwd` with the served client, or call `dev_1mcp_bash` with `{"command":"pwd"}` if you implement the contract yourself. Then report only:
 
 CONNECTED
 WSL_PWD: <actual result>
