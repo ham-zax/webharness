@@ -173,6 +173,8 @@ A fresh 1MCP launch suppresses the duplicate console stream after native file lo
 
 `BRIDGE_WAKE_IDLE_MS` defaults to 600000 (10 minutes) and must be positive. Real requests wake 1MCP; `/health/ready` and `/health/live` do not. Active requests, streams, and stateful run leases prevent eviction. Failed startup returns an error and is not reported as readiness; the next request may retry startup, but the proxy never replays a dispatched operation.
 
+After a connection failure, health checks and real requests probe backend readiness. If the backend is healthy, the proxy clears its failed state without restarting the backend or interrupting active streams. Health checks never start a stopped backend.
+
 `MCP_DEV_WORKER_IDLE_MS` defaults to 600000 (10 minutes); `0` disables worker eviction. Dev publishes its schemas and owner instructions without loading Pi execution code. Actual execution starts an expendable worker; durable `wait` remains in the lightweight facade so its hold budget does not include worker startup. In-flight calls keep the worker alive. Both idle settings are deployment policy, not tool arguments.
 
 `MCP_LIFECYCLE_LEASE_DIR` is rendered beneath the bridge runtime root. Both Local and the outer proxy consult the leases before idle shutdown. Terminal broker and tmux lifetime remain separate. CodeDB is no longer installed or exposed by WebHarness; existing operator installations and indexes are left untouched.
