@@ -48,17 +48,26 @@ ingress:
 
 Use the configured `MCP_ONE_MCP_PORT` in place of 3050. Validate ingress rules with `cloudflared tunnel ingress validate`. Do not put an interactive login gate over all MCP traffic: the cloud client needs to call these protocol endpoints directly.
 
-To approve an app from the owner's local browser:
+To approve an app, open the SSH forward on the same computer as the browser that owns the client session. For Claude in a Windows browser, run this in Windows PowerShell:
 
-1. Start an SSH forward to the server's loopback origin:
+```powershell
+ssh -F "$env:USERPROFILE\.ssh\config" -N -o ExitOnForwardFailure=yes -L 127.0.0.1:43070:127.0.0.1:3050 YOUR_ARM_HOST_ALIAS
+```
 
-   ```bash
-   ssh -N -o ExitOnForwardFailure=yes -L 127.0.0.1:43070:127.0.0.1:3050 user@server
-   ```
+Replace `YOUR_ARM_HOST_ALIAS` with the matching `Host` alias from the Windows SSH config. Keep this PowerShell window open while approval is in progress. Check the forward from another PowerShell window:
 
-2. Start connection setup in the client. When its public `/authorize?...` consent page opens, replace only the URL origin with `http://127.0.0.1:43070`. Keep the entire path and query unchanged, including the client ID, redirect URI, PKCE challenge, state, resource, and requested scopes.
-3. Inspect the client and requested scopes, then approve through that local page. The form submits through SSH and redirects back to the registered client callback.
-4. Close the SSH forward when setup finishes. Normal MCP calls and token refresh use the public URL; the forward is needed only for a new owner approval.
+```powershell
+curl.exe -sS -o NUL -w "%{http_code}\n" http://127.0.0.1:43070/health/ready
+```
+
+The result must be `200` before you continue. Then:
+
+1. Start or retry connection setup in the client's signed-in browser. Use the same browser profile for approval and the callback.
+2. When the public `/authorize?...` page opens, replace only its origin with `http://127.0.0.1:43070`. Keep the full path and query unchanged, including the client ID, redirect URI, PKCE challenge, state, resource, and requested scopes. Keep the configured MCP server URL on its public HTTPS origin.
+3. Check the client name and requested scopes, then approve. The form submits through SSH and redirects to the registered client callback.
+4. Press Ctrl+C in the PowerShell window after the client reports success. Normal MCP calls and token refresh use the public URL. The forward is needed only for owner approval.
+
+Do not put complete authorization URLs or callback URLs in repository files. They contain temporary OAuth state.
 
 Keep `MCP_PUBLIC_URL` set to the public HTTPS origin throughout. Changing the issuer to localhost would break client discovery and token validation. Each client and each machine receives its own grant. An unauthenticated public `/mcp` call must fail, and public `/oauth/consent` must remain refused.
 
@@ -114,11 +123,17 @@ Re-run setup so `local-1mcp/mcp.json` is re-rendered, then restart the bridge. T
 
 ## Troubleshooting
 
+### Local approval page says connection refused
+
+Nothing is listening on local port 43070. Start the SSH forward on the browser's computer and keep its terminal open. Check that `/health/ready` through the forward returns `200` before opening the local authorization URL.
+
 ### Approval shows HTTP 403
 
 A consent page at the public `/authorize?...` URL is visible, but its Approve button submits to the private `/oauth/consent` path. With the recommended ingress guard, clicking Approve while still on the public origin returns HTTP 403. This does not mean the OAuth client lacks the selected scopes.
 
 Go back to the original authorization URL, start the SSH forward, and replace only the origin with `http://127.0.0.1:43070` before approving. Preserve the entire path/query. Changing the denied `/oauth/consent` URL alone cannot restore the authorization parameters. If browser history no longer contains the original URL, restart connection setup in the client. The final callback still uses the registered client URL.
+
+If the client reports `connect_request_unconfirmed` or sends the browser to sign-in, the callback may have opened in a different or signed-out browser profile. Start a fresh authorization from the client's signed-in browser and approve it there. Do not reuse an authorization URL that already reached the callback.
 
 ### Discovery shows HTTP 404
 

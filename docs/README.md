@@ -7,6 +7,7 @@ Use the guide that matches what you are doing:
 | Need | Guide |
 |---|---|
 | Reproduce the reference deployment | [Getting Started](getting-started.md) |
+| Deploy or connect a separate headless server | [Headless Server](headless-server.md) |
 | Check the qualified host/runtime assumptions | [Reference Environment](reference-environment.md) |
 | Understand profiles, generated state, and rendering | [Configuration](configuration.md) |
 | Start, stop, inspect, restart, or move a deployment | [Operations](operations.md) |
