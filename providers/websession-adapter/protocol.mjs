@@ -98,6 +98,14 @@ export function prefersPlainText(accept = '') {
   return value.includes('text/plain') && !value.includes('application/json');
 }
 
+// A 5xx from the MCP transport means the backend is down, not that the request
+// or the capability is wrong. Report it as retryable so clients wait instead of
+// rotating credentials.
+export function upstreamUnavailable(error) {
+  const status = Number(error?.code);
+  return Number.isInteger(status) && status >= 500 && status <= 599;
+}
+
 function withFullResult(operation, fullResult) {
   return operation.state === 'completed' && fullResult !== undefined
     ? { ...operation, chunk_count: 1, result_text: fullResult }

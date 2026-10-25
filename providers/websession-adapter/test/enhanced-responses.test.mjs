@@ -2,7 +2,17 @@ import assert from 'node:assert/strict';
 import { getEventListeners } from 'node:events';
 import test from 'node:test';
 import { OperationCore } from '../core.mjs';
-import { enhancedSnapshot, parseWait, prefersPlainText, renderOperation } from '../protocol.mjs';
+import { enhancedSnapshot, parseWait, prefersPlainText, renderOperation, upstreamUnavailable } from '../protocol.mjs';
+
+test('only downstream 5xx errors are reported as a retryable backend outage', () => {
+  assert.equal(upstreamUnavailable({ code: 503 }), true);
+  assert.equal(upstreamUnavailable({ code: 502 }), true);
+  assert.equal(upstreamUnavailable({ code: 500 }), true);
+  assert.equal(upstreamUnavailable({ code: 401 }), false);
+  assert.equal(upstreamUnavailable({ code: 404 }), false);
+  assert.equal(upstreamUnavailable(new Error('boom')), false);
+  assert.equal(upstreamUnavailable(undefined), false);
+});
 
 test('wait accepts whole seconds from zero to ninety and distinguishes absence', () => {
   assert.equal(parseWait(new URLSearchParams()), undefined);

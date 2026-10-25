@@ -4,7 +4,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { createServer } from 'node:http';
 import { OperationCore } from './core.mjs';
-import { decodeToolName, parseToolName, toolListSnapshot, enhancedSnapshot, parseWait, prefersPlainText, parseCapabilityToken, parseClientNonce, parseRequest, parseUniversalRequest, renderBridgeError, renderChunk, renderOperation, toolSignature } from './protocol.mjs';
+import { decodeToolName, parseToolName, toolListSnapshot, enhancedSnapshot, parseWait, prefersPlainText, parseCapabilityToken, parseClientNonce, parseRequest, parseUniversalRequest, renderBridgeError, renderChunk, renderOperation, toolSignature, upstreamUnavailable } from './protocol.mjs';
 
 const host = process.env.WEBSESSION_ADAPTER_HOST || '127.0.0.1';
 const port = Number.parseInt(process.env.WEBSESSION_ADAPTER_PORT || '3051', 10);
@@ -109,6 +109,26 @@ function sendJson(res, status, value) {
     'referrer-policy': 'no-referrer',
   });
   res.end(`${JSON.stringify(value)}\n`);
+}
+
+function sendFailure(res, error) {
+  if (res.destroyed || res.writableEnded) return;
+  if (upstreamUnavailable(error)) {
+    res.writeHead(503, {
+      'content-type': 'application/json; charset=utf-8',
+      'cache-control': 'no-store',
+      'referrer-policy': 'no-referrer',
+      'retry-after': '5',
+    });
+    res.end(JSON.stringify({
+      protocol: 'WEBSESSION-MCP-BRIDGE/1',
+      state: 'rejected',
+      code: 'backend_unavailable',
+      retry_after: 5,
+    }) + '\n');
+    return;
+  }
+  sendJson(res, 500, { protocol: 'WEBSESSION-MCP-BRIDGE/1', state: 'rejected', code: 'internal_error' });
 }
 
 function decodeSegment(value, label) {
@@ -667,16 +687,12 @@ const server = createServer((req, res) => {
   }
 
   if (req.method === 'POST' && url.pathname === '/v1/calls') {
-    handleEnhancedCall(req, res, url).catch(() => {
-      if (!res.destroyed && !res.writableEnded) sendJson(res, 500, { protocol: 'WEBSESSION-MCP-BRIDGE/1', state: 'rejected', code: 'internal_error' });
-    });
+    handleEnhancedCall(req, res, url).catch(error => sendFailure(res, error));
     return;
   }
 
   if (req.method === 'GET' && parts[0] === 'v1' && parts[1] === 'operations' && parts.length === 4) {
-    handleEnhancedStatus(req, res, parts, url).catch(() => {
-      if (!res.destroyed && !res.writableEnded) sendJson(res, 500, { protocol: 'WEBSESSION-MCP-BRIDGE/1', state: 'rejected', code: 'internal_error' });
-    });
+    handleEnhancedStatus(req, res, parts, url).catch(error => sendFailure(res, error));
     return;
   }
 
@@ -688,16 +704,14 @@ const server = createServer((req, res) => {
   if (req.method === 'POST' && url.pathname === '/v1/access') {
     try {
       handleMasterAccess(req, res);
-    } catch {
-      sendJson(res, 500, { protocol: 'WEBSESSION-MCP-BRIDGE/1', state: 'rejected', code: 'internal_error' });
+    } catch (error) {
+      sendFailure(res, error);
     }
     return;
   }
 
   if (req.method === 'POST' && parts[0] === 'v1' && parts[1] === 'confirm' && parts.length === 3) {
-    handleEnhancedConfirm(req, res, parts[2]).catch(() => {
-      sendJson(res, 500, { protocol: 'WEBSESSION-MCP-BRIDGE/1', state: 'rejected', code: 'internal_error' });
-    });
+    handleEnhancedConfirm(req, res, parts[2]).catch(error => sendFailure(res, error));
     return;
   }
 
@@ -730,14 +744,19 @@ const server = createServer((req, res) => {
 
   if (parts[0] === 'v1' && ((parts[1] === 'tools' && (parts.length === 2 || parts.length === 3))
     || ((parts[1] === 'instructions' || parts[1] === 'signatures') && parts.length === 2))) {
-    handleHeaderDiscovery(req, res, parts).catch(() => {
-      if (!res.destroyed && !res.writableEnded) sendJson(res, 500, { protocol: 'WEBSESSION-MCP-BRIDGE/1', state: 'rejected', code: 'internal_error' });
-    });
+    handleHeaderDiscovery(req, res, parts).catch(error => sendFailure(res, error));
     return;
   }
 
   if (parts[0] === 'v1') {
     handleUniversalGet(req, res, parts).catch(error => {
+      if (upstreamUnavailable(error)) {
+        if (!res.destroyed && !res.writableEnded) {
+          res.writeHead(503, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store', 'retry-after': '5' });
+          res.end('WEBSESSION-MCP-BRIDGE/1\nstate: rejected\ncode: backend_unavailable\nretry_after: 5\n');
+        }
+        return;
+      }
       sendText(res, 500, renderBridgeError('internal_error', error.message));
     });
     return;
