@@ -15,7 +15,9 @@ export function renderToolResult(result) {
       : 'MCP tool failed';
     throw new Error(text || 'MCP tool failed');
   }
-  const textOnly = Array.isArray(result?.content)
+  const hasStructuredContent = result?.structuredContent !== undefined;
+  const textOnly = !hasStructuredContent
+    && Array.isArray(result?.content)
     && result.content.length > 0
     && result.content.every(block => block?.type === 'text');
   const text = textOnly ? result.content.map(block => block.text).join('\n') : JSON.stringify(result);

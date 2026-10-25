@@ -2,6 +2,24 @@
 
 Known improvements that were evaluated and intentionally not built yet. Each entry says why it was deferred and what would trigger doing it.
 
+## Repeat agent-instruction experiments with token-aware acceptance
+
+**Status:** proposal after the 2026-10-25 local experiment. No new benchmark
+service or runtime gate is installed.
+
+**Observed failures.** A composed candidate reduced a limited byte proxy by
+15.3% while recorded input/cache tokens increased. Temporary HTTP processes
+also stopped with their launching shell, causing seven failed attempts. Some
+trials overlapped and shared a byte trace despite the sequential brief.
+
+**Proposal.** For a later experiment, compare reported tokens before choosing a
+candidate, hold fixture processes in a managed terminal, and serialize trials
+with separate traces. Include different task structures and schemas that agents
+must inspect. Separate client display limits from actual model context use.
+
+**Do it when** repeated production tasks justify another bounded experiment.
+Keep existing MCP guidance until separate-task evidence supports a replacement.
+
 ## Run `cloudflared` as its own service
 
 **Status:** deferred (decided 2026-10-07). Applies to every host that uses the Cloudflare transport (WSL and the ARM server).

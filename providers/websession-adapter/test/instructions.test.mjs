@@ -12,6 +12,7 @@ test('authenticated WebSession discovery preserves initialization guidance witho
   const stateDir = await mkdtemp(join(tmpdir(), 'websession-instructions-'));
   t.after(() => rm(stateDir, { recursive: true, force: true }));
   let instructions = 'Owner guidance\nUse the configured canonical workflow.\nRead only selected references.';
+  const toolResult = { content: [{ type: 'text', text: 'summary' }], structuredContent: { answer: 42 } };
   const upstream = createServer(async (req, res) => {
     if (req.method !== 'POST') { res.writeHead(200).end(); return; }
     let body = '';
@@ -21,7 +22,9 @@ test('authenticated WebSession discovery preserves initialization guidance witho
     const result = message.method === 'initialize'
       ? { protocolVersion: message.params.protocolVersion, capabilities: { tools: {} },
         serverInfo: { name: 'guidance-fixture', version: '1' }, ...(instructions ? { instructions } : {}) }
-      : { tools: [{ name: 'fixture_read', inputSchema: { type: 'object' } }] };
+      : message.method === 'tools/call'
+        ? toolResult
+        : { tools: [{ name: 'fixture_read', inputSchema: { type: 'object' } }] };
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify({ jsonrpc: '2.0', id: message.id, result }));
   });
@@ -59,4 +62,13 @@ test('authenticated WebSession discovery preserves initialization guidance witho
   const without = await fetch(`${base}/${token}/tools`);
   assert.equal(without.status, 200);
   assert.ok(!(await without.text()).includes('instructions_json:'));
+  const call = await fetch(`http://127.0.0.1:${port}/v1/calls?wait=1`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', 'idempotency-key': 'structured-result' },
+    body: JSON.stringify({ version: 1, tool: 'fixture_read', arguments: {} }),
+  });
+  assert.equal(call.status, 200);
+  const operation = await call.json();
+  assert.equal(operation.state, 'completed');
+  assert.deepEqual(JSON.parse(operation.result), toolResult);
 });

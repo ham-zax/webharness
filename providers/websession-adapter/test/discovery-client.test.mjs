@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { chmodSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -8,6 +9,7 @@ import { parseRequest, parseToolName, toolListSnapshot, toolSignature } from '..
 
 const client = new URL('../client.sh', import.meta.url);
 const clientPython = new URL('../client.py', import.meta.url);
+const capability = 'c'.repeat(43);
 
 test('discovery tool names share request validation and snapshots expose names and optional instructions', () => {
   for (const name of ['dev_1mcp_read', 'tool.with-dashes', 'x'.repeat(128)]) {
@@ -87,6 +89,353 @@ printf '%s' "\${HTTP_CODE:-200}"
 function response(state, result = '', extra = '') {
   return `WEBSESSION-MCP-BRIDGE/1\nstate: ${state}\noperation_id: op\nstatus_url: https://bridge.example/v1/operations/token/op\n${extra}${state === 'completed' ? `chunk_count: 1\nresult:\n${result}` : ''}`;
 }
+
+// The Python tests use a real local HTTP fixture so query strings, long polls,
+// chunk reads, and output byte counts are exercised end to end.
+function pythonFixture(t, handler) {
+  const requests = [];
+  let base = '';
+  const server = createServer((req, res) => {
+    const chunks = [];
+    req.on('data', chunk => chunks.push(chunk));
+    req.on('end', () => {
+      const url = new URL(req.url, base);
+      const entry = {
+        method: req.method,
+        path: url.pathname,
+        query: url.searchParams,
+        headers: req.headers,
+        body: Buffer.concat(chunks).toString('utf8'),
+        at: Date.now(),
+      };
+      requests.push(entry);
+      const body = handler(entry, base, req, res);
+      if (req.destroyed || res.headersSent) return;
+      if (body === undefined) {
+        res.statusCode = 404;
+        res.end();
+        return;
+      }
+      const raw = Buffer.from(JSON.stringify(body), 'utf8');
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Content-Length': raw.length });
+      res.end(raw);
+    });
+  });
+  t.after(() => new Promise(resolve => {
+    server.closeAllConnections();
+    server.close(resolve);
+  }));
+  return new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      base = `http://127.0.0.1:${server.address().port}`;
+      resolve({ base, requests });
+    });
+  });
+}
+
+function runPython(args, env, setup = '') {
+  return new Promise((resolve, reject) => {
+    const invocation = setup
+      ? ['-c', `${setup}\nimport runpy, sys\nscript = sys.argv.pop(1)\nrunpy.run_path(script, run_name="__main__")`, clientPython.pathname, ...args]
+      : [clientPython.pathname, ...args];
+    const child = spawn('python3', invocation, {
+      env: { ...process.env, PYTHONIOENCODING: 'utf-8', WS_CAP: capability, ...env },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    const stdout = [];
+    const stderr = [];
+    child.stdout.on('data', chunk => stdout.push(chunk));
+    child.stderr.on('data', chunk => stderr.push(chunk));
+    child.once('error', reject);
+    child.once('close', code => resolve({
+      status: code,
+      stdout: Buffer.concat(stdout).toString('utf8'),
+      stderr: Buffer.concat(stderr).toString('utf8'),
+    }));
+  });
+}
+
+function completed(result, base) {
+  return {
+    protocol: 'WEBSESSION-MCP-BRIDGE/1',
+    state: 'completed',
+    operation_id: 'op',
+    status_url: `${base}/v1/operations/token/op`,
+    chunk_count: 1,
+    result,
+  };
+}
+
+const OMISSION = /^([\s\S]*?)\n\[ws: ([0-9]+) of ([0-9]+) bytes shown, middle omitted; full output: (\/\S+); WS_MAX_OUTPUT=0 prints everything\]\n([\s\S]*)\n$/;
+
+test('python client bounds multi-byte output and saves the exact result at 0600', async (t) => {
+  const full = `HEAD${'🌍✓'.repeat(4000)}TAIL`;
+  const { base, requests } = await pythonFixture(t, entry => {
+    assert.equal(entry.method, 'POST');
+    return completed(full, base);
+  });
+  const run = await runPython(['call', 'echo', '{}'], { WS_BASE: base });
+  assert.equal(run.status, 0, run.stderr);
+  const match = run.stdout.match(OMISSION);
+  assert.ok(match, run.stdout);
+  const [, prefix, shown, total, path, suffix] = match;
+  t.after(() => rmSync(path, { force: true }));
+  assert.match(path, /\/webharness-result-[^/]+\.txt$/);
+  assert.equal(Number(total), Buffer.byteLength(full, 'utf8'));
+  assert.ok(Number(shown) <= 8192);
+  assert.equal(Number(shown), Buffer.byteLength(prefix, 'utf8') + Buffer.byteLength(suffix, 'utf8'));
+  assert.ok(prefix.length > 0);
+  assert.ok(suffix.length > 0);
+  assert.ok(full.startsWith(prefix));
+  assert.ok(full.endsWith(suffix));
+  assert.equal(run.stdout.includes('\uFFFD'), false);
+  assert.equal(readFileSync(path, 'utf8'), full);
+  assert.equal(statSync(path).mode & 0o777, 0o600);
+  assert.equal(readFileSync(path, 'utf8').includes(capability), false);
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].query.get('wait'), '0');
+  assert.equal(requests[0].headers.authorization, `Bearer ${capability}`);
+});
+
+test('python client keeps small and empty output and WS_MAX_OUTPUT=0 prints everything', async (t) => {
+  const full = `HEAD${'🌍'.repeat(5000)}TAIL`;
+  let current = full;
+  const { base } = await pythonFixture(t, () => completed(current, base));
+  const env = { WS_BASE: base };
+  const zero = await runPython(['call', 'echo', '{}'], { ...env, WS_MAX_OUTPUT: '0' });
+  assert.equal(zero.status, 0, zero.stderr);
+  assert.equal(zero.stdout, `${full}\n`);
+  assert.equal(zero.stdout.includes('[ws:'), false);
+
+  current = 'small ✓';
+  const small = await runPython(['call', 'echo', '{}'], env);
+  assert.equal(small.status, 0, small.stderr);
+  assert.equal(small.stdout, 'small ✓\n');
+
+  current = '';
+  const empty = await runPython(['call', 'echo', '{}'], env);
+  assert.equal(empty.status, 0, empty.stderr);
+  assert.equal(empty.stdout, '\n');
+
+  current = 'x'.repeat(100);
+  const custom = await runPython(['call', 'echo', '{}'], { ...env, WS_MAX_OUTPUT: '40' });
+  assert.equal(custom.status, 0, custom.stderr);
+  const match = custom.stdout.match(OMISSION);
+  assert.ok(match, custom.stdout);
+  const [, prefix, shown, total, path, suffix] = match;
+  t.after(() => rmSync(path, { force: true }));
+  assert.equal(Number(total), 100);
+  assert.equal(Number(shown), 40);
+  assert.equal(prefix.length, 30);
+  assert.equal(suffix.length, 10);
+  assert.equal(readFileSync(path, 'utf8'), current);
+});
+
+test('python client rejects invalid output limits before any request', async (t) => {
+  const { base, requests } = await pythonFixture(t, () => completed('ok', base));
+  for (const value of ['x', '-1', '1.5', '', ' 8', '8 ', '+8', '0x10']) {
+    const run = await runPython(['call', 'echo', '{}'], { WS_BASE: base, WS_MAX_OUTPUT: value });
+    assert.equal(run.status, 1, `${JSON.stringify(value)}: ${run.stderr}`);
+    assert.match(run.stderr, /WS_MAX_OUTPUT/);
+    assert.equal(requests.length, 0);
+  }
+});
+
+test('python client reconstructs inline and chunked completions', async (t) => {
+  let chunked = false;
+  const { base, requests } = await pythonFixture(t, (entry) => {
+    if (entry.path.endsWith('/chunk/1')) return { content: 'first ✓ ' };
+    if (entry.path.endsWith('/chunk/2')) return { content: 'second 🌍' };
+    if (!chunked) return completed('inline ✓', base);
+    return {
+      protocol: 'WEBSESSION-MCP-BRIDGE/1',
+      state: 'completed',
+      operation_id: 'op',
+      status_url: `${base}/v1/operations/token/op`,
+      chunk_count: 2,
+      chunk_base_url: `${base}/v1/operations/token/op/chunk/`,
+    };
+  });
+  const inline = await runPython(['call', 'echo', '{}'], { WS_BASE: base });
+  assert.equal(inline.status, 0, inline.stderr);
+  assert.equal(inline.stdout, 'inline ✓\n');
+  chunked = true;
+  const split = await runPython(['call', 'echo', '{}'], { WS_BASE: base });
+  assert.equal(split.status, 0, split.stderr);
+  assert.equal(split.stdout, 'first ✓ second 🌍\n');
+  assert.equal(requests.filter(entry => entry.method === 'POST').length, 2);
+  assert.deepEqual(requests.filter(entry => entry.method === 'GET').map(entry => entry.path),
+    ['/v1/operations/token/op/chunk/1', '/v1/operations/token/op/chunk/2']);
+});
+
+test('python client long-polls queued status with one initiator and no 1.5s sleep', async (t) => {
+  let polls = 0;
+  const { base, requests } = await pythonFixture(t, (entry) => {
+    if (entry.method === 'POST') {
+      return {
+        protocol: 'WEBSESSION-MCP-BRIDGE/1',
+        state: 'running',
+        operation_id: 'op',
+        status_url: `${base}/v1/operations/token/op?source=test`,
+      };
+    }
+    polls += 1;
+    return {
+      protocol: 'WEBSESSION-MCP-BRIDGE/1',
+      state: polls === 1 ? 'running' : 'completed',
+      operation_id: 'op',
+      status_url: `${base}/v1/operations/token/op?source=test`,
+      ...(polls === 1 ? {} : { chunk_count: 1, result: 'delayed ✓' }),
+    };
+  });
+  const run = await runPython(['call', 'echo', '{}'], { WS_BASE: base });
+  assert.equal(run.status, 0, run.stderr);
+  assert.equal(run.stdout, 'delayed ✓\n');
+  const posts = requests.filter(entry => entry.method === 'POST');
+  const gets = requests.filter(entry => entry.method === 'GET');
+  assert.equal(posts.length, 1);
+  assert.equal(posts[0].query.get('wait'), '0');
+  assert.equal(gets.length, 2);
+  assert.ok(Number(gets[0].query.get('wait')) <= 89);
+  assert.ok(Number(gets[0].query.get('wait')) >= 0);
+  assert.equal(gets[0].query.get('source'), 'test');
+  const secondWait = Number(gets[1].query.get('wait'));
+  assert.ok(Number.isInteger(secondWait) && secondWait >= 0 && secondWait <= 90);
+  assert.equal(gets[1].query.get('source'), 'test');
+  assert.ok(gets[0].at - posts[0].at < 1000, `status poll waited ${gets[0].at - posts[0].at}ms`);
+});
+
+test('python client keeps a bounded completed result when saving the full output fails', async (t) => {
+  const full = `HEAD${'🌍'.repeat(5000)}TAIL`;
+  const { base, requests } = await pythonFixture(t, () => completed(full, base));
+  const setup = 'import tempfile\ndef unavailable(*args, **kwargs):\n    raise OSError("fixture disk full")\ntempfile.NamedTemporaryFile = unavailable';
+  const run = await runPython(['sh', 'pwd'], { WS_BASE: base }, setup);
+  assert.equal(run.status, 0, run.stderr);
+  assert.ok(run.stdout.startsWith('HEAD'));
+  assert.ok(run.stdout.endsWith('TAIL\n'));
+  assert.match(run.stdout, /full output not saved: fixture disk full; do not rerun the tool/);
+  assert.ok(Buffer.byteLength(run.stdout) < 9000);
+  assert.equal(requests.length, 1);
+  assert.equal(JSON.parse(requests[0].body).tool, 'dev_1mcp_bash');
+});
+
+test('python client reports lost creation responses as unknown without resubmitting', async (t) => {
+  const { base, requests } = await pythonFixture(t, (_entry, _base, req) => {
+    req.socket.destroy();
+  });
+  const run = await runPython(['call', 'echo', '{}'], { WS_BASE: base });
+  assert.equal(run.status, 2, run.stderr);
+  assert.match(run.stderr, /submission outcome unknown; do not retry/);
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].query.get('wait'), '0');
+});
+
+test('python client treats post-persist server errors as unknown and keeps client errors definite', async (t) => {
+  let status = 500;
+  let persisted = 0;
+  const { base, requests } = await pythonFixture(t, (_entry, _base, _req, res) => {
+    if (status >= 500) persisted += 1;
+    res.writeHead(status, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'fixture response after submission' }));
+  });
+  for (status of [500, 502, 503, 504, 400, 401, 413]) {
+    const before = requests.length;
+    const run = await runPython(['call', 'echo', '{}'], { WS_BASE: base });
+    assert.equal(run.status, status >= 500 ? 2 : 1, run.stderr);
+    assert.equal(requests.length, before + 1);
+    if (status >= 500) assert.match(run.stderr, /submission outcome unknown; do not retry/);
+    else assert.doesNotMatch(run.stderr, /outcome unknown/);
+  }
+  assert.equal(persisted, 4);
+});
+
+test('python client warns on truncated submissions and handles unreadable client-error bodies', async (t) => {
+  let status = 200;
+  const { base, requests } = await pythonFixture(t, (_entry, _base, _req, res) => {
+    res.writeHead(status, { 'Content-Type': 'application/json', 'Content-Length': '1000', Connection: 'close' });
+    res.end('{}');
+  });
+  const truncated = await runPython(['call', 'echo', '{}'], { WS_BASE: base });
+  assert.equal(truncated.status, 2, truncated.stderr);
+  assert.match(truncated.stderr, /submission outcome unknown; do not retry/);
+  assert.doesNotMatch(truncated.stderr, /Traceback/);
+  assert.equal(requests.length, 1);
+  status = 400;
+  const definite = await runPython(['call', 'echo', '{}'], { WS_BASE: base });
+  assert.equal(definite.status, 1, definite.stderr);
+  assert.match(definite.stderr, /HTTP 400.*unreadable error response/);
+  assert.doesNotMatch(definite.stderr, /Traceback|outcome unknown/);
+  assert.equal(requests.length, 2);
+});
+
+test('python client rejects malformed submission snapshots without resubmitting', async (t) => {
+  let body;
+  const { base, requests } = await pythonFixture(t, () => body);
+  for (body of [null, [], 42, 'running', {}, { state: 'running' }, { state: 'queued', status_url: 42 },
+    { state: 'completed' }, { state: 'completed', chunk_count: 'bad' },
+    { state: 'completed', chunk_count: 2, chunk_base_url: '' }]) {
+    const before = requests.length;
+    const run = await runPython(['call', 'echo', '{}'], { WS_BASE: base });
+    assert.equal(run.status, 2, run.stderr);
+    assert.match(run.stderr, /invalid operation snapshot; submission outcome unknown; do not retry/);
+    assert.equal(requests.length, before + 1);
+  }
+});
+
+test('python client rejects malformed status and chunk responses without a new submission', async (t) => {
+  let chunked = false;
+  const { base, requests } = await pythonFixture(t, entry => {
+    if (entry.method === 'GET') return null;
+    return chunked
+      ? { state: 'completed', chunk_count: 2, chunk_base_url: `${base}/chunk/` }
+      : { state: 'running', status_url: `${base}/status` };
+  });
+  const status = await runPython(['call', 'echo', '{}'], { WS_BASE: base });
+  assert.equal(status.status, 1, status.stderr);
+  assert.match(status.stderr, /invalid operation snapshot; do not resubmit/);
+  chunked = true;
+  const chunk = await runPython(['call', 'echo', '{}'], { WS_BASE: base });
+  assert.equal(chunk.status, 1, chunk.stderr);
+  assert.match(chunk.stderr, /invalid result chunk; do not resubmit/);
+  assert.equal(requests.filter(entry => entry.method === 'POST').length, 2);
+});
+
+test('python client stops on unsupported states and warns about unknown outcomes', async (t) => {
+  let state = 'confirmation_required';
+  const { base, requests } = await pythonFixture(t, () => ({ state }));
+  const unsupported = await runPython(['call', 'echo', '{}'], { WS_BASE: base });
+  assert.equal(unsupported.status, 1);
+  assert.match(unsupported.stderr, /unsupported operation state confirmation_required/);
+  assert.equal(requests.length, 1);
+  state = 'unknown_outcome';
+  const unknown = await runPython(['call', 'echo', '{}'], { WS_BASE: base });
+  assert.equal(unknown.status, 2);
+  assert.match(unknown.stderr, /do not retry; check whether the tool ran/);
+  assert.equal(requests.length, 2);
+});
+
+test('python client includes submission time in its polling budget and retains the recovery URL', async (t) => {
+  const { base, requests } = await pythonFixture(t, () => ({
+    state: 'running', status_url: `${base}/v1/operations/token/op`,
+  }));
+  const setup = 'import time\nclock = iter([0.0, 91.0])\ntime.monotonic = lambda: next(clock)';
+  const run = await runPython(['call', 'echo', '{}'], { WS_BASE: base }, setup);
+  assert.equal(run.status, 1, run.stderr);
+  assert.match(run.stderr, /operation still running; poll http:\/\/127\.0\.0\.1:/);
+  assert.equal(requests.length, 1);
+});
+
+test('python client stops after a zero-second final status hold without resubmitting', async (t) => {
+  const { base, requests } = await pythonFixture(t, () => ({
+    state: 'running', status_url: `${base}/v1/operations/token/op`,
+  }));
+  const setup = 'import time\nclock = iter([0.0, 89.5])\ntime.monotonic = lambda: next(clock)';
+  const run = await runPython(['call', 'echo', '{}'], { WS_BASE: base }, setup);
+  assert.equal(run.status, 1, run.stderr);
+  assert.match(run.stderr, /operation still running/);
+  assert.deepEqual(requests.map(entry => [entry.method, entry.query.get('wait')]), [['POST', '0'], ['GET', '0']]);
+});
 
 test('client streams results exactly, builds file/stdin arguments, and polls running operations', (t) => {
   const { directory, run, capability } = clientFixture(t);

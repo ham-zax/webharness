@@ -114,6 +114,10 @@ Keep both credentials secret. Never echo them, log them, or write them to disk. 
 Alternatively, fetch the reference client that already implements this contract:
 `GET /v1/client.py`, then run `WS_BASE=<Base> WS_CAP=<CAPABILITY> python3 client.py sh pwd`.
 
+The Python client's `call` and `sh` commands show at most 8192 UTF-8 payload bytes by default. Larger results show their start and end with an omission notice. The client saves the complete result in a private temporary file and prints its path. If saving fails, the client still shows the bounded result and warns that the full output was not saved. The tool already ran; do not rerun it to recover display output. Set `WS_MAX_OUTPUT=0` to print the complete result, or set another nonnegative byte limit. Remove saved result files when no longer needed. The capability stays in memory.
+
+The Python client submits with `wait=0` to receive the recovery URL promptly, then long-polls that URL. Its polling budget is approximately 90 seconds, separate from the 120-second HTTP request timeout. A submission transport failure, server error, malformed submission response, or `unknown_outcome` exits with code 2 and a warning against retrying. If the budget expires with a status URL, retrieve it with `curl -fsS -G --data-urlencode wait=90 '<status_url>'`, or use `wh status <status_url>`. Repeat only status reads, never the creation POST. Status URLs contain read capabilities; keep them private. Transport chunking and full-result reconstruction remain automatic. A result-size failure can occur after the tool runs; check effects before retrying a mutation.
+
 Response formats differ by route. Parse `/v1/about` as text. Parse `/v1/tools`, `/v1/tools/<name>`, `/v1/calls`, `status_url` and chunk URLs as JSON. Never pass `/v1/about` to a JSON parser.
 
 1. GET `/v1/about` and verify `WEBSESSION-MCP-BRIDGE/1`. The body is text, not JSON.

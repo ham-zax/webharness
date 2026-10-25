@@ -61,6 +61,8 @@ For enhanced JSON requests, the default request body limit is 1 MB, up from 16 K
 
 The served curl client changed what it prints. `wh tools` now prints one signature line per tool (from the new header-authenticated `GET /v1/signatures`) instead of bare names; `GET /v1/tools` is unchanged. A result over `WH_MAX_OUTPUT` bytes (default 8192) is printed as its start and end with the full text saved to `$WH_HOME/last`; set `WH_MAX_OUTPUT=0` for the previous behaviour. Failed calls and rejected requests now print the server's reason on stderr.
 
+The served Python client's `call` and `sh` commands also limit displayed payloads to 8192 UTF-8 bytes. They save larger results in a private temporary file and print its path. A save failure preserves the bounded display with a warning. Set `WS_MAX_OUTPUT=0` for complete output. The Python client requests an immediate submission response, then uses existing status long-poll routes. Submission transport failures and `unknown_outcome` now exit with code 2 and a warning against automatic retries. Results with `structuredContent` retain the complete MCP result as JSON, including text content, instead of losing the structured fields.
+
 ## Stable contract versus implementation identifiers
 
 Names such as `mcp-dev-bridge.service`, `mcp-dev-bridge` state directories, `%LOCALAPPDATA%\mcp-dev-bridge`, provider package paths, and `wsl-agent-*` are retained implementation compatibility identifiers. WebHarness branding does not require migrating them.

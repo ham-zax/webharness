@@ -197,6 +197,25 @@ test('tool results preserve text-only rendering and serialize non-text or empty 
   }
 });
 
+test('tool results preserve the whole JSON when structured content is defined', () => {
+  const text = { type: 'text', text: 'summary only' };
+  const mixed = { content: [text, { type: 'image', data: 'aGVsbG8=', mimeType: 'image/png' }] };
+  for (const structuredContent of [{ answer: 42 }, null, false, 0, '', []]) {
+    const result = { content: [text], structuredContent };
+    assert.equal(renderToolResult(result), JSON.stringify(result));
+    assert.equal(renderToolResult({ ...mixed, structuredContent }), JSON.stringify({ ...mixed, structuredContent }));
+  }
+  assert.equal(renderToolResult({ content: [{ type: 'text', text: 'plain' }] }), 'plain');
+  assert.equal(renderToolResult({ content: [{ type: 'text', text: 'plain' }], other: true }), 'plain');
+});
+
+test('structured tool results exceeding the byte limit are rejected', () => {
+  assert.throws(
+    () => renderToolResult({ content: [{ type: 'text', text: 'summary' }], structuredContent: { data: 'A'.repeat(1024 * 1024) } }),
+    /result_too_large/,
+  );
+});
+
 test('tool result errors and byte limits remain enforced', () => {
   assert.throws(() => renderToolResult({ isError: true, content: [{ type: 'text', text: 'failed' }] }), /^Error: failed$/);
   assert.throws(() => renderToolResult({ isError: true, content: [] }), /MCP tool failed/);
