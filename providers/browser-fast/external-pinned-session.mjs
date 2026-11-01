@@ -33,7 +33,11 @@ export function ownedBootstrapPage({ before, after, activeTargetId, selectedTarg
   return activeTargetId;
 }
 
-export async function closeExternalOwnedPage(websocket, targetId, { WebSocketImpl = WebSocket } = {}) {
+export async function closeExternalOwnedPage(websocket, targetId, {
+  WebSocketImpl = WebSocket,
+  fetchImpl = fetch,
+  sleep = ms => new Promise(resolve => setTimeout(resolve, ms)),
+} = {}) {
   if (!TARGET_ID.test(targetId)) throw Error('Invalid owned tab identity');
   const endpoint = new URL(websocket);
   if (endpoint.protocol !== 'ws:' || endpoint.hostname !== '127.0.0.1'
@@ -64,6 +68,15 @@ export async function closeExternalOwnedPage(websocket, targetId, { WebSocketImp
     socket.addEventListener('close', () => finish(new Error('CDP disconnected during exact page cleanup')));
     socket.addEventListener('error', () => finish(new Error('CDP exact page cleanup connection failed')));
   });
+  // closeTarget acknowledges the request before Chrome necessarily removes the
+  // page from /json/list. Only repeat inventory reads, never the close command.
+  for (const delay of [0, 100, 300]) {
+    if (delay) await sleep(delay);
+    const current = await readExternalCdpPages(endpoint.port, { fetchImpl });
+    if (current.websocket !== websocket) throw Error('External Chrome restarted during exact page cleanup');
+    if (!current.pages.has(targetId)) return;
+  }
+  throw Error('Owned browser page remains after confirmed close and bounded inventory checks');
 }
 
 // Raw `agent-browser --cdp <port> --session <name> --pin-tab` callers bypass the
