@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { appendFileSync, chmodSync, mkdirSync, readFileSync, renameSync, rmSync, statSync } from 'node:fs';
+import { appendFileSync, chmodSync, closeSync, constants, fstatSync, mkdirSync, openSync, readFileSync, readSync, readlinkSync, renameSync, rmSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { createServer } from 'node:http';
@@ -180,6 +180,12 @@ async function handleUniversalGet(req, res, parts) {
       `enhanced_json_max_bytes: ${maxJsonBodyBytes}`,
       'fast_wait_ms: 1900',
       'long_poll_max_seconds: 90',
+      `call_url: ${base}/v1/calls`,
+      'call_body: {"version":1,"tool":"<tool_name>","arguments":{...}}',
+      'call_headers: Authorization: Bearer <capability>; Content-Type: application/json; Idempotency-Key: <fresh nonce>',
+      'batch: Discover local_1mcp_tool_batch in the authenticated tool catalog when available; it batches independent Local calls, not Dev file writes.',
+      'multi_file_edit: Discover dev_1mcp_edit in the authenticated tool catalog; it supports edits to multiple existing files in one call.',
+      `raw_url: ${base}/v1/raw?path=<absolute-tmp-file-path> (Bearer capability required; maximum 10 MiB)`,
       `client_url: ${base}/v1/client.sh`,
       `client_python_url: ${base}/v1/client.py`,
       `tool_timeout_ms: ${toolTimeoutMs}`,
@@ -253,6 +259,10 @@ async function handleUniversalGet(req, res, parts) {
       const submitted = operationCore.submit(capability, nonce, parsed, 'universal-get-v1');
       if (submitted.unauthorized) {
         sendText(res, 404, 'WEBSESSION-MCP-BRIDGE/1\nstate: rejected\ncode: not_found');
+        return true;
+      }
+      if (submitted.superseded) {
+        sendText(res, 200, renderBridgeError('superseded_by_newer_turn', 'this capability requires the current turn ID via POST'));
         return true;
       }
       if (submitted.nonceConflict) {
@@ -472,9 +482,18 @@ async function handleEnhancedCall(req, res, url) {
     return;
   }
 
-  const submitted = operationCore.submit(capability, nonce, parsed, 'json-post-v1');
+  const rawTurn = req.headers['x-turn-id'];
+  if (rawTurn !== undefined && (typeof rawTurn !== 'string' || !/^(0|[1-9][0-9]{0,15})$/.test(rawTurn) || !Number.isSafeInteger(Number(rawTurn)))) {
+    sendJson(res, 400, { protocol: 'WEBSESSION-MCP-BRIDGE/1', state: 'rejected', code: 'invalid_turn_id' });
+    return;
+  }
+  const submitted = operationCore.submit(capability, nonce, parsed, 'json-post-v1', rawTurn === undefined ? null : Number(rawTurn));
   if (submitted.unauthorized) {
     sendJson(res, 401, { protocol: 'WEBSESSION-MCP-BRIDGE/1', state: 'rejected', code: 'authorization_required' });
+    return;
+  }
+  if (submitted.superseded) {
+    sendJson(res, 409, { protocol: 'WEBSESSION-MCP-BRIDGE/1', state: 'rejected', code: 'superseded_by_newer_turn' });
     return;
   }
   if (submitted.nonceConflict) {
@@ -497,6 +516,38 @@ async function handleEnhancedCall(req, res, url) {
       }
     : undefined;
   sendEnhancedOperation(req, res, operation, submitted.continuationToken, statusUrl, confirmation, wait.timeoutMs !== undefined);
+}
+
+function handleRaw(req, res, url) {
+  const authorization = req.headers.authorization || '';
+  const token = authorization.startsWith('Bearer ') ? parseCapabilityToken(authorization.slice(7)) : undefined;
+  if (!token || !operationCore.store.resolveCapability(token)) return sendJson(res, 401, { code: 'authorization_required' });
+  const path = url.searchParams.get('path');
+  if (!path || !path.startsWith('/tmp/') || path.includes('\0')) return sendJson(res, 400, { code: 'invalid_path' });
+  let fd;
+  try {
+    fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    const resolved = readlinkSync(`/proc/self/fd/${fd}`);
+    const stat = fstatSync(fd);
+    if (!resolved.startsWith('/tmp/') || !stat.isFile() || stat.size > 10 * 1024 * 1024) {
+      return sendJson(res, 400, { code: 'invalid_file' });
+    }
+    const buffer = Buffer.alloc(10 * 1024 * 1024 + 1);
+    let length = 0;
+    let bytes;
+    do {
+      bytes = readSync(fd, buffer, length, buffer.length - length, null);
+      length += bytes;
+    } while (bytes && length < buffer.length);
+    if (length > 10 * 1024 * 1024) return sendJson(res, 400, { code: 'invalid_file' });
+    const data = buffer.subarray(0, length);
+    res.writeHead(200, { 'content-type': 'application/octet-stream', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
+    res.end(data);
+  } catch {
+    sendJson(res, 404, { code: 'file_not_found' });
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
 }
 
 function handleMasterAccess(req, res) {
@@ -679,6 +730,10 @@ const server = createServer((req, res) => {
   console.log(`${requestAt} ${req.method} ${requestLogPath(url)} - UA: ${req.headers['user-agent']}`);
 
   const parts = url.pathname.split('/').filter(Boolean);
+  if (req.method === 'GET' && url.pathname === '/v1/raw') {
+    handleRaw(req, res, url);
+    return;
+  }
   if (req.method === 'POST' && parts[0] === 'probe' && parts[1] === 'http' && parts.length === 3) {
     handleHttpProbe(req, res, url, parts[2]).catch((error) => {
       sendText(res, 400, `WEBSESSION-PROBE/1\nstate: rejected\ncode: invalid_probe_request\nmessage: ${error.message}`);

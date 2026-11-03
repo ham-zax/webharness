@@ -67,6 +67,29 @@ test('store hashes main capabilities, deduplicates nonce reuse, and scopes conti
   }
 });
 
+test('turn fences persist and reject queued calls from older turns', async () => {
+  const stateDir = mkdtempSync(join(tmpdir(), 'websession-fence-'));
+  let core = new OperationCore({ stateDir });
+  try {
+    const issued = core.store.issueMainCapability(60);
+    assert.equal(core.store.advanceTurn(issued.id, 1), true);
+    const requestJson = JSON.stringify({ version: 1, tool: 'dev_1mcp_bash', arguments: { command: 'true' } });
+    const old = core.store.submitOperation(issued.id, 'old', requestJson, requestHash(requestJson), { turnId: 1 });
+    assert.equal(core.store.advanceTurn(issued.id, 2), true);
+    assert.equal(core.store.advanceTurn(issued.id, 1), false);
+    assert.equal(core.store.advanceTurn(issued.id, null), false);
+    core.close();
+    core = new OperationCore({ stateDir });
+    assert.equal(core.store.isCurrentTurn(issued.id, 2), true);
+    await core._run(old.operation.id);
+    assert.equal(core.store.getOperation(old.operation.id).state, 'rejected');
+    assert.equal(core.store.getOperation(old.operation.id).error_text, 'superseded_by_newer_turn');
+  } finally {
+    core.close();
+    rmSync(stateDir, { recursive: true, force: true });
+  }
+});
+
 test('universal confirmation is hashed, revocation-aware, idempotent, and interruption-safe', () => {
   const stateDir = mkdtempSync(join(tmpdir(), 'websession-adapter-confirm-'));
   let store = new AdapterStore(stateDir);

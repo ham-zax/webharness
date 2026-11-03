@@ -97,6 +97,10 @@ export class AdapterStore {
         PRIMARY KEY(operation_id, chunk_number),
         FOREIGN KEY(operation_id) REFERENCES operations(id) ON DELETE CASCADE
       );
+      CREATE TABLE IF NOT EXISTS turn_fences (
+        principal_id TEXT PRIMARY KEY REFERENCES capabilities(id),
+        turn_id INTEGER NOT NULL
+      );
     `);
     const capabilityColumns = this.db.prepare('PRAGMA table_info(capabilities)').all();
     if (!capabilityColumns.some(column => column.name === 'revoked_ms')) {
@@ -111,6 +115,7 @@ export class AdapterStore {
       ['confirmation_expires_ms', 'INTEGER'],
       ['confirmation_used_ms', 'INTEGER'],
       ['dispatch_started_ms', 'INTEGER'],
+      ['turn_id', 'INTEGER'],
     ];
     for (const [name, definition] of migrations) {
       if (!operationColumns.includes(name)) this.db.exec(`ALTER TABLE operations ADD COLUMN ${name} ${definition}`);
@@ -177,6 +182,20 @@ export class AdapterStore {
     return { id: row.id, scope: row.scope, expiresMs: row.expires_ms };
   }
 
+  advanceTurn(principalId, turnId) {
+    const current = this.db.prepare('SELECT turn_id FROM turn_fences WHERE principal_id = ?').get(principalId);
+    if (turnId == null) return !current;
+    if (current && turnId < current.turn_id) return false;
+    this.db.prepare(`INSERT INTO turn_fences (principal_id, turn_id) VALUES (?, ?)
+      ON CONFLICT(principal_id) DO UPDATE SET turn_id = MAX(turn_id, excluded.turn_id)`).run(principalId, turnId);
+    return true;
+  }
+
+  isCurrentTurn(principalId, turnId) {
+    const current = this.db.prepare('SELECT turn_id FROM turn_fences WHERE principal_id = ?').get(principalId);
+    return current ? turnId === current.turn_id : turnId == null;
+  }
+
   continuationToken(operationId) {
     return createHmac('sha256', this._continuationKey).update(`operation:${operationId}`).digest('base64url');
   }
@@ -211,13 +230,13 @@ export class AdapterStore {
     const inserted = this.db.prepare(`
       INSERT INTO operations (
         id, principal_id, client_nonce, request_hash, request_json, tool, policy_class, source_profile,
-        state, confirmation_hash, confirmation_expires_ms, created_ms, updated_ms
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        state, confirmation_hash, confirmation_expires_ms, created_ms, updated_ms, turn_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(principal_id, client_nonce) DO NOTHING
     `).run(
       id, principalId, clientNonce, requestHash, requestJson,
       options.tool || 'read', options.policyClass || 'automatic', options.sourceProfile || 'unknown',
-      state, confirmationHash, confirmationExpiresMs, now, now,
+      state, confirmationHash, confirmationExpiresMs, now, now, options.turnId ?? null,
     );
 
     let row;

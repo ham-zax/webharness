@@ -6,6 +6,7 @@ The capability stays in memory. Never write it to disk.
 Environment:
   WS_BASE          WebSession base URL, for example https://mcp.example.com
   WS_CAP           capability secret
+  WS_TURN_ID       optional monotonically increasing turn number
   WS_MAX_OUTPUT    call/sh display limit in UTF-8 bytes, default 8192
                    (0 prints the complete result)
 
@@ -15,6 +16,7 @@ Usage:
   client.py schema TOOL
   client.py call TOOL '{"key":"value"}'
   client.py sh 'command to run'
+  client.py sh -  # read the script from stdin
 
 Response formats by route:
   /v1/about        text
@@ -42,7 +44,7 @@ MAX_WAIT_SECONDS = 90
 TIMEOUT_SECONDS = 120
 DEFAULT_MAX_OUTPUT = 8192
 TERMINAL_STATES = ("completed", "tool_failed", "unknown_outcome", "rejected", "expired")
-USAGE = "usage: client.py about|tools|schema TOOL|call TOOL JSON|sh COMMAND"
+USAGE = "usage: client.py about|tools|schema TOOL|call TOOL JSON|sh COMMAND|sh -"
 
 
 def fail(message, code=1):
@@ -136,6 +138,8 @@ def request(url, cap=None, method="GET", body=None):
         payload = json.dumps(body).encode("utf-8")
         headers["Content-Type"] = "application/json"
         headers["Idempotency-Key"] = uuid.uuid4().hex
+        if os.environ.get("WS_TURN_ID") is not None:
+            headers["X-Turn-Id"] = os.environ["WS_TURN_ID"]
     req = urllib.request.Request(url, data=payload, headers=headers, method=method)
     try:
         with urllib.request.urlopen(req, timeout=TIMEOUT_SECONDS) as response:
@@ -261,7 +265,8 @@ def main(argv):
         print(render_output(call(argv[2], json.loads(argv[3])), limit))
     elif command == "sh" and len(argv) > 2:
         limit = output_limit()
-        print(render_output(call("dev_1mcp_bash", {"command": " ".join(argv[2:])}), limit))
+        script = sys.stdin.read() if argv[2:] == ["-"] else " ".join(argv[2:])
+        print(render_output(call("dev_1mcp_bash", {"command": script}), limit))
     else:
         fail(USAGE)
 

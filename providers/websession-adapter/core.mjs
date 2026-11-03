@@ -57,10 +57,11 @@ export class OperationCore {
     return { principal, tools: listed.tools, instructions: listed.instructions };
   }
 
-  submit(capabilityToken, clientNonce, parsedRequest, sourceProfile) {
+  submit(capabilityToken, clientNonce, parsedRequest, sourceProfile, turnId = null) {
     if (!this.mcpUrl) throw new Error('adapter MCP URL is unavailable');
     const principal = this.store.resolveCapability(capabilityToken);
     if (!principal) return { unauthorized: true };
+    if (!this.store.advanceTurn(principal.id, turnId)) return { superseded: true };
 
     const classification = sourceProfile === 'universal-get-v1' ? 'confirmation_required' : 'automatic';
     const hash = requestHash(parsedRequest.requestJson);
@@ -70,8 +71,9 @@ export class OperationCore {
       policyClass: classification,
       sourceProfile,
       state,
+      turnId,
     });
-    if (!submitted.operation || submitted.operation.request_hash !== hash) return { nonceConflict: true };
+    if (!submitted.operation || submitted.operation.request_hash !== hash || submitted.operation.turn_id !== turnId) return { nonceConflict: true };
     if (submitted.operation.state === 'queued') this._schedule(submitted.operation.id);
 
     const response = {
@@ -167,6 +169,10 @@ export class OperationCore {
       this.store.rejectOperation(operationId, 'submission capability expired or was revoked before execution');
       return;
     }
+    if (!this.store.isCurrentTurn(operation.principal_id, operation.turn_id)) {
+      this.store.rejectOperation(operationId, 'superseded_by_newer_turn');
+      return;
+    }
     const classification = operation.source_profile === 'universal-get-v1' ? 'confirmation_required' : 'automatic';
     if (classification !== operation.policy_class) {
       this.store.rejectOperation(operationId, 'operation execution class changed before dispatch');
@@ -187,6 +193,7 @@ export class OperationCore {
         request.arguments,
         {
           onBeforeDispatch: async () => {
+            if (!this.store.isCurrentTurn(operation.principal_id, operation.turn_id)) throw new Error('superseded_by_newer_turn');
             if (!this.store.markDispatchStarted(operationId)) throw new Error('failed to persist dispatch intent');
             dispatchStarted = true;
           },
@@ -194,6 +201,7 @@ export class OperationCore {
       );
     } catch (error) {
       if (dispatchStarted) this.store.markUnknownOutcome(operationId);
+      else if (error?.message === 'superseded_by_newer_turn') this.store.rejectOperation(operationId, error.message);
       else this.store.failOperation(operationId, boundedError(error));
       return;
     }
