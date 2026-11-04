@@ -9,7 +9,7 @@ Files, ChatGPT-native file ingress, aggregate Git change review, short-RPC shell
 Personal Workstation surface:
 
 ```text
-read edit write import_file file_ops review_changes wait exec bash
+read list_directory edit write import_file file_ops review_changes wait exec bash
 ```
 
 `import_file` and `review_changes` are Personal Workstation tools: the former streams one trusted ChatGPT-native file to a create-only WSL destination, while the latter returns a bounded aggregate view of the current Git working tree without creating checkpoints or refs. `restricted` and `trusted-dev` expose smaller subsets according to their trust policy.

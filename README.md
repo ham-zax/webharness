@@ -18,7 +18,7 @@ Agents should reason about two outer MCP surfaces rather than individual backend
 The full workstation composition is deliberately small at the client boundary:
 
 ```text
-Dev       read edit write import_file file_ops review_changes wait exec bash
+Dev       read list_directory edit write import_file file_ops review_changes wait exec bash
 Local     tool_list tool_schema tool_call fallback_dispatch tool_batch
             |-- terminal          durable PTY/session control
             |-- host              pc_sleep

@@ -192,7 +192,7 @@ test('path mode startup validation requires the matching authority root', async 
   assert.match(invalidSpoolBudget.stderr, /MCP_DEV_SPOOL_MAX_TOTAL_BYTES.*MCP_DEV_MAX_SPOOL_BYTES/i);
 });
 
-test('owner context is published as MCP initialization instructions', async () => {
+test('owner context is published as MCP initialization instructions after the built-in policy', async () => {
   const { defaultCwd, env } = await userFixture();
   const contextFile = path.join(defaultCwd, 'owner-context.md');
   const instructions = '# Owner context\n\nPrimary personal WSL target.';
@@ -200,7 +200,47 @@ test('owner context is published as MCP initialization instructions', async () =
   env.MCP_OWNER_CONTEXT_FILE = contextFile;
 
   await withClient(env, async client => {
-    assert.equal(client.getInstructions(), instructions);
+    const published = client.getInstructions();
+    assert.ok(published.endsWith(`\n\n${instructions}`));
+    assert.match(published, /Dev file access policy/);
+  });
+});
+
+test('built-in instructions ship without an owner context file', async () => {
+  const { env } = await fixture('unrestricted');
+  await withClient(env, async client => {
+    const published = client.getInstructions();
+    assert.match(published, /Discover names with list_directory/i);
+    assert.match(published, /do not conclude that filesystem access is unavailable/i);
+  });
+});
+
+test('list_directory exposes a bounded read-only listing through MCP', async () => {
+  const { workspaceRoot, env } = await fixture();
+  await fs.mkdir(path.join(workspaceRoot, 'ahmed-hamza-workout'));
+  await fs.writeFile(path.join(workspaceRoot, 'README.md'), 'x'.repeat(42));
+  await withClient(env, async client => {
+    const listed = await client.listTools();
+    const tool = listed.tools.find(x => x.name === 'list_directory');
+    assert.deepEqual(Object.keys(tool.inputSchema.properties).sort(), ['limit', 'path']);
+    assert.equal(tool.annotations.readOnlyHint, true);
+    assert.equal(tool.annotations.destructiveHint, false);
+
+    const text = textOf(await client.callTool({ name: 'list_directory', arguments: {} }));
+    assert.match(text, /dir ahmed-hamza-workout/);
+    assert.match(text, /file README\.md 42B/);
+
+    const one = textOf(await client.callTool({ name: 'list_directory', arguments: { path: '.', limit: 1 } }));
+    assert.match(one, /entries: 2/);
+    assert.match(one, /entries total/);
+
+    const missing = await client.callTool({ name: 'list_directory', arguments: { path: 'Ahmed Hamza/workout' } });
+    assert.equal(missing.isError, true);
+    assert.match(textOf(missing), /ENOENT: Ahmed Hamza\/workout does not exist/);
+
+    const notDir = await client.callTool({ name: 'list_directory', arguments: { path: 'README.md' } });
+    assert.equal(notDir.isError, true);
+    assert.match(textOf(notDir), /ENOTDIR: README\.md is not a directory/);
   });
 });
 
@@ -208,7 +248,7 @@ test('trusted-dev exposes structured exec alongside Bash and minimal schemas', a
   const { env } = await fixture('unrestricted');
   await withClient(env, async client => {
     const listed = await client.listTools();
-    assert.deepEqual(listed.tools.map(x => x.name).sort(), ['bash', 'edit', 'exec', 'read', 'write']);
+    assert.deepEqual(listed.tools.map(x => x.name).sort(), ['bash', 'edit', 'exec', 'list_directory', 'read', 'write']);
     const exec = listed.tools.find(x => x.name === 'exec');
     assert.match(exec.description, /structured argv/i);
     assert.match(exec.description, /no shell parsing/i);
@@ -233,7 +273,7 @@ test('restricted omits unrestricted Pi exec and bash', async () => {
   const { env } = await fixture('allowlist');
   await withClient(env, async client => {
     const listed = await client.listTools();
-    assert.deepEqual(listed.tools.map(x => x.name).sort(), ['edit', 'read', 'write']);
+    assert.deepEqual(listed.tools.map(x => x.name).sort(), ['edit', 'list_directory', 'read', 'write']);
     const edit = listed.tools.find(x => x.name === 'edit');
     assertEditV2Schema(edit);
     assert.match(edit.inputSchema.properties.targets.items.properties.path.description, /workspace root/i);
@@ -244,7 +284,7 @@ test('personal user mode exposes file_ops alongside edit with user-path descript
   const { env } = await userFixture();
   await withClient(env, async client => {
     const listed = await client.listTools();
-    assert.deepEqual(listed.tools.map(x => x.name).sort(), ['bash', 'edit', 'exec', 'file_ops', 'import_file', 'read', 'review_changes', 'wait', 'write']);
+    assert.deepEqual(listed.tools.map(x => x.name).sort(), ['bash', 'edit', 'exec', 'file_ops', 'import_file', 'list_directory', 'read', 'review_changes', 'wait', 'write']);
     const read = listed.tools.find(x => x.name === 'read');
     assert.match(read.description, /UTF-8|text/i);
     assert.match(read.description, /1-based/i);
@@ -788,7 +828,7 @@ test('workspace-mode pi-dev loads from a smaller-profile fixture with the Termin
   const { env } = await fixture('unrestricted');
   await withClientAt(path.join(copiedPi, 'server.mjs'), env, async client => {
     const listed = await client.listTools();
-    assert.deepEqual(listed.tools.map(tool => tool.name).sort(), ['bash', 'edit', 'exec', 'read', 'write']);
+    assert.deepEqual(listed.tools.map(tool => tool.name).sort(), ['bash', 'edit', 'exec', 'list_directory', 'read', 'write']);
   });
 });
 

@@ -10,7 +10,8 @@ import {
   resolveNewWorkspacePath,
   resolveUserCwd,
   resolveUserPath,
-  resolveWorkspaceCwd
+  resolveWorkspaceCwd,
+  resolveWorkspaceEntry
 } from '../boundary.mjs';
 
 const tempDir = prefix => fs.mkdtemp(path.join(os.tmpdir(), prefix));
@@ -50,6 +51,19 @@ test('existing symlink escape is rejected', async () => {
   await fs.writeFile(path.join(outside, 'secret.txt'), 'secret');
   await fs.symlink(path.join(outside, 'secret.txt'), path.join(root, 'secret-link'));
   await assert.rejects(() => resolveExistingWorkspacePath(root, 'secret-link'), /outside workspace/);
+});
+
+test('directory entries keep the workspace boundary and accept the root itself', async () => {
+  const root = await tempDir('pi-boundary-entry-');
+  const outside = await tempDir('pi-boundary-entry-outside-');
+  await fs.mkdir(path.join(root, 'repo'));
+  assert.equal(await resolveWorkspaceEntry(root, '.'), await fs.realpath(root));
+  assert.equal(await resolveWorkspaceEntry(root, 'repo'), await fs.realpath(path.join(root, 'repo')));
+  await assert.rejects(() => resolveWorkspaceEntry(root, '/etc'), /relative/);
+  await assert.rejects(() => resolveWorkspaceEntry(root, '../escape'), /\.\./);
+  await fs.symlink(outside, path.join(root, 'escape'));
+  await assert.rejects(() => resolveWorkspaceEntry(root, 'escape'), /outside workspace/);
+  await assert.rejects(() => resolveWorkspaceEntry(root, 'missing'), { code: 'ENOENT' });
 });
 
 test('new file through symlinked outside parent is rejected', async () => {

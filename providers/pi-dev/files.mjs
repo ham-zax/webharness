@@ -12,6 +12,7 @@ import {
   createParents,
   resolveExistingWorkspacePath,
   resolveNewWorkspacePath,
+  resolveWorkspaceEntry,
   resolveUserPath
 } from './boundary.mjs';
 import { withMutationPath, withMutationPaths } from './mutation-coordinator.mjs';
@@ -281,8 +282,15 @@ export async function runRead({ pathMode = 'workspace', defaultCwd, workspaceRoo
   const policy = await resolveFilePolicy({ pathMode, workspaceRoot, defaultCwd });
   const target = policy.pathMode === 'user'
     ? await resolveUserPath(policy.root, path)
-    : await resolveExistingWorkspacePath(policy.root, path);
+    : await resolveWorkspaceEntry(policy.root, path);
   try {
+    const stat = await fs.stat(target);
+    if (stat.isDirectory()) {
+      throw new Error(`EISDIR: ${path} is a directory; use list_directory with that path`);
+    }
+    if (!stat.isFile()) {
+      throw new Error(`EINVAL: ${path} is not a regular file; read supports regular text files only`);
+    }
     const buffer = await fs.readFile(target, { signal });
     let text;
     try {

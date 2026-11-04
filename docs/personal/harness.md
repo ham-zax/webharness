@@ -129,9 +129,32 @@ The WebSession adapter is deliberately not part of Personal Workstation automati
 
 ## Dev
 
+### File access
+
+The Dev provider sends this policy as MCP initialization instructions, so it reaches every client without an owner context file:
+
+1. Read a known text file with `read`.
+2. Discover names with `list_directory`, not with `exec` or Bash.
+3. If `exec` or Bash fails, do not conclude that filesystem access is unavailable. Retry with `read` or `list_directory`.
+4. Messages start with a code. `ENOENT`: correct or discover the path. `ENOTDIR` or `EISDIR`: call `list_directory`. `EACCES`: report the restriction.
+5. A folder the user names may differ from the directory name. List the parent, then use the exact name.
+6. Read only, unless the user asks for a change.
+
+When a natural-language request names a project, resolve the real directory first. `repo/Ahmed Hamza/workout`, `repo/ahmed hamza workout`, and `repo/ahmed-hamza-workout` differ on a case-sensitive filesystem. One `list_directory` on the parent settles the mapping, and a repository `README.md` or index usually names the active document.
+
 ### `read`
 
-Use for focused text/source reads. Relative paths resolve from the personal default cwd; harmless absolute paths are accepted.
+Use for focused text/source reads. Relative paths resolve from the personal default cwd; harmless absolute paths are accepted. Output is capped at 16 KiB per page and 500 lines by default; continue with `offset` from the truncation note.
+
+A directory target fails with `EISDIR` and names `list_directory` as the recovery route. Treat that as a routing signal, not as a broken connection.
+
+### `list_directory`
+
+Read-only discovery of one directory. Each entry reports its kind and name, and regular files add their size in bytes. Entries sort by name, hidden entries are included, and symbolic links are listed without being followed. `path` is optional and defaults to the authority root; `limit` defaults to 200 entries and cannot exceed 1000. A truncated result reports the observed total, so one call is enough to see whether a subdirectory is the better next step.
+
+Use it before reading an unknown path, and after an `ENOENT` or `ENOTDIR` error. Do not use `exec` with `ls`, `find`, or `rg --files` for this route; that needs shell or process authority for a read-only question.
+
+Path errors stay distinguishable after any client wrapper: `ENOENT` with a parent-listing hint, `ENOTDIR` with a `read` hint, and `EACCES` for a permission restriction.
 
 ### `edit`
 
@@ -173,7 +196,7 @@ For long noninteractive work such as installs and builds, `detach: true` starts 
 
 ### `bash`
 
-Runs one bounded, noninteractive native Bash program. It has the same **short-RPC-only** lifetime rule as `exec`: use it only when completion is expected comfortably inside the connector window, with 45 seconds as the routing target. If runtime is uncertain or may approach a minute, use Local Terminal + Dev `wait` instead of increasing `timeout_seconds`; the provider-side 300-second maximum does not extend connector lifetime. Within short work, use Bash only when shell semantics such as pipes, redirects, substitutions, variables, loops, or compound commands are materially required. Do not use Bash to orchestrate repeated MCP calls when Local `tool_batch` is available. Use `exec` + `rg` plus focused `read` for repository discovery.
+Runs one bounded, noninteractive native Bash program. It has the same **short-RPC-only** lifetime rule as `exec`: use it only when completion is expected comfortably inside the connector window, with 45 seconds as the routing target. If runtime is uncertain or may approach a minute, use Local Terminal + Dev `wait` instead of increasing `timeout_seconds`; the provider-side 300-second maximum does not extend connector lifetime. Within short work, use Bash only when shell semantics such as pipes, redirects, substitutions, variables, loops, or compound commands are materially required. Do not use Bash to orchestrate repeated MCP calls when Local `tool_batch` is available. Resolve unknown names with `list_directory` first, then use `exec` + `rg` plus focused `read` for content discovery.
 
 For syntax-shaped discovery or codemods, use ast-grep through `exec` when no shell composition is needed. Inspect bounded matches and normally perform the final mutation through guarded `edit`; use ast-grep bulk rewrite only when the transformation is deterministic and every bounded match is intentionally changed.
 

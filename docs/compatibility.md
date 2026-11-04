@@ -7,7 +7,7 @@ WebHarness treats the model-facing MCP surface as a public contract. Provider im
 The full Personal Workstation exposes these outer provider identities:
 
 ```text
-Dev       read edit write import_file file_ops review_changes wait exec bash
+Dev       read list_directory edit write import_file file_ops review_changes wait exec bash
 Local     tool_list tool_schema tool_call fallback_dispatch tool_batch
             |-- terminal  terminal_open / terminal_read / terminal_send / ...
             `-- host      pc_sleep

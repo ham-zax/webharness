@@ -61,6 +61,15 @@ test('read advances across blank lines and handles empty or oversized lines expl
   await assert.rejects(() => runRead({ workspaceRoot, path: 'blank.txt', offset: 3 }), /beyond end of file/);
 });
 
+test('read on a directory reports EISDIR with the listing recovery route', async () => {
+  const workspaceRoot = await tempDir('pi-read-dir-');
+  await fs.mkdir(path.join(workspaceRoot, 'ahmed-hamza-workout'));
+  await assert.rejects(
+    () => runRead({ workspaceRoot, path: 'ahmed-hamza-workout' }),
+    /^Error: EISDIR: ahmed-hamza-workout is a directory; use list_directory with that path$/
+  );
+});
+
 test('read rejects binary and invalid UTF-8 instead of returning corrupted text', async () => {
   const workspaceRoot = await tempDir('pi-read-binary-');
   for (const content of [Buffer.from([0xff]), Buffer.from('a\0b')]) {

@@ -8,6 +8,7 @@ import { canonicalDefaultCwd, canonicalWorkspaceRoot } from './boundary.mjs';
 import { fileURLToPath } from 'node:url';
 import { IdleExecutionWorker, serveExecutionWorker } from './idle-worker.mjs';
 import { pruneBashSpools } from './spool-gc.mjs';
+import { DEFAULT_LIST_LIMIT, MAX_LIST_LIMIT, runListDirectory } from './list-directory.mjs';
 
 const executionWorker = process.argv.includes('--dev-execution-worker');
 const { runRead, runEdit, runWrite } = executionWorker ? await import('./files.mjs') : {};
@@ -24,6 +25,7 @@ import {
   renderFileOpsPartial,
   renderFileOpsText,
   renderImportFileText,
+  renderListDirectoryText,
   renderReviewChangesText,
   renderWriteText,
 } from './render.mjs';
@@ -34,6 +36,20 @@ import { WaitStore } from './wait-state.mjs';
 import { TerminalWaitSource } from './wait-terminal.mjs';
 
 const OWNER_CONTEXT_MAX_BYTES = 32 * 1024;
+
+// Routing rules that must reach every client, independent of any owner context file.
+const FILE_ACCESS_INSTRUCTIONS = [
+  'Dev file access policy:',
+  '- Read a known text file with read. Discover names with list_directory, not with exec or bash.',
+  '- If exec or bash fails, do not conclude that filesystem access is unavailable. Retry with read or list_directory.',
+  '- Messages start with a code. ENOENT: correct or discover the path. ENOTDIR or EISDIR: call list_directory. EACCES: report the restriction.',
+  '- A folder the user names may differ from the directory name. List the parent, then use the exact name.',
+  '- Read only, unless the user asks for a change.',
+].join('\n');
+
+function serverInstructions(ownerContext) {
+  return ownerContext ? `${FILE_ACCESS_INSTRUCTIONS}\n\n${ownerContext}` : FILE_ACCESS_INSTRUCTIONS;
+}
 
 async function loadOwnerContext(file) {
   if (!file) return undefined;
@@ -173,7 +189,7 @@ try {
 
 const server = new McpServer(
   { name: 'pi-dev', version: '0.1.0' },
-  ownerContext ? { instructions: ownerContext } : undefined,
+  { instructions: serverInstructions(ownerContext) },
 );
 const idleValue = process.env.MCP_DEV_WORKER_IDLE_MS ?? '600000';
 const idleMs = Number(idleValue);
@@ -199,6 +215,9 @@ const cwdPath = pathMode === 'user'
   ? z.string().min(1).describe('Optional cwd; relative paths resolve from the configured default cwd and absolute paths are accepted')
   : z.string().min(1).describe('Optional cwd relative to the configured workspace root');
 const pathPolicy = { pathMode, workspaceRoot, defaultCwd };
+const listPath = pathMode === 'user'
+  ? z.string().min(1).describe('Directory to list; relative paths resolve from the configured default cwd and absolute paths are accepted')
+  : z.string().min(1).describe('Directory to list, relative to the configured workspace root');
 
 async function invoke(fn) {
   try {
@@ -241,7 +260,7 @@ function renderWaitResult(result) {
 }
 
 registerTool('read', {
-  description: 'Read UTF-8 text in pages of at most 16 KiB. offset is a 1-based line; limit is a line count. Truncated results give the next offset.' + (readDefaultLines ? ` Without limit, at most ${readDefaultLines} lines.` : ''),
+  description: 'Read UTF-8 text in pages of at most 16 KiB. offset is a 1-based line; limit is a line count. Truncated results give the next offset. A directory path is refused with EISDIR; use list_directory instead.' + (readDefaultLines ? ` Without limit, at most ${readDefaultLines} lines.` : ''),
   inputSchema: {
     path: modelPath,
     offset: z.number().int().positive().optional(),
@@ -264,6 +283,27 @@ registerTool('read', {
     throw new Error('dev.read supports text files only');
   }
   return { content: result.content };
+}));
+
+registerTool('list_directory', {
+  description: `List one directory as bounded entries: kind (dir, file, link, other) and name, plus bytes for regular files. Sorted by name. Symlinks are listed and never followed. Use this to resolve a name the user gives you before reading, instead of exec or bash. Omit path to list the authority root. limit defaults to ${DEFAULT_LIST_LIMIT} entries, maximum ${MAX_LIST_LIMIT}.`,
+  inputSchema: {
+    path: listPath.optional(),
+    limit: z.number().int().positive().max(MAX_LIST_LIMIT).optional().describe(`Maximum entries to return; default ${DEFAULT_LIST_LIMIT}`)
+  },
+  annotations: {
+    readOnlyHint: true,
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: false,
+  }
+}, async (args, extra) => invoke(async () => {
+  const result = await runListDirectory({
+    ...pathPolicy,
+    path: args.path,
+    limit: args.limit
+  }, extra.signal);
+  return { content: [{ type: 'text', text: renderListDirectoryText(result) }] };
 }));
 
 registerTool('edit', {

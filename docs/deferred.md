@@ -44,3 +44,34 @@ Keep existing MCP guidance until separate-task evidence supports a replacement.
 **Do it when** restarts become frequent (for example automated deploys or cutovers), when an agent needs detached jobs to survive restarts, or when a tunnel-only crash needs restarting without bouncing the bridge.
 
 **Verify on ARM first** (`ssh -F ssh_config ARM` from the private `myservers` repo), then WSL.
+
+## Fuzzy repository-name resolution and per-call gateway diagnostics
+
+**Status:** proposal after the 2026-11-04 ARM WebHarness incident report. The
+read-only directory listing from the same report shipped; these two parts did
+not.
+
+**Context.** An assistant read `repo/ahmed-hamza-workout` as `repo/Ahmed
+Hamza/workout`, reported `ENOENT`, then reported that repository access was
+lost because `exec` and `bash` failed. The listing tool and the built-in
+file-access instructions settle both failures: one listing resolves the slug,
+and the policy forbids the "access is gone" conclusion.
+
+**Proposal, part one: `find_files`.** A case-insensitive name search under an
+authorized root, bounded by depth and result count. Deferred because one
+`list_directory` call on the parent answers the same question for every case in
+the report, and a search tool adds an unbounded traversal surface for a result
+count that `limit` already caps.
+
+**Proposal, part two: gateway diagnostics.** Record tool name, sanitized
+arguments, timestamp, error code, request ID, downstream server, and whether
+the call reached the downstream process. Deferred because the observed wrapper
+(`INVALID_ARGUMENT` / `RuntimeException` / `Error calling MCP tool`) comes from
+the client connector or the 1MCP proxy, not from `pi-dev`. `pi-dev` already
+returns the plain coded message and sanitizes paths. Per-call request identity
+belongs to those layers, so building it in `pi-dev` would duplicate state that
+the proxy already owns.
+
+**Do it when** a future incident shows a name-search need that repeated bounded
+listings cannot meet, or when a gateway rejection must be attributed to a
+specific layer and `bin/status` plus the 1MCP log no longer suffice.

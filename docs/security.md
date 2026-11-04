@@ -15,7 +15,8 @@ Use when conservative workspace-bounded authority is required.
 
 Use only on a dedicated development host where unrestricted shell authority is intentional.
 
-- Files remain workspace-bounded.
+- Files remain workspace-bounded, including `list_directory`, which resolves through the same path policy and refuses a symlinked escape.
+- `list_directory` is read-only: it lists kind and name for at most `limit` entries, never follows a symbolic link, and adds no authority beyond `read`. In the Personal profile it inherits the user-path authority that `read` already has.
 - Dev exposes shell-free structured argv execution and native Bash with the permissions of the Linux service user.
 - Both `exec` and Bash may reach files, processes, network resources, developer tools, and credentials accessible to that account even when the Files tools are workspace-bounded. `exec` removes shell parsing; it is not a privilege boundary.
 - Local is not present, so Terminal, Host, and Browser logical servers are absent.

@@ -39,7 +39,7 @@ OpenAI Secure MCP Tunnel is a separate possible transport for a ChatGPT develope
 
 `MCP_PERSONAL_DEFAULT_CWD` is optional and applies to the `personal` and `server` profiles. Leave it empty/unset to use the Linux account's `$HOME`. `MCP_TERMINAL_FRONTEND` is also personal-only: unset/empty defaults to `kitty`, and the accepted values are `kitty` and `windows-terminal`. The renderer validates this selector only for `personal`, so a stray value does not break `restricted` or `trusted-dev`.
 
-`MCP_OWNER_CONTEXT_FILE` and `MCP_OWNER_ENV_FILE` are optional personal-profile references to owner-controlled files outside the repository. Both paths must be absolute when set. `pi-dev` requires the context file to be a readable, current-user-owned regular file no larger than 32 KiB and publishes non-empty content as MCP initialization instructions. The renderer requires the env file to be a readable, current-user-owned regular file no larger than 64 KiB and permits only `GALLIUM_DRIVER`, `MOZ_ENABLE_WAYLAND`, `AGENT_BROWSER_PROFILE`, `AGENT_BROWSER_EXECUTABLE_PATH`, and `MCP_BROWSER_DEFAULT_TARGET`. The Agent Browser settings are Linux `browser-fast`-only; the executable path must be absolute and executable. `MCP_BROWSER_DEFAULT_TARGET` must be `windows` or `linux` and is rendered into all three browser servers. Generated `owner.env` still contains only the validated Dev/Terminal GUI variables, so Agent Browser settings are not imported into systemd service environments. Do not put trust policy or secrets in `.env` or the owner GUI env.
+`MCP_OWNER_CONTEXT_FILE` and `MCP_OWNER_ENV_FILE` are optional personal-profile references to owner-controlled files outside the repository. Both paths must be absolute when set. `pi-dev` requires the context file to be a readable, current-user-owned regular file no larger than 32 KiB and publishes non-empty content as MCP initialization instructions after the built-in Dev file-access policy. That policy always ships: it routes known files to `read`, name discovery to `list_directory`, and it forbids reporting lost filesystem access only because `exec` or Bash failed. The renderer requires the env file to be a readable, current-user-owned regular file no larger than 64 KiB and permits only `GALLIUM_DRIVER`, `MOZ_ENABLE_WAYLAND`, `AGENT_BROWSER_PROFILE`, `AGENT_BROWSER_EXECUTABLE_PATH`, and `MCP_BROWSER_DEFAULT_TARGET`. The Agent Browser settings are Linux `browser-fast`-only; the executable path must be absolute and executable. `MCP_BROWSER_DEFAULT_TARGET` must be `windows` or `linux` and is rendered into all three browser servers. Generated `owner.env` still contains only the validated Dev/Terminal GUI variables, so Agent Browser settings are not imported into systemd service environments. Do not put trust policy or secrets in `.env` or the owner GUI env.
 
 ## WebSession adapter
 
@@ -68,7 +68,7 @@ Linux `browser-fast` reads the current-user-owned `~/.config/mcp-dev-bridge/brow
 The maintained full reference composition is:
 
 ```text
-Dev       read edit write import_file file_ops review_changes wait exec bash
+Dev       read list_directory edit write import_file file_ops review_changes wait exec bash
 Local     tool_list tool_schema tool_call fallback_dispatch tool_batch
             |-- terminal          durable PTY/session control
             |-- host              pc_sleep

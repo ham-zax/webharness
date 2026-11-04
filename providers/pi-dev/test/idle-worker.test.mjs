@@ -90,7 +90,9 @@ test('real MCP discovery stays cold and retains schema metadata and owner instru
   await client.connect(transport);
   const tools = (await client.listTools()).tools;
   assert.deepEqual(tools.find(tool => tool.name === 'import_file')._meta, {'openai/fileParams':['file']});
-  assert.equal(client.getInstructions(),'owner instructions');
+  const published = client.getInstructions();
+  assert.ok(published.endsWith('\n\nowner instructions'));
+  assert.match(published, /Dev file access policy/);
   assert.equal((await fs.readFile(`/proc/${transport.pid}/task/${transport.pid}/children`, 'utf8')).trim(), '');
   await fs.writeFile(path.join(root,'hello.txt'),'hello');
   const result = await client.callTool({name:'read',arguments:{path:'hello.txt'}});

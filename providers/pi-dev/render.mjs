@@ -120,3 +120,24 @@ export function renderFileOpsPartial({ completed = [], failed = [], uncertain = 
   if (unattempted.length) lines.push(`unattempted: ${unattempted.map(fileOpLabel).join(', ')}`);
   return lines.join('\n');
 }
+
+function listEntryLine(entry) {
+  const name = entry.name.replace(/[\u0000-\u001f\u007f]/g, '?');
+  if (entry.kind === 'file' && Number.isFinite(entry.bytes)) {
+    return `file ${name} ${entry.bytes}B`;
+  }
+  return `${entry.kind} ${name}`;
+}
+
+export function renderListDirectoryText(result) {
+  const lines = [`dir: ${result.path}`, `entries: ${result.total}`];
+  if (result.entries.length > 0) lines.push(...result.entries.map(listEntryLine));
+  else lines.push('[empty directory]');
+  if (result.entries.some(entry => entry.kind === 'link')) {
+    lines.push('[symlinks are listed and not followed]');
+  }
+  if (result.truncated) {
+    lines.push(`[truncated · ${result.total} entries total · raise limit above ${result.limit} or list a subdirectory]`);
+  }
+  return lines.join('\n');
+}

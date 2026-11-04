@@ -99,6 +99,17 @@ export async function resolveExistingWorkspacePath(root, relativePath) {
   return target;
 }
 
+// Directory discovery: the same canonical, inside-root guarantees as a file target, without
+// asserting the entry type. The caller decides whether a non-directory is an error.
+export async function resolveWorkspaceEntry(root, relativePath) {
+  const canonicalRoot = await canonicalWorkspaceRoot(root);
+  requireRelative(relativePath, 'path');
+  const target = await fs.realpath(path.resolve(canonicalRoot, relativePath));
+  requirePiStablePath(target, 'path');
+  if (!isWithin(canonicalRoot, target)) throw new Error('path resolves outside workspace');
+  return target;
+}
+
 export async function resolveNewWorkspacePath(root, relativePath) {
   const canonicalRoot = await canonicalWorkspaceRoot(root);
   requireRelative(relativePath, 'path');
