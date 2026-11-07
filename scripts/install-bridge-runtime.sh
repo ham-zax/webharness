@@ -41,6 +41,33 @@ if (source.includes(upstream)) {
 NODE
 echo "  patched exact registered HTTPS OAuth callbacks"
 
+echo "== applying pinned 1MCP consent redirect compatibility =="
+OAUTH_ROUTES="$(npm root -g)/@1mcp/agent/build/transport/http/routes/oauthRoutes.js"
+node --input-type=module - "$OAUTH_ROUTES" <<'NODE'
+import fs from 'node:fs';
+const [routesPath] = process.argv.slice(2);
+const upstream = `            if (result.status === 'approved_redirect' || result.status === 'denied_redirect') {
+                res.redirect(result.redirectUrl);
+                return;
+            }`;
+const patched = `            if (result.status === 'approved_redirect' || result.status === 'denied_redirect') {
+                const target = result.redirectUrl.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+                res.setHeader('Cache-Control', 'no-store');
+                res.setHeader('Referrer-Policy', 'no-referrer');
+                res.type('html').send('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta http-equiv="refresh" content="0;url=' + target + '"><title>Returning to the application</title></head><body><a href="' + target + '">Continue</a></body></html>');
+                return;
+            }`;
+
+let source = fs.readFileSync(routesPath, 'utf8');
+if (source.includes(upstream)) {
+  source = source.replace(upstream, patched);
+  fs.writeFileSync(routesPath, source);
+} else if (!source.includes(patched)) {
+  throw new Error('pinned 1MCP consent handler source shape changed; refusing an unsafe redirect patch');
+}
+NODE
+echo "  patched consent completion to navigate outside form-action"
+
 echo "== applying pinned 1MCP restart-stable log rotation =="
 LOGGER_IMPL="$(npm root -g)/@1mcp/agent/build/logger/logger.js"
 node --input-type=module - "$LOGGER_IMPL" <<'NODE'
