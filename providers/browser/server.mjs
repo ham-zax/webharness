@@ -25,6 +25,23 @@ const OS_TEMP_PATH_FIELDS = new Set([
   'outputDirPath'
 ]);
 const OS_TEMP_PATH_GUIDANCE = 'In this deployment, explicit paths must be inside the selected target\'s OS temporary directory.';
+const WINDOWS_PATH_FORM = /^(?:[A-Za-z]:[\\/]|\\\\)/u;
+const POSIX_PATH_FORM = /^\//u;
+
+// Reject a path that cannot work for the selected target before any browser work starts.
+// The check is syntactic: resolving the real Windows temp directory needs a cmd.exe round
+// trip on every call, and chrome-devtools-mcp rejects the mismatch with a message that
+// names neither the target nor the field.
+function pathFormRejection(target, field, value) {
+  if (typeof value !== 'string' || value.length === 0) return null;
+  if (target === 'windows' && POSIX_PATH_FORM.test(value)) {
+    return `${field} must be a Windows path when browser_target is windows, for example C:\\Users\\<user>\\AppData\\Local\\Temp\\shot.png`;
+  }
+  if (target === 'linux' && WINDOWS_PATH_FORM.test(value)) {
+    return `${field} must be a POSIX path when browser_target is linux, for example /tmp/shot.png`;
+  }
+  return null;
+}
 
 const BASE_CHROME_ARGS = [
   '-y',
@@ -329,13 +346,13 @@ export class BrowserRouter {
   async listTools() {
     if (!this.toolsPromise) {
       this.toolsPromise = (async () => {
-        const child = await this.childFactory('linux');
-        try {
-          const { tools } = await child.listTools();
-          return tools.map(addBrowserTarget);
-        } finally {
-          await child.close().catch(() => {});
-        }
+        // Resolve the same route a default call uses. A bare child would be keyed
+        // 'linux' while a default call is keyed 'linux:chrome:default', so the two
+        // would stay separate children and the first call would pay a second start.
+        const route = await this.linuxRoute(undefined, undefined);
+        const child = await this.child('linux', route);
+        const { tools } = await child.listTools();
+        return tools.map(addBrowserTarget);
       })().catch(error => {
         this.toolsPromise = null;
         throw error;
@@ -360,6 +377,11 @@ export class BrowserRouter {
     }
     if (target === 'windows' && (browserBackend !== undefined || browserProfile !== undefined)) {
       throw browserError('INVALID_ARGUMENT', 'browser_backend and browser_profile are Linux-only for browser-devtools');
+    }
+    for (const field of OS_TEMP_PATH_FIELDS) {
+      if (!Object.hasOwn(upstreamArgs, field)) continue;
+      const rejection = pathFormRejection(target, field, upstreamArgs[field]);
+      if (rejection) throw browserError('INVALID_ARGUMENT', rejection);
     }
 
     const route = target === 'linux'

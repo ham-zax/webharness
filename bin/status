@@ -17,6 +17,7 @@ else
 fi
 PUBLIC_URL="$(cat "$BRIDGE_TUNNEL_URL_FILE" 2>/dev/null || printf '%s' "${TUNNEL_URL:-}")"
 RENDERED_SOURCE_ROOT="${MCP_BRIDGE_ROOT:-$BRIDGE_ROOT}"
+BRIDGE_LOCAL_CONFIG_DIR="$BRIDGE_STATE_DIR/local-1mcp"
 
 echo "== WebHarness =="
 echo "desired state: $DESIRED"
@@ -152,6 +153,18 @@ if [ "$DESIRED" = "running" ] && [ ! -f "$BRIDGE_CONFIG_DIR/config.toml" ]; then
   warn "running bridge is missing 1MCP config.toml; re-render the deployment before restart"
 elif [ "$LOG_POLICY_BYTES" -gt 0 ] && [ "$LOG_BYTES" -gt "$LOG_POLICY_BYTES" ]; then
   warn "1MCP rotated logs exceed configured nominal retention: $LOG_BYTES > $LOG_POLICY_BYTES bytes"
+fi
+read -r INNER_LOG_FILES INNER_LOG_BYTES INNER_LOG_OLDEST_AGE < <(storage_stats "$BRIDGE_STATE_DIR/logs" 'local-inner*.log')
+INNER_LOG_MAX_SIZE="$(sed -n 's/^maxSize[[:space:]]*=[[:space:]]*\([0-9][0-9]*\)[[:space:]]*$/\1/p' "$BRIDGE_LOCAL_CONFIG_DIR/config.toml" 2>/dev/null | head -n1)"
+INNER_LOG_MAX_FILES="$(sed -n 's/^maxFiles[[:space:]]*=[[:space:]]*\([0-9][0-9]*\)[[:space:]]*$/\1/p' "$BRIDGE_LOCAL_CONFIG_DIR/config.toml" 2>/dev/null | head -n1)"
+if [[ "$INNER_LOG_MAX_SIZE" =~ ^[0-9]+$ ]] && [[ "$INNER_LOG_MAX_FILES" =~ ^[0-9]+$ ]]; then
+  INNER_LOG_POLICY_BYTES=$((INNER_LOG_MAX_SIZE * INNER_LOG_MAX_FILES))
+else
+  INNER_LOG_POLICY_BYTES=0
+fi
+echo "Local inner 1MCP logs: files=$INNER_LOG_FILES bytes=$INNER_LOG_BYTES policy_bytes=$INNER_LOG_POLICY_BYTES oldest_age_seconds=$INNER_LOG_OLDEST_AGE"
+if [ "$INNER_LOG_POLICY_BYTES" -gt 0 ] && [ "$INNER_LOG_BYTES" -gt "$INNER_LOG_POLICY_BYTES" ]; then
+  warn "Local inner 1MCP logs exceed configured nominal retention: $INNER_LOG_BYTES > $INNER_LOG_POLICY_BYTES bytes"
 fi
 
 DEV_SPOOL_BUDGET="$(node - "$BRIDGE_CONFIG_DIR/mcp.json" 2>/dev/null <<'NODE' || true

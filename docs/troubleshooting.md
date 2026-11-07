@@ -14,6 +14,22 @@ Treat direct Dev `exec`/`bash` as short-RPC work only. Use 45 seconds as the rou
 
 The Dev provider can accept a larger internal `timeout_seconds`, but that does not extend the model-facing connector lifetime. Do not put a long suite into one direct MCP `exec`/`bash` request and interpret a transport timeout as a command failure.
 
+## A browser tool call fails with `-32603 Error calling tool`
+
+That message is 1MCP's wrapper for any failed upstream call, and the wrapper replaces the cause. The cause is written to the inner 1MCP log.
+
+```bash
+grep -n 'browser-devtools' "${XDG_STATE_HOME:-$HOME/.local/state}/mcp-dev-bridge/logs/local-inner.log" | tail -20
+```
+
+Read three things in that line: the upstream server, the elapsed time, and the upstream message.
+
+*   A duration close to 180000 ms means the browser did not start in time. Check that `npx -y chrome-devtools-mcp` starts on its own, and that the browser named in `~/.config/mcp-dev-bridge/browser-fast.json` is reachable.
+*   A temp-directory rejection means the path form did not match the target. `browser_target: windows` needs a Windows path such as `C:\\Users\\<user>\\AppData\\Local\\Temp\\shot.png`; `browser_target: linux` needs a POSIX path such as `/tmp/shot.png`. The provider rejects the mismatch before it starts a browser.
+*   `BROWSER_CHILD_START_FAILED` means the `chrome-devtools-mcp` process itself did not start.
+
+If the inner log does not exist, the deployment predates the inner `[logging]` block. Re-render with `scripts/render-config.mjs`, then restart the bridge.
+
 ## `webharness status` reports local health failure
 
 Check the generated source/config paths first:

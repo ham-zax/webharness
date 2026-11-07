@@ -242,3 +242,82 @@ test('child configs keep Linux and Windows execution resource-local', () => {
   assert.ok(routed.args.includes('--experimentalPageIdRouting'));
   assert.equal(windows.args.includes('--experimentalPageIdRouting'), false);
 });
+
+test('browser router lists tools through the child that serves the first Linux call', async () => {
+  const created = [];
+  const closed = [];
+  const childFactory = async (target, config) => {
+    const child = {
+      alive: true,
+      target,
+      config,
+      async listTools() {
+        return { tools: [{ name: 'list_pages', inputSchema: { type: 'object', properties: {} } }] };
+      },
+      async callTool() { return { content: [] }; },
+      async close() { this.alive = false; closed.push(target); }
+    };
+    created.push(child);
+    return child;
+  };
+  const router = new BrowserRouter({
+    childFactory,
+    env: { DISPLAY: ':0' },
+    defaultTarget: 'linux',
+    linuxBackendResolve: async () => ({ browser: 'chrome' })
+  });
+
+  await router.listTools();
+  assert.equal(created.length, 1);
+  assert.deepEqual(closed, []);
+
+  await router.call({ tool: 'list_pages', arguments: {} });
+  assert.equal(created.length, 1);
+  assert.deepEqual(closed, []);
+
+  await router.shutdown();
+  assert.equal(created[0].alive, false);
+});
+
+test('browser router rejects a path form the selected target cannot use before starting a child', async () => {
+  const created = [];
+  const childFactory = async (target, config) => {
+    const child = {
+      alive: true,
+      async listTools() { return { tools: [] }; },
+      async callTool() { return { content: [] }; },
+      async close() { this.alive = false; }
+    };
+    created.push(child);
+    return child;
+  };
+  const router = new BrowserRouter({
+    childFactory,
+    env: { DISPLAY: ':0' },
+    defaultTarget: 'linux',
+    linuxBackendResolve: async () => ({ browser: 'chrome' })
+  });
+
+  await assert.rejects(
+    router.call({ tool: 'take_screenshot', arguments: { browser_target: 'windows', filePath: '/tmp/shot.png' } }),
+    /INVALID_ARGUMENT: filePath must be a Windows path/
+  );
+  assert.equal(created.length, 0);
+
+  await assert.rejects(
+    router.call({ tool: 'take_screenshot', arguments: { browser_target: 'linux', filePath: 'C:\\tmp\\shot.png' } }),
+    /INVALID_ARGUMENT: filePath must be a POSIX path/
+  );
+  assert.equal(created.length, 0);
+
+  await router.call({ tool: 'take_screenshot', arguments: { browser_target: 'windows', filePath: 'C:\\Users\\u\\AppData\\Local\\Temp\\shot.png' } });
+  assert.equal(created.length, 1);
+
+  await router.call({ tool: 'take_screenshot', arguments: { browser_target: 'linux', filePath: '/tmp/shot.png' } });
+  assert.equal(created.length, 2);
+
+  await router.call({ tool: 'take_screenshot', arguments: { browser_target: 'linux', filePath: 'shot.png' } });
+  assert.equal(created.length, 2);
+
+  await router.shutdown();
+});

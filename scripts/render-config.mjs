@@ -486,6 +486,8 @@ export async function renderConfig(options) {
   const localOneMcpDir = isLocal ? path.dirname(localInnerConfigPath) : null;
   const logDir = path.join(stateDir, 'logs');
   const oneMcpLogFile = path.join(logDir, 'one-mcp.log');
+  const localInnerLogFile = path.join(logDir, 'local-inner.log');
+  const localInnerAppConfigPath = isLocal ? path.join(localOneMcpDir, 'config.toml') : '';
   const configPath = path.join(oneMcpDir, 'mcp.json');
   const appConfigPath = path.join(oneMcpDir, 'config.toml');
   const bridgeEnvPath = path.join(stateDir, 'bridge.env');
@@ -502,6 +504,18 @@ export async function renderConfig(options) {
     `maxFiles = ${oneMcpLogMaxFiles}`,
     '',
   ].join('\n');
+  // The inner 1MCP reads config.toml from the directory of its --config file, so this
+  // block gives it a file transport and the same rotation policy as the outer process.
+  const localInnerAppConfig = isLocal
+    ? [
+        '[logging]',
+        `file = ${JSON.stringify(localInnerLogFile)}`,
+        'level = "info"',
+        `maxSize = ${oneMcpLogMaxSize}`,
+        `maxFiles = ${oneMcpLogMaxFiles}`,
+        '',
+      ].join('\n')
+    : '';
   const bridgeEnv = [
     `MCP_BRIDGE_PROFILE=${shellSingleQuote(profile)}`,
     `MCP_WORKSPACE_ROOT=${shellSingleQuote(workspaceRoot)}`,
@@ -531,12 +545,13 @@ export async function renderConfig(options) {
 
     if (isPersonal) await atomicWrite(path.join(stateDir, 'owner.env'), renderOwnerRuntimeEnv(ownerEnv));
     if (localRendered) await atomicWrite(localInnerConfigPath, `${JSON.stringify(localRendered, null, 2)}\n`);
+    if (localInnerAppConfigPath) await atomicWrite(localInnerAppConfigPath, localInnerAppConfig);
     await atomicWrite(configPath, `${JSON.stringify(rendered, null, 2)}\n`);
     await atomicWrite(appConfigPath, appConfig);
     await atomicWrite(bridgeEnvPath, bridgeEnv);
   }
 
-  return { profile, repoRoot, stateDir, oneMcpDir, configPath, localInnerConfigPath: localInnerConfigPath || null, appConfigPath, oneMcpLogFile, bridgeEnvPath, checkOnly };
+  return { profile, repoRoot, stateDir, oneMcpDir, configPath, localInnerConfigPath: localInnerConfigPath || null, localInnerAppConfigPath: localInnerAppConfigPath || null, appConfigPath, oneMcpLogFile, localInnerLogFile, bridgeEnvPath, checkOnly };
 }
 
 async function main() {

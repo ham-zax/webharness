@@ -15,6 +15,7 @@
       "args": [
         "__REPO_ROOT__/providers/browser/server.mjs"
       ],
+      "requestTimeout": 180000,
       "env": {
         "XDG_RUNTIME_DIR": "__RUNTIME_DIR__",
         "WAYLAND_DISPLAY": "wayland-0",
@@ -27,6 +28,7 @@
       "args": [
         "__REPO_ROOT__/providers/browser-fast/server.mjs"
       ],
+      "requestTimeout": 180000,
       "env": {
         "XDG_RUNTIME_DIR": "__RUNTIME_DIR__",
         "WAYLAND_DISPLAY": "wayland-0",

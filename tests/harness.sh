@@ -149,6 +149,10 @@ if (server.mcpServers.dev.env.MCP_DEV_WORKER_IDLE_MS !== '600000') process.exit(
 if (serverLocal.mcpServers.dev.env.MCP_DEV_WORKER_IDLE_MS !== '600000') process.exit(1);
 if (!serverEnv.includes("MCP_BRIDGE_PROFILE='server'")) process.exit(1);
 if (!personalEnv.includes("MCP_BRIDGE_PROFILE='personal'")) process.exit(1);
+if (personalLocal.mcpServers['browser-devtools'].requestTimeout !== 180000) process.exit(1);
+if (personalLocal.mcpServers['browser-fast'].requestTimeout !== 180000) process.exit(1);
+if (personal.mcpServers.local.requestTimeout !== 240000) process.exit(1);
+if (server.mcpServers.local.requestTimeout !== 240000) process.exit(1);
 NODE2
   local rc=$?
   if [ "$rc" -eq 0 ]; then
@@ -160,6 +164,13 @@ NODE2
       grep -Fq "file = \"$tmp/$profile/logs/one-mcp.log\"" "$log_cfg" || rc=1
       grep -Fq 'maxSize = 1048576' "$log_cfg" || rc=1
       grep -Fq 'maxFiles = 3' "$log_cfg" || rc=1
+    done
+    for profile in personal server; do
+      inner_cfg="$tmp/$profile/local-1mcp/config.toml"
+      grep -Fq '[logging]' "$inner_cfg" || rc=1
+      grep -Fq "file = \"$tmp/$profile/logs/local-inner.log\"" "$inner_cfg" || rc=1
+      grep -Fq 'maxSize = 1048576' "$inner_cfg" || rc=1
+      grep -Fq 'maxFiles = 3' "$inner_cfg" || rc=1
     done
   fi
   rm -rf "$tmp"

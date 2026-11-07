@@ -274,7 +274,7 @@ test_status_reports_bounded_diagnostic_storage() {
   local run="$sandbox/run"
   local fakebin="$sandbox/fakebin"
   local fakeproc="$sandbox/proc"
-  mkdir -p "$state/1mcp" "$state/logs" "$state/dev" "$run" "$fakebin" "$fakeproc"
+  mkdir -p "$state/1mcp" "$state/local-1mcp" "$state/logs" "$state/dev" "$run" "$fakebin" "$fakeproc"
   cat > "$state/bridge.env" <<EOF
 MCP_BRIDGE_PROFILE='personal'
 MCP_WORKSPACE_ROOT='$sandbox/workspace'
@@ -295,6 +295,14 @@ maxFiles = 3
 EOF
   printf '%01024d' 0 > "$state/logs/one-mcp.log"
   printf '%01024d' 0 > "$state/logs/one-mcp1.log"
+  cat > "$state/local-1mcp/config.toml" <<EOF
+[logging]
+file = "$state/logs/local-inner.log"
+level = "info"
+maxSize = 1024
+maxFiles = 3
+EOF
+  printf '%00512d' 0 > "$state/logs/local-inner.log"
   printf '%02048d' 0 > "$state/dev/bash-old.log"
   printf '%01024d' 0 > "$state/dev/exec-new.log"
   printf '%00512d' 0 > "$state/dev/exec-live.log.active"
@@ -313,6 +321,7 @@ SH
     BRIDGE_PROC_ROOT="$fakeproc" PATH="$fakebin:$PATH" bash "$ROOT/bin/status" 2>&1 || true)"
   grep -Fq '== retained diagnostics ==' <<<"$output" &&
   grep -Fq '1MCP rotated logs: files=2 bytes=2048 policy_bytes=3072' <<<"$output" &&
+  grep -Fq 'Local inner 1MCP logs: files=1 bytes=512 policy_bytes=3072' <<<"$output" &&
   grep -Fq 'Dev finalized spools: files=2 bytes=3072 budget_bytes=4096' <<<"$output" &&
   grep -Fq 'Dev active spools: files=1 bytes=512' <<<"$output"
 }

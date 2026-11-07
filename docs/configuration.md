@@ -138,7 +138,9 @@ owner.env         sanitized personal GUI environment when the personal profile i
 1mcp/mcp.json     rendered provider composition
 1mcp/config.toml  rendered 1MCP application policy, including bounded native logging
 1mcp/             1MCP writable application/OAuth/session state
+local-1mcp/       inner 1MCP composition and application policy for the Local broker
 logs/one-mcp.log  current native 1MCP application log; rotated siblings stay in logs/
+logs/local-inner.log  current inner 1MCP log; rotated siblings stay in logs/
 dev/              Dev durable retained-output state when enabled
 ```
 
@@ -166,6 +168,12 @@ Pi Dev also bounds retained Bash diagnostics independently of the model-visible 
 1MCP application logging uses the pinned runtime's native Winston file transport rather than an unbounded shell `>>` capture. The renderer writes a structured `[logging]` block to `1mcp/config.toml` and keeps the log under the private bridge state directory. `MCP_ONE_MCP_LOG_MAX_SIZE_BYTES` defaults to 10485760 bytes (10 MiB) and is constrained to 1..64 MiB; `MCP_ONE_MCP_LOG_MAX_FILES` defaults to 5 and is constrained to 1..10. The pinned runtime installer forces restart-stable tailable Winston rotation when more than one file is retained, and bridge startup removes numeric siblings left by the older incrementing mode beyond the configured file count. The parent `logs/` directory is mode 0700, and bridge startup uses `umask 077`.
 
 A fresh 1MCP launch suppresses the duplicate console stream after native file logging is configured and removes the legacy runtime `one-mcp.log` append file. `scripts/smoke-local.sh` requires the generated `config.toml`, so after upgrading an existing installation re-render/bootstrap the deployment before the first restart. If startup health fails, the lifecycle helper prints a bounded tail from the native log when available.
+
+The Local broker starts a second 1MCP process, and that process cannot see the outer log. The renderer therefore writes `local-1mcp/config.toml` with its own `[logging]` block, using the same `MCP_ONE_MCP_LOG_MAX_SIZE_BYTES` and `MCP_ONE_MCP_LOG_MAX_FILES` values, and points it at `logs/local-inner.log`. The inner 1MCP reads `config.toml` from the directory of its `--config` file, so no extra argument is needed. `bin/status` reports both logs; `scripts/smoke-local.sh` rejects a missing or unbounded inner block.
+
+## Request timeouts
+
+1MCP applies a per-request timeout to every upstream call and defaults to 60000 ms. A cold `npx -y chrome-devtools-mcp` start plus a Chrome launch can exceed that, so the browser entries carry `requestTimeout` 180000 in `mcp-local.json`. The outer `local` entry carries 240000 in `mcp-personal.json` and `mcp-server.json`, because the outer wait must outlast the inner one or the outer fails before the inner can report the cause. Operator servers added through `MCP_LOCAL_SERVERS_FILE` keep the 60000 ms default.
 
 ## On-demand runtimes
 

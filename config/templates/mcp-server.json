@@ -28,6 +28,7 @@
       "args": [
         "__REPO_ROOT__/providers/local-tools/server.mjs"
       ],
+      "requestTimeout": 240000,
       "env": {
         "MCP_LOCAL_INNER_CONFIG": "__LOCAL_INNER_CONFIG__",
         "MCP_LOCAL_ONE_MCP_ENTRY": "__ONE_MCP_ENTRY__",

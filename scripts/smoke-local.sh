@@ -137,6 +137,26 @@ if (!Number.isInteger(size) || size < 1048576 || size > 67108864) throw new Erro
 if (!Number.isInteger(files) || files < 1 || files > 10) throw new Error('1MCP logging.maxFiles is outside bridge policy');
 NODE
 
+LOCAL_INNER_CONFIG="$BRIDGE_STATE_DIR/local-1mcp/mcp.json"
+LOCAL_INNER_APP_CONFIG="$BRIDGE_STATE_DIR/local-1mcp/config.toml"
+if [ -f "$LOCAL_INNER_CONFIG" ]; then
+  if [ ! -f "$LOCAL_INNER_APP_CONFIG" ]; then
+    echo "missing inner 1MCP app config: $LOCAL_INNER_APP_CONFIG (re-render the deployment before starting the bridge)" >&2
+    exit 1
+  fi
+  node - "$LOCAL_INNER_APP_CONFIG" "$BRIDGE_STATE_DIR/logs/local-inner.log" <<'NODE'
+const fs = require('fs');
+const [configFile, expectedLogFile] = process.argv.slice(2);
+const text = fs.readFileSync(configFile, 'utf8');
+if (!text.includes('[logging]')) throw new Error('inner 1MCP config.toml must contain [logging]');
+if (!text.includes(`file = ${JSON.stringify(expectedLogFile)}`)) throw new Error('inner 1MCP logging.file must target the bridge state log path');
+const size = Number(text.match(/^maxSize\s*=\s*(\d+)$/m)?.[1]);
+const files = Number(text.match(/^maxFiles\s*=\s*(\d+)$/m)?.[1]);
+if (!Number.isInteger(size) || size < 1048576 || size > 67108864) throw new Error('inner 1MCP logging.maxSize is outside bridge policy');
+if (!Number.isInteger(files) || files < 1 || files > 10) throw new Error('inner 1MCP logging.maxFiles is outside bridge policy');
+NODE
+fi
+
 URL="${1:-http://127.0.0.1:$BRIDGE_ONE_MCP_PORT/mcp}"
 echo "== MCP initialize against $URL =="
 curl -sf -m 5 -X POST "$URL" \
