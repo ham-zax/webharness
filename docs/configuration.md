@@ -35,6 +35,8 @@ MCP_LOCAL_SERVERS_FILE=
 
 `MCP_TUNNEL_NAME` controls only the locally-managed Cloudflare startup command. Empty/unset, as on the maintained workstation, runs `cloudflared tunnel run` and relies on the operator-owned default `~/.cloudflared/config.yml` for tunnel identity. A non-empty value runs `cloudflared tunnel run <name>`. That named selector is implemented but is not the maintained workstation path.
 
+Minting and connecting an OAuth client per app is documented in [OAuth clients and remote login](oauth-clients.md).
+
 OpenAI Secure MCP Tunnel is a separate possible transport for a ChatGPT developer-mode app: an OpenAI-hosted tunnel endpoint talks to `tunnel-client` inside the private network, which can forward to the loopback MCP server without public ingress. WebHarness does not currently own that client, its tunnel identity/runtime credential, its service lifecycle, or the required OpenAI organization/workspace association. See [Getting Started](getting-started.md#provision-the-cloudflare-transport-used-by-the-reference-deployment).
 
 `MCP_PERSONAL_DEFAULT_CWD` is optional and applies to the `personal` and `server` profiles. Leave it empty/unset to use the Linux account's `$HOME`. `MCP_TERMINAL_FRONTEND` is also personal-only: unset/empty defaults to `kitty`, and the accepted values are `kitty` and `windows-terminal`. The renderer validates this selector only for `personal`, so a stray value does not break `restricted` or `trusted-dev`.
