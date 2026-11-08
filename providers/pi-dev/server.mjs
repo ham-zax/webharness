@@ -429,7 +429,9 @@ if (mode === 'unrestricted') {
   inputSchema: {
       argv: z.array(z.string()).min(1).max(256).describe('Executable name/path followed by literal arguments. Do not add shell quoting around individual elements.'),
       cwd: cwdPath.optional(),
-      timeout_seconds: z.number().positive().max(300).optional().describe('Execution deadline: default 30s, max 300s; does not extend the connector window. Not allowed with detach.'),
+      timeout_seconds: z.number().positive().max(300, {
+        message: 'timeout_seconds must be from 1 to 300. A larger deadline is rejected because it cannot extend the connector window: start long work with Local terminal_open, observe it with Dev wait, then read output with terminal_read.'
+      }).optional().describe('Execution deadline: default 30s, max 300s; does not extend the connector window. Not allowed with detach.'),
       detach: z.boolean().optional().describe('Start in the background with stdin closed and output to a log; returns job_id, pid, log_path and exit_path. Survives the call but not a WebHarness service restart.')
     }
   }, async (args, extra) => invoke(async () => {
@@ -454,7 +456,9 @@ if (mode === 'unrestricted') {
   inputSchema: {
       command: z.string().min(1),
       cwd: cwdPath.optional(),
-      timeout_seconds: z.number().positive().max(300).optional().describe('Execution deadline: default 30s, max 300s; does not extend the connector window.')
+      timeout_seconds: z.number().positive().max(300, {
+        message: 'timeout_seconds must be from 1 to 300. A larger deadline is rejected because it cannot extend the connector window: start long work with Local terminal_open, observe it with Dev wait, then read output with terminal_read.'
+      }).optional().describe('Execution deadline: default 30s, max 300s; does not extend the connector window.')
     }
   }, async (args, extra) => invoke(async () => {
     const result = await runBash({

@@ -269,6 +269,27 @@ test('trusted-dev exposes structured exec alongside Bash and minimal schemas', a
   });
 });
 
+test('bash and exec reject timeout_seconds above 300s with the long-work route', async () => {
+  const { env } = await fixture('unrestricted');
+  await withClient(env, async client => {
+    for (const [name, args] of [
+      ['bash', { command: 'true', timeout_seconds: 301 }],
+      ['exec', { argv: ['true'], timeout_seconds: 301 }]
+    ]) {
+      const rejected = await client.callTool({ name, arguments: args });
+      assert.equal(rejected.isError, true, `${name} must reject a deadline above the cap`);
+      assert.match(
+        textOf(rejected),
+        /timeout_seconds must be from 1 to 300[\s\S]*terminal_open[\s\S]*wait[\s\S]*terminal_read/,
+        `${name} must name the cap and the long-work route`
+      );
+    }
+    const accepted = await client.callTool({ name: 'bash', arguments: { command: 'echo capped-ok', timeout_seconds: 300 } });
+    assert.equal(accepted.isError, undefined);
+    assert.match(textOf(accepted), /capped-ok/);
+  });
+});
+
 test('restricted omits unrestricted Pi exec and bash', async () => {
   const { env } = await fixture('allowlist');
   await withClient(env, async client => {
