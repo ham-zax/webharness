@@ -1,5 +1,5 @@
 {
-  "_comment": "Keep managed CloakBrowser x-main as the shared Linux default. Select Chrome per call without rewriting this file. For explicit isolation, send browser_profile with browser_backend; Chrome creates persistent named profiles, while CloakBrowser names must be defined below.",
+  "_comment": "Keep managed CloakBrowser x-main as the shared Linux default. Select a backend per call without rewriting this file. For explicit isolation, send browser_profile with browser_backend; CloakBrowser names must be defined below. The Linux Chrome backend does not launch today.",
   "version": 2,
   "linux": {
     "browser": "cloakbrowser",

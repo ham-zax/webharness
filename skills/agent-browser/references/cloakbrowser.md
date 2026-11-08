@@ -56,9 +56,9 @@ Calling `browser-fast.observe` for Linux launches or reuses the headed managed p
 
 For requests that explicitly require a window visible on Windows, browser content and desktop projection are separate checks. A browser snapshot or screenshot proves rendered content. Completion requires a host-desktop capture showing the projected window or explicit human confirmation; otherwise report desktop visibility as unverified.
 
-## CloakBrowser 0.6.2 notes
+## CloakBrowser 0.6.5 notes
 
-The repository pins `cloakbrowser@0.6.2` with `playwright-core`. The binary is downloaded once into `~/.cloakbrowser` (signature and checksum verified) for Linux x86_64 or arm64; `scripts/setup-cloakbrowser.sh` pre-downloads it.
+The repository pins `cloakbrowser@0.6.5` with `playwright-core`. The binary is downloaded once into `~/.cloakbrowser` (signature and checksum verified) for Linux x86_64 or arm64; `scripts/setup-cloakbrowser.sh` pre-downloads it.
 
 Without a license key the wrapper runs the free Chromium 146 build. A key in `CLOAKBROWSER_LICENSE_KEY` or `~/.cloakbrowser/license.key` (`cloakbrowser login`) selects the newer build; the free key allows one concurrent session, so several live profiles need the keyless build or a paid key. Do not claim the newer build is active without checking.
 

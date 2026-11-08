@@ -1,3 +1,6 @@
+> **Historical record.** The `browser-jev` provider was removed and the managed Linux
+> backend is now CloakBrowser. This document is unchanged; read it as history.
+
 # Browser Jev Provider Design
 
 ## Purpose

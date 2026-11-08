@@ -202,12 +202,6 @@ export async function resolveLinuxBrowserBackend({
   }
   if (!isRecord(config)) throw configError('BROWSER_FAST_CONFIG_INVALID', `${configFile} must contain a JSON object`);
   if (!isRecord(config.linux)) throw configError('BROWSER_FAST_CONFIG_INVALID', 'browser-fast config linux must be an object');
-  if (config.clearcote !== undefined || config.linux.browser === 'clearcote') {
-    throw configError(
-      'BROWSER_FAST_CONFIG_INVALID',
-      'Clearcote was replaced by CloakBrowser; run node scripts/setup-browser-fast-config.mjs in the WebHarness checkout to convert this file'
-    );
-  }
 
   if (config.version === 2) {
     const configuredBrowser = config.linux.browser;

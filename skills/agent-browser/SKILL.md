@@ -42,7 +42,7 @@ substitute owners for managed state; the CLI fallback is explicitly isolated.
 ## Route by browser state
 
 - Routine Windows interaction -> use Local logical `server="browser-fast"`. Omit `browser_profile` for the shared persistent MCP Chrome profile, or set `browser_target="windows"`, `browser_backend="chrome"`, and a stable `browser_profile` name for an isolated persistent profile. The full `browser-devtools` diagnostics surface targets only the shared default Windows profile.
-- Routine interaction with managed visible Linux/WSLg browser state -> use the same logical `server="browser-fast"` route with `browser_target="linux"`. Managed CloakBrowser is the default Linux backend. Honor an explicit `browser_backend="cloakbrowser"|"chrome"`; do not infer or silently fall back to the other backend. For named isolation, set `browser_profile` together with the explicit backend. Read [references/cloakbrowser.md](references/cloakbrowser.md) before changing browser lifecycle, profile settings, or humanized input behavior.
+- Routine interaction with managed visible Linux/WSLg browser state -> use the same logical `server="browser-fast"` route with `browser_target="linux"`. Managed CloakBrowser is the default Linux backend. Honor an explicit `browser_backend="cloakbrowser"|`browser_backend="chrome"`; do not infer or silently fall back to the other backend. Linux `browser_backend="chrome"` does not launch today, so use CloakBrowser for every Linux task. For named isolation, set `browser_profile` together with the explicit backend. Read [references/cloakbrowser.md](references/cloakbrowser.md) before changing browser lifecycle, profile settings, or humanized input behavior.
 - DevTools diagnostics such as network, console, performance, Lighthouse, heap, screenshots, or detailed debugging -> use Local logical `server="browser-devtools"`; omit `arguments.browser_target` for the dedicated Windows MCP profile or pass `"linux"` for WSLg.
 - If the user specifically asks to control everyday Windows Chrome, report that it is outside the MCP browser boundary; do not silently substitute it for the dedicated profile.
 - Isolated/fresh browser automation, CLI-specific workflows, or Electron automation that does not need either resource-local browser -> use the installed `agent-browser` CLI.
@@ -69,7 +69,7 @@ For routine interaction, use the fast surface:
 
 Treat tabs as bounded task resources rather than an append-only history.
 
-- Default to one working tab plus at most two temporary context tabs for one task. Before `tab_new`, prefer navigating or reusing an existing suitable tab.
+- Default to one working tab plus at most two temporary context tabs for one task. Before `tab_new`, prefer navigating or reusing an existing suitable tab. A fresh managed CloakBrowser claims its blank launch tab, so navigate that tab. Each later `observe` without `tab` allocates a new tab and leaves the earlier one open.
 - Use `tab_list` when tab ownership is unclear, before opening another tab in an already-busy profile, or when the profile has accumulated roughly four or more tabs during the current workflow.
 - Close temporary tabs opened by the current task as soon as they are no longer needed. At task completion, normally leave one reusable working tab and any context tab that still has concrete continuation value.
 - Collapse duplicate tabs only when their ownership and redundancy are clear from the current workflow. On a shared profile, never bulk-close unknown tabs merely to reduce the count; another agent may own them.
@@ -102,7 +102,7 @@ For managed Linux/WSLg state, default the selector to managed CloakBrowser. Trea
 - Leave `fingerprint` unset so each profile keeps its own stored seed. Changing a profile's options relaunches the managed process while preserving profile state.
 - Re-observe after backend/profile relaunches because prior tab IDs and refs are no longer valid.
 
-See [references/cloakbrowser.md](references/cloakbrowser.md) for the current CloakBrowser 0.6.2 contract and version-specific limits.
+See [references/cloakbrowser.md](references/cloakbrowser.md) for the current CloakBrowser 0.6.5 contract and version-specific limits.
 
 For DevTools work, use `server="browser-devtools"`. If the action is already known, reuse its schema and call it directly. Otherwise use a narrow `tool_list(server="browser-devtools", query=...)`, load the exact `tool_schema` once, then reuse it for the session.
 

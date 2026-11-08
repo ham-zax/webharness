@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import http from 'node:http';
+import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -8,7 +9,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { resolveBrowserMemory } from '../browser-memory.mjs';
 import { defaultBrowserTarget, resolveLinuxBrowserBackend } from '../browser-backend-config.mjs';
-import { ManagedCloakBrowserRuntime } from '../cloakbrowser-runtime.mjs';
+import { ManagedCloakBrowserRuntime, readCloakBrowserEndpoint } from '../cloakbrowser-runtime.mjs';
 import { ensureWindowsChrome } from '../../browser/windows-chrome-runtime.mjs';
 import { readTargetInfo } from '../target-info.mjs';
 import {
@@ -1203,4 +1204,25 @@ test('default browser target is windows only on WSL hosts unless overridden', ()
     () => defaultBrowserTarget({ env: { MCP_BROWSER_DEFAULT_TARGET: 'mac' }, readOsRelease: linuxKernel }),
     /INVALID_BROWSER_TARGET/,
   );
+});
+
+test('a stale DevToolsActivePort reads as no browser instead of a live endpoint', async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'cloak-endpoint-'));
+  t.after(async () => { await fs.rm(root, { recursive: true, force: true }); });
+  const userDataDir = path.join(root, 'x-main');
+  await fs.mkdir(userDataDir, { recursive: true });
+
+  // Reserve a loopback port, then release it, so the file names a port that refuses.
+  const reserve = net.createServer();
+  await new Promise(resolve => reserve.listen(0, '127.0.0.1', resolve));
+  const port = reserve.address().port;
+  await new Promise(resolve => reserve.close(resolve));
+  await fs.writeFile(path.join(userDataDir, 'DevToolsActivePort'), `${port}\n/devtools/browser/stale\n`);
+
+  assert.equal(await readCloakBrowserEndpoint(userDataDir, { allowMissing: true }), null);
+
+  // No file at all is the same answer, and a non-missing caller still gets a hard error.
+  await fs.rm(path.join(userDataDir, 'DevToolsActivePort'));
+  assert.equal(await readCloakBrowserEndpoint(userDataDir, { allowMissing: true }), null);
+  await assert.rejects(readCloakBrowserEndpoint(userDataDir), /ENOENT/);
 });

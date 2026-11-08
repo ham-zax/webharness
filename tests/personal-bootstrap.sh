@@ -206,29 +206,23 @@ EOF
   grep -Fxq -- '--user enable --now wsl-agent-tmux.service wsl-agent-terminal-broker.service mcp-dev-bridge.service' "$home/systemctl.log" || return 1
 }
 
-test_browser_config_migration_is_conservative_and_lock_free() {
-  local root="$TMP/browser-config" migrated_home="$TMP/browser-config/migrated-home"
+test_browser_config_install_is_conservative_and_lock_free() {
+  local root="$TMP/browser-config" installed_home="$TMP/browser-config/installed-home"
   local external_home="$TMP/browser-config/external-home" concurrent_home="$TMP/browser-config/concurrent-home"
-  local migrated="$migrated_home/.config/mcp-dev-bridge/browser-fast.json"
+  local installed="$installed_home/.config/mcp-dev-bridge/browser-fast.json"
   local external="$external_home/.config/mcp-dev-bridge/browser-fast.json"
   local concurrent="$concurrent_home/.config/mcp-dev-bridge/browser-fast.json"
   local pid1 pid2 rc1 rc2 leftovers
-  mkdir -p "$root" "$(dirname "$migrated")" "$(dirname "$external")" "$(dirname "$concurrent")"
+  mkdir -p "$root" "$(dirname "$installed")" "$(dirname "$external")" "$(dirname "$concurrent")"
 
-  printf '%s\n' '{"version":1,"linux":{"browser":"clearcote","cdpPort":9222}}' > "$migrated"
-  HOME="$migrated_home" node "$BROWSER_CONFIG_SETUP" >/dev/null || return 1
-  cmp -s "$BROWSER_CONFIG_TEMPLATE" "$migrated" || return 1
+  HOME="$installed_home" node "$BROWSER_CONFIG_SETUP" >/dev/null || return 1
+  cmp -s "$BROWSER_CONFIG_TEMPLATE" "$installed" || return 1
 
   printf '%s\n' '{"version":1,"linux":{"browser":"cloakbrowser","cdpPort":43123}}' > "$external"
   cp "$external" "$root/external-before.json"
   HOME="$external_home" node "$BROWSER_CONFIG_SETUP" >/dev/null || return 1
   cmp -s "$root/external-before.json" "$external" || return 1
 
-  printf '%s\n' '{"version":1,"linux":{"browser":"clearcote","cdpPort":43123}}' > "$external"
-  HOME="$external_home" node "$BROWSER_CONFIG_SETUP" >/dev/null || return 1
-  [ "$(jq -c . "$external")" = '{"version":1,"linux":{"browser":"cloakbrowser","cdpPort":43123}}' ] || return 1
-
-  printf '%s\n' '{"version":1,"linux":{"browser":"clearcote","cdpPort":9222}}' > "$concurrent"
   HOME="$concurrent_home" node "$BROWSER_CONFIG_SETUP" >"$root/concurrent-1.log" 2>&1 &
   pid1=$!
   HOME="$concurrent_home" node "$BROWSER_CONFIG_SETUP" >"$root/concurrent-2.log" 2>&1 &
@@ -244,7 +238,7 @@ test_browser_config_migration_is_conservative_and_lock_free() {
 
 run_test 'personal bootstrap prepares state and wsl-term without installing startup services' test_prepare_without_startup_consent
 run_test 'personal bootstrap explicit startup consent installs and converges user services' test_startup_consent_installs_and_converges
-run_test 'browser-fast migration preserves external V1 config and concurrent agents converge without locks' test_browser_config_migration_is_conservative_and_lock_free
+run_test 'browser-fast install preserves external V1 config and concurrent agents converge without locks' test_browser_config_install_is_conservative_and_lock_free
 
 printf '\n%d tests, %d failures\n' "$TESTS" "$FAILURES"
 [ "$FAILURES" -eq 0 ]
