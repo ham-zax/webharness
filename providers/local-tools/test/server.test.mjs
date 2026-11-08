@@ -160,7 +160,7 @@ test('scoped discovery coalesces targeted recovery for a configured missing serv
       return { structuredContent: { status: 'success' }, content: [{ type: 'text', text: 'reloaded' }] };
     }
   });
-  const broker = new LocalToolBroker({ inner, configPath });
+  const broker = new LocalToolBroker({ inner, configPath, recovery: { pollMs: 5, timeoutMs: 400 } });
 
   const [first, second] = await Promise.all([
     broker.list({ server: 'codebase-memory-mcp' }),
@@ -189,7 +189,7 @@ test('failed direct call may recover an absent server but never auto-replays the
       return { content: [{ type: 'text', text: 'ok' }] };
     }
   });
-  const broker = new LocalToolBroker({ inner, configPath });
+  const broker = new LocalToolBroker({ inner, configPath, recovery: { pollMs: 5, timeoutMs: 400 } });
 
   await assert.rejects(
     () => broker.call({ server: 'codebase-memory-mcp', tool: 'list_projects' }),
@@ -199,6 +199,58 @@ test('failed direct call may recover an absent server but never auto-replays the
   const retry = await broker.call({ server: 'codebase-memory-mcp', tool: 'list_projects' });
   assert.equal(targetCalls, 2);
   assert.equal(retry.content[0].text, 'ok');
+});
+
+test('recovery budget exceeds the measured cold browser boot time', () => {
+  const inner = fakeInner({ pages: { FIRST: { tools: [] } } });
+  const broker = new LocalToolBroker({ inner, configPath: '/unused/mcp.json' });
+  assert.ok(
+    broker.recoveryTimeoutMs >= 60_000,
+    `a cold browser backend boots for up to 34s, so the recovery budget must exceed it; got ${broker.recoveryTimeoutMs}ms`
+  );
+});
+
+test('recovery polls a slow backend instead of reporting it unavailable', async t => {
+  const configPath = await configFile(t, ['browser-devtools']);
+  let reloaded = false;
+  let listingsAfterReload = 0;
+  let reloadTimeout;
+  const inner = fakeInner({
+    pages: () => {
+      if (!reloaded) return { tools: [] };
+      listingsAfterReload += 1;
+      // A cold backend registers no tools until its third listing.
+      return {
+        tools: listingsAfterReload >= 3 ? [{ name: 'browser-devtools_1mcp_take_screenshot', description: 'shot' }] : []
+      };
+    },
+    callHandler: async (name, args) => {
+      assert.equal(name, '1mcp_1mcp_mcp_reload');
+      reloadTimeout = args.timeout;
+      reloaded = true;
+      return { structuredContent: { status: 'success' }, content: [{ type: 'text', text: 'reloaded' }] };
+    }
+  });
+  const broker = new LocalToolBroker({ inner, configPath, recovery: { pollMs: 5, timeoutMs: 2_000 } });
+
+  const listed = await broker.list({ server: 'browser-devtools' });
+  assert.deepEqual(listed.tools.map(tool => tool.tool), ['take_screenshot']);
+  assert.ok(listingsAfterReload >= 3, 'the broker must re-check until the backend registers its tools');
+  assert.equal(reloadTimeout, broker.recoveryTimeoutMs, 'the inner reload must receive the recovery budget');
+});
+
+test('recovery reports the waited time when a backend never registers tools', async t => {
+  const configPath = await configFile(t, ['codebase-memory-mcp']);
+  const inner = fakeInner({
+    pages: () => ({ tools: [] }),
+    callHandler: async () => ({ structuredContent: { status: 'success' }, content: [{ type: 'text', text: 'reloaded' }] })
+  });
+  const broker = new LocalToolBroker({ inner, configPath, recovery: { pollMs: 5, timeoutMs: 60 } });
+
+  await assert.rejects(
+    () => broker.list({ server: 'codebase-memory-mcp' }),
+    /DOWNSTREAM_UNAVAILABLE: local server is configured but unavailable after [\d.]+s: codebase-memory-mcp/
+  );
 });
 
 test('tool_list is bounded, lightweight, resumable without a page cache, and filter-bound', async t => {

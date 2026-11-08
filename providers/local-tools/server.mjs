@@ -20,7 +20,13 @@ const CURSOR_VERSION = 1;
 const MAX_CURSOR_LENGTH = 4096;
 const MAX_BATCH_ID_LENGTH = 128;
 const INNER_RELOAD_TOOL = `1mcp${INNER_TOOL_SEPARATOR}mcp_reload`;
-const DOWNSTREAM_RELOAD_TIMEOUT_MS = 10_000;
+// A reload only restarts the downstream backend. The browser backend boots through
+// `cmd.exe` and `npx` into Windows, which measured 11 to 34 seconds on WSL, so a
+// shorter budget reports a healthy server as missing and starts a restart loop.
+const DEFAULT_DOWNSTREAM_RECOVERY_TIMEOUT_MS = 90_000;
+const MAX_DOWNSTREAM_RECOVERY_TIMEOUT_MS = 300_000;
+const DEFAULT_DOWNSTREAM_READY_POLL_MS = 1_000;
+const MAX_DOWNSTREAM_READY_POLL_MS = 5_000;
 
 function brokerError(code, message, cause) {
   const error = new Error(`${code}: ${message}`, cause ? { cause } : undefined);
@@ -42,6 +48,18 @@ function validateServerName(server, code = 'INVALID_SERVER') {
   if (server === '1mcp') throw brokerError(code, 'server name 1mcp is reserved');
   if (server.includes(INNER_TOOL_SEPARATOR)) throw brokerError(code, `server names must not contain ${INNER_TOOL_SEPARATOR}`);
   return server;
+}
+
+function boundedDuration(value, fallback, name) {
+  if (value === undefined) return fallback;
+  if (!Number.isInteger(value) || value < 1 || value > MAX_DOWNSTREAM_RECOVERY_TIMEOUT_MS) {
+    throw new TypeError(`${name} must be an integer from 1 to ${MAX_DOWNSTREAM_RECOVERY_TIMEOUT_MS}`);
+  }
+  return value;
+}
+
+function delay(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 function normalizeLimit(value) {
@@ -384,7 +402,7 @@ export class LazyInner1Mcp {
 }
 
 export class LocalToolBroker {
-  constructor({ inner, configPath, fallbackOnlyServers = [] }) {
+  constructor({ inner, configPath, fallbackOnlyServers = [], recovery = {} }) {
     if (!inner || typeof inner.listTools !== 'function' || typeof inner.callTool !== 'function' || typeof inner.close !== 'function') {
       throw new TypeError('inner with listTools(), callTool(), and close() is required');
     }
@@ -397,6 +415,11 @@ export class LocalToolBroker {
       validateServerName(server, 'INVALID_FALLBACK_SERVER_NAME');
       this.fallbackOnlyServers.add(server);
     }
+    if (recovery === null || typeof recovery !== 'object' || Array.isArray(recovery)) {
+      throw new TypeError('recovery must be an object');
+    }
+    this.recoveryTimeoutMs = boundedDuration(recovery.timeoutMs, DEFAULT_DOWNSTREAM_RECOVERY_TIMEOUT_MS, 'recovery.timeoutMs');
+    this.recoveryPollMs = boundedDuration(recovery.pollMs, DEFAULT_DOWNSTREAM_READY_POLL_MS, 'recovery.pollMs');
     this.closed = false;
     this.recoveryPromises = new Map();
   }
@@ -446,17 +469,32 @@ export class LocalToolBroker {
     }
   }
 
+  // The reload returns before the backend finishes booting, so one immediate
+  // tools/list reports a healthy server as missing. Poll to the recovery deadline.
+  async waitForServerTools(server, deadline = Date.now() + this.recoveryTimeoutMs) {
+    let interval = this.recoveryPollMs;
+    while (true) {
+      if (await this.hasServerTools(server)) return true;
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) return false;
+      await delay(Math.min(interval, remaining));
+      interval = Math.min(interval * 2, MAX_DOWNSTREAM_READY_POLL_MS);
+    }
+  }
+
   async recoverServer(server) {
     const active = this.recoveryPromises.get(server);
     if (active) return active;
     const recovery = (async () => {
+      const startedAt = Date.now();
+      const deadline = startedAt + this.recoveryTimeoutMs;
       let result;
       try {
         result = await this.inner.callTool(INNER_RELOAD_TOOL, {
           server,
           configOnly: false,
           force: true,
-          timeout: DOWNSTREAM_RELOAD_TIMEOUT_MS
+          timeout: this.recoveryTimeoutMs
         });
       } catch (error) {
         if (error?.code === 'INNER_UNAVAILABLE') throw error;
@@ -465,8 +503,9 @@ export class LocalToolBroker {
       if (result?.isError === true || result?.structuredContent?.status === 'failed') {
         throw brokerError('DOWNSTREAM_RECOVERY_FAILED', `1MCP could not reload local server: ${server}`);
       }
-      if (!await this.hasServerTools(server)) {
-        throw brokerError('DOWNSTREAM_UNAVAILABLE', `local server is configured but unavailable: ${server}`);
+      if (!await this.waitForServerTools(server, deadline)) {
+        const waited = ((Date.now() - startedAt) / 1000).toFixed(1);
+        throw brokerError('DOWNSTREAM_UNAVAILABLE', `local server is configured but unavailable after ${waited}s: ${server}`);
       }
     })();
     this.recoveryPromises.set(server, recovery);
@@ -478,7 +517,9 @@ export class LocalToolBroker {
   }
 
   async ensureServerAvailable(server) {
-    if (await this.hasServerTools(server)) return;
+    // One listing can miss a server that is still starting. Give it a single short
+    // grace window before a reload restarts a backend that may already be healthy.
+    if (await this.waitForServerTools(server, Date.now() + this.recoveryPollMs)) return;
     await this.recoverServer(server);
   }
 
