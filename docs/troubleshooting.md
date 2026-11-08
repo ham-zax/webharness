@@ -14,6 +14,8 @@ Treat direct Dev `exec`/`bash` as short-RPC work only. Use 45 seconds as the rou
 
 The Dev provider can accept a larger internal `timeout_seconds`, but that does not extend the model-facing connector lifetime. Do not put a long suite into one direct MCP `exec`/`bash` request and interpret a transport timeout as a command failure.
 
+A `timeout_seconds` value above 300 is rejected before the command runs, with `timeout_seconds must be from 1 to 300`. The cap is deliberate, because the deadline cannot outlive the connector window. Do not raise it. Use the Terminal and `wait` path above, or pass `detach=true` to `exec` and wait on its exit file.
+
 ## A browser tool call fails with `-32603 Error calling tool`
 
 That message is 1MCP's wrapper for any failed upstream call, and the wrapper replaces the cause. The cause is written to the inner 1MCP log.
@@ -29,6 +31,20 @@ Read three things in that line: the upstream server, the elapsed time, and the u
 *   `BROWSER_CHILD_START_FAILED` means the `chrome-devtools-mcp` process itself did not start.
 
 If the inner log does not exist, the deployment predates the inner `[logging]` block. Re-render with `scripts/render-config.mjs`, then restart the bridge.
+
+## A local server reports `DOWNSTREAM_UNAVAILABLE`
+
+The Local broker (`providers/local-tools/server.mjs`) sends `DOWNSTREAM_UNAVAILABLE` when a forced reload of one downstream server finishes and that server still lists no tools. The message now carries the wait: `local server is configured but unavailable after 34.2s: browser-devtools`.
+
+A reload only restarts the backend. The browser backend boots through `cmd.exe` and `npx` into Windows, which measured 11 to 34 seconds on WSL. A check that runs before the boot finishes reports a healthy server as missing, and each following call starts another restart, so the server never becomes ready.
+
+Since the recovery budget is 90 seconds and polls with backoff, a cold browser recovers inside one call. If the wait expires anyway, the backend itself is failing. Confirm it starts on its own:
+
+```bash
+npx -y chrome-devtools-mcp --browserUrl http://127.0.0.1:<port> --no-usage-statistics --no-performance-crux
+```
+
+Two `chrome-devtools-mcp` clients on one Chrome also cause this. The `wh-browser devtools` daemon and the MCP `browser-devtools` provider both attach to the same `--browserUrl`, and one can close the pages of the other. Stop the CLI daemon while an MCP client drives that browser.
 
 ## `webharness status` reports local health failure
 
