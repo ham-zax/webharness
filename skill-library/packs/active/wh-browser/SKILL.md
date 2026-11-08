@@ -50,9 +50,9 @@ Pass identical target/backend/profile on every call within one task.
 ## fast
 
 1. `wh-browser fast observe '{"scope":"compact"}'` → `active_tab`, `refs`, `tabs`.
-   The first observe on a fresh managed CloakBrowser claims its blank launch tab. Each later
-   observe that omits `tab` allocates a new tab and leaves the earlier one open. Pass your
-   `tab` on every later call so one task keeps one tab.
+   The first observe on a fresh managed CloakBrowser claims its blank launch tab. A later
+   observe that omits `tab` reuses a blank tab untouched for 10 minutes, and otherwise opens a
+   new tab. Pass your `tab` on every later call so one task keeps one tab.
 2. Navigate that tab when it is blank or holds only your own earlier page:
    `execute '{"tab":"<active_tab>","actions":[{"op":"navigate","url":"https://…"}],"final_state":"compact"}'`
    → new `final_state.active_tab`. Use `tab_new` only when the observed tab holds a page you

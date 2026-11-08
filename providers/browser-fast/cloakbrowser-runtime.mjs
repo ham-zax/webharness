@@ -49,6 +49,14 @@ async function waitForEndpoint(userDataDir) {
   throw runtimeError('CLOAKBROWSER_START_TIMEOUT', `CloakBrowser did not expose DevToolsActivePort within ${STARTUP_TIMEOUT_MS}ms`);
 }
 
+function pageUrl(page) {
+  try {
+    return page.url();
+  } catch {
+    return undefined;
+  }
+}
+
 function runtimeHealthy(runtime) {
   if (!runtime?.context) return false;
   try {
@@ -169,7 +177,7 @@ export class ManagedCloakBrowserRuntime {
     if (!runtimeHealthy(runtime)) throw runtimeError('CLOAKBROWSER_RUNTIME_UNAVAILABLE', `managed CloakBrowser profile ${profileName} is not active`);
     const targets = [];
     for (const page of runtime.context.pages()) {
-      targets.push({ targetId: await this.targetIdForPage(runtime, page), page });
+      targets.push({ targetId: await this.targetIdForPage(runtime, page), url: pageUrl(page), page });
     }
     return targets;
   }

@@ -1,6 +1,6 @@
 # Browser Fast tab workspace ownership
 
-Status: open. Defect confirmed on 2026-11-09. No code change yet.
+Status: implemented 2026-11-09. The provider reuses idle blank tabs. See Decision below.
 
 ## Symptom
 
@@ -41,21 +41,42 @@ Two behaviours combine:
 The skill now tells agents to navigate the observed tab when it is blank. That removes the
 dead tab in the common case and needs no code change.
 
-## Candidate repairs
+## Decision (2026-11-09)
 
-| Option | Shape | Cost |
-|---|---|---|
-| A | Key the workspace by the MCP client session (`extra.sessionId`): a client reuses its tab across turns, and the claim is released when that tab closes | Session identity must be available in both tool handlers; needs a test seam |
-| B | Release the claim at the end of every `execute` so the next `observe` reuses the tab | Two concurrent callers can claim the same tab; unsafe for parallel agents |
-| C | Close the blank launch tab when a caller opens its own tab | Removes the symptom, keeps the leak |
-| D | Leave the behaviour, document it | Keeps one extra tab per task indefinitely |
+The provider now reuses a blank tab whose claim went idle, and keeps every tab that holds
+content claimed.
 
-Option A is the smallest repair that keeps concurrent callers safe. It owns
-`prepareObservation`, not the skill.
+| Rule | Behavior |
+|---|---|
+| First no-tab `observe` | Claims the blank launch tab |
+| No-tab `observe` with a claimed blank tab younger than 10 minutes | Opens a new tab, so concurrent callers stay separate |
+| No-tab `observe` with a blank tab last claimed more than 10 minutes ago | Releases that claim and reuses the tab |
+| No-tab `observe` with only content tabs claimed | Opens a new tab |
+| Tabs that hold content | Stay claimed until they close |
 
-## Test plan
+`providers/browser-fast/server.mjs` holds the rule (`BLANK_TAB_CLAIM_IDLE_MS`), and
+`cloakbrowser-runtime.mjs` now reports each target's URL so the provider can tell a blank tab
+from a used one.
 
-- Fake runner, no CDP: two `observe` calls with the same client session return one tab.
-- Fake runner: two client sessions get different tabs.
-- Closed tab: the next `observe` for that client allocates a fresh tab.
-- Gated real-browser test: fresh CloakBrowser launch ends the task with one tab, not two.
+### Why not the session-keyed workspace
+
+The first proposal keyed the workspace by the MCP client session. That needs
+`extra.sessionId`, which only the HTTP transports set. The bridge starts every provider over
+stdio, so the deployed path would have fallen back to one shared workspace for all callers:
+two agents would then share one tab and overwrite each other. Reusing idle blank tabs keeps
+concurrent callers separate and removes the dead tab, so it is the smaller safe change.
+
+A session-keyed workspace becomes useful if the provider ever runs over HTTP. The blank-tab
+rule does not block that later step.
+
+## Implemented tests
+
+`providers/browser-fast/test/server.test.mjs`:
+
+- `reuses a blank tab whose claim went idle`: one tab after 11 idle minutes, `newTarget` not called.
+- `keeps a recent blank claim and opens a tab for the next caller`: a second tab after 1 minute.
+- `never reuses a claimed tab that holds content`: a second tab after 11 idle minutes.
+
+Still open: no test proves the tab count of a full task against a real CloakBrowser. The skill
+now tells agents to navigate the claimed tab and to close it, so the common case needs no
+further provider change.

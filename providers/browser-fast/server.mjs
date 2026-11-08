@@ -29,6 +29,8 @@ const DEFAULT_LINUX_CHROME_PROFILES_ROOT = path.join(
   'mcp-dev-bridge',
   'chrome-profiles'
 );
+// A claimed about:blank tab that stays untouched this long is free for the next caller to reuse.
+const BLANK_TAB_CLAIM_IDLE_MS = 10 * 60 * 1000;
 
 function fastError(code, message, cause) {
   const error = new Error(`${code}: ${message}`, cause ? { cause } : undefined);
@@ -256,7 +258,8 @@ export class AgentBrowserRunner {
     windowsChromeEnsure,
     linuxBackendResolve = resolveLinuxBrowserBackend,
     linuxChromeProfilesRoot = DEFAULT_LINUX_CHROME_PROFILES_ROOT,
-    cloakbrowserRuntime = new ManagedCloakBrowserRuntime()
+    cloakbrowserRuntime = new ManagedCloakBrowserRuntime(),
+    now = () => Date.now()
   } = {}) {
     this.env = env;
     this.processRunner = processRunner;
@@ -266,6 +269,7 @@ export class AgentBrowserRunner {
     this.linuxBackendResolve = linuxBackendResolve;
     this.linuxChromeProfilesRoot = linuxChromeProfilesRoot;
     this.cloakbrowserRuntime = cloakbrowserRuntime;
+    this.now = now;
     this.windowsAgentRuntimePromise = null;
     this.linuxSessions = new Map();
     this.externalPinnedReady = new Map();
@@ -678,17 +682,24 @@ export class AgentBrowserRunner {
     return await this.withCloakBrowserAllocation(selected.profileName, async () => {
       const liveTargets = await this.cloakbrowserRuntime.listTargets(selected.profileName);
       const liveIds = new Set(liveTargets.map(item => item.targetId));
-      const claims = this.cloakbrowserClaims.get(selected.profileName) ?? new Set();
-      for (const claimed of [...claims]) {
+      const blankIds = new Set(liveTargets.filter(item => item.url === 'about:blank').map(item => item.targetId));
+      const claims = this.cloakbrowserClaims.get(selected.profileName) ?? new Map();
+      const now = this.now();
+      for (const [claimed, claimedAt] of [...claims]) {
+        // Drop a claim on a tab that died, and release a claim on a blank tab after a long
+        // idle period. An empty tab holds no caller's work, so the next caller may reuse it
+        // instead of opening another tab. A tab with content stays claimed.
         if (!liveIds.has(claimed)) claims.delete(claimed);
+        else if (blankIds.has(claimed) && now - claimedAt > BLANK_TAB_CLAIM_IDLE_MS) claims.delete(claimed);
       }
 
       let targetId = tab;
       if (targetId === undefined) {
-        targetId = claims.size === 0 ? liveTargets[0]?.targetId : undefined;
+        const reusableBlank = liveTargets.find(item => blankIds.has(item.targetId) && !claims.has(item.targetId));
+        targetId = reusableBlank?.targetId ?? (claims.size === 0 ? liveTargets[0]?.targetId : undefined);
         if (targetId === undefined) targetId = (await this.cloakbrowserRuntime.newTarget(selected.profileName)).targetId;
       }
-      claims.add(targetId);
+      claims.set(targetId, now);
       this.cloakbrowserClaims.set(selected.profileName, claims);
       return {
         tab: targetId,

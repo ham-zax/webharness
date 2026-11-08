@@ -561,6 +561,72 @@ test('headless managed CloakBrowser keeps supported input on the CloakBrowser ex
   assert.deepEqual(result.items[0].result, { executor: 'cloakbrowser' });
 });
 
+function idleAllocationRunner({ targets, now }) {
+  let created = 0;
+  const runner = new AgentBrowserRunner({
+    now,
+    linuxBackendResolve: async () => ({
+      browser: 'cloakbrowser',
+      managed: true,
+      profileName: 'x-main',
+      profile: { humanize: true },
+      session: 'mcp-browser-fast-linux-cloakbrowser-x-main'
+    }),
+    cloakbrowserRuntime: {
+      async ensure() { return { cdp: '43111' }; },
+      async listTargets() { return [...targets]; },
+      async newTarget() {
+        created += 1;
+        const target = { targetId: `TARGET-NEW-${created}`, url: 'about:blank' };
+        targets.push(target);
+        return target;
+      },
+      async close() {}
+    }
+  });
+  return { runner, created: () => created };
+}
+
+test('managed CloakBrowser reuses a blank tab whose claim went idle', async () => {
+  let clock = 0;
+  const targets = [{ targetId: 'TARGET-A', url: 'about:blank' }];
+  const { runner, created } = idleAllocationRunner({ targets, now: () => clock });
+
+  const first = await runner.prepareObservation('linux');
+  clock = 11 * 60 * 1000;
+  const second = await runner.prepareObservation('linux');
+
+  assert.equal(first.tab, 'TARGET-A');
+  assert.equal(second.tab, 'TARGET-A');
+  assert.equal(created(), 0);
+});
+
+test('managed CloakBrowser keeps a recent blank claim and opens a tab for the next caller', async () => {
+  let clock = 0;
+  const targets = [{ targetId: 'TARGET-A', url: 'about:blank' }];
+  const { runner, created } = idleAllocationRunner({ targets, now: () => clock });
+
+  await runner.prepareObservation('linux');
+  clock = 60 * 1000;
+  const second = await runner.prepareObservation('linux');
+
+  assert.equal(second.tab, 'TARGET-NEW-1');
+  assert.equal(created(), 1);
+});
+
+test('managed CloakBrowser never reuses a claimed tab that holds content', async () => {
+  let clock = 0;
+  const targets = [{ targetId: 'TARGET-A', url: 'https://example.com/' }];
+  const { runner, created } = idleAllocationRunner({ targets, now: () => clock });
+
+  await runner.prepareObservation('linux');
+  clock = 11 * 60 * 1000;
+  const second = await runner.prepareObservation('linux');
+
+  assert.equal(second.tab, 'TARGET-NEW-1');
+  assert.equal(created(), 1);
+});
+
 test('managed CloakBrowser allocates a fresh tab for a second independent agent', async () => {
   const targets = [{ targetId: 'TARGET-A' }];
   let created = 0;

@@ -69,7 +69,7 @@ For routine interaction, use the fast surface:
 
 Treat tabs as bounded task resources rather than an append-only history.
 
-- Default to one working tab plus at most two temporary context tabs for one task. Before `tab_new`, prefer navigating or reusing an existing suitable tab. A fresh managed CloakBrowser claims its blank launch tab, so navigate that tab. Each later `observe` without `tab` allocates a new tab and leaves the earlier one open.
+- Default to one working tab plus at most two temporary context tabs for one task. Before `tab_new`, prefer navigating or reusing an existing suitable tab. A fresh managed CloakBrowser claims its blank launch tab, so navigate that tab. A later `observe` without `tab` reuses a blank tab untouched for 10 minutes, and otherwise opens a new tab.
 - Use `tab_list` when tab ownership is unclear, before opening another tab in an already-busy profile, or when the profile has accumulated roughly four or more tabs during the current workflow.
 - Close temporary tabs opened by the current task as soon as they are no longer needed. At task completion, normally leave one reusable working tab and any context tab that still has concrete continuation value.
 - Collapse duplicate tabs only when their ownership and redundancy are clear from the current workflow. On a shared profile, never bulk-close unknown tabs merely to reduce the count; another agent may own them.
