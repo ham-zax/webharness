@@ -6,8 +6,12 @@ description: Use the WebHarness wh-browser CLI to drive a browser for any web ta
 # Browser tiers (`wh-browser` CLI)
 
 `~/.local/bin/wh-browser` is a CLI for the webharness providers (`~/repo/webharness/providers`).
-Nothing is registered as an MCP server; call it via Bash. The first call per tier starts a
-background daemon (idle-exits after 30 min) so browser state persists between calls.
+Source of truth: `scripts/wh-browser.cjs` in the webharness repo. Install it with
+`ln -sf ~/repo/webharness/scripts/wh-browser.cjs ~/.local/bin/wh-browser`. Call it via Bash; it needs no MCP
+registration. The same providers are also registered as MCP servers in the WebHarness bridge,
+and each route owns its own browser processes: use one route per task, never both. The first
+call per tier starts a background daemon (idle-exits after 30 min) so browser state persists
+between calls.
 
 ```bash
 wh-browser <fast|devtools> tools               # tool names + arg names
@@ -40,16 +44,45 @@ you create.
 | **Windows Chrome** (default) | omit `browser_target` | Dedicated MCP Chrome on Windows; reaches WSL dev servers at `http://localhost:<port>`. |
 | **Linux CloakBrowser** | `"browser_target":"linux","browser_backend":"cloakbrowser","browser_profile":"x-main"` | Managed WSLg browser (config `~/.config/mcp-dev-bridge/browser-fast.json`). devtools attaches to it only after browser-fast has started it — run a fast `observe` first. |
 
-Choose Linux CloakBrowser when stealth matters (bot detection, anti-automation sites): it runs with a managed fingerprint and humanized input. Linux `browser_backend:"chrome"` currently fails to launch — use CloakBrowser.
+Choose Linux CloakBrowser when stealth matters (bot detection, anti-automation sites): it runs with a managed fingerprint and humanized input. Linux `browser_backend:"chrome"` does not launch today: it fails with `BROWSER_FAST_OBSERVE_FAILED`, or a `DevToolsActivePort` timeout for a named profile. Use CloakBrowser for every Linux task. Windows Chrome is unaffected.
 Pass identical target/backend/profile on every call within one task.
 
 ## fast
+
 1. `wh-browser fast observe '{"scope":"compact"}'` → `active_tab`, `refs`, `tabs`.
-2. Open your own tab rather than hijacking the user's:
-   `execute '{"tab":"<active_tab>","actions":[{"op":"tab_new","url":"https://…"}],"final_state":"compact"}'`
-   → new `final_state.active_tab`.
-3. `execute` with that `tab` and a batch of `actions` (`{op, target, value|url|key|text|…}`); ops: navigate back forward reload click fill type check uncheck select press hover drag scroll wait tab_list tab_new tab_switch tab_close. `target` = a ref from the latest observe/final_state only — never invented selectors. Fail-fast, never retries.
-4. Re-`observe` with `"tab"` when refs are stale. Finish with `{"op":"tab_close"}` on your tab.
+   The first observe on a fresh managed CloakBrowser claims its blank launch tab. Each later
+   observe that omits `tab` allocates a new tab and leaves the earlier one open. Pass your
+   `tab` on every later call so one task keeps one tab.
+2. Navigate that tab when it is blank or holds only your own earlier page:
+   `execute '{"tab":"<active_tab>","actions":[{"op":"navigate","url":"https://…"}],"final_state":"compact"}'`
+   → new `final_state.active_tab`. Use `tab_new` only when the observed tab holds a page you
+   must not disturb, such as another agent's work.
+3. `execute` with that `tab` and up to 64 `actions`. See **Action fields** below. `target` and
+   `destination` accept only a ref from the latest observe or `final_state`. Fail-fast, never
+   retries.
+4. Re-`observe` with `"tab"` when refs are stale. Finish with
+   `{"op":"tab_close","tab":"<tab>"}` on each tab you own. The last remaining tab cannot
+   close (`Cannot close the last Linux tab`); leave it blank.
+
+## Action fields
+
+Every action needs `op`. A wrong field name fails with `INVALID_ARGUMENT` naming the expected
+field.
+
+| op | fields |
+|---|---|
+| `navigate` | `url` |
+| `click`, `hover`, `check`, `uncheck` | `target` |
+| `fill`, `type` | `target`, `value` |
+| `select` | `target`, `values` (exactly one string) |
+| `press` | `key` |
+| `drag` | `target`, `destination` |
+| `scroll` | `delta_x`, `delta_y` (integers, at least one non-zero) |
+| `wait` | exactly one of `text` or `milliseconds` |
+| `upload` | `target`, `artifact` (approved artifact name; paths are rejected) |
+| `tab_new` | optional `url` |
+| `tab_switch`, `tab_close` | `tab` |
+| `back`, `forward`, `reload`, `tab_list` | none |
 
 ## devtools
 Standard Chrome DevTools MCP tools (`wh-browser devtools tools`). Flow: `new_page {url}` → `take_snapshot` (uids) → `click`/`fill`/`fill_form`, using `pageId` from `list_pages`. Diagnostics: `list_console_messages`, `list_network_requests` + `get_network_request`, `performance_start_trace`/`performance_stop_trace` + `performance_analyze_insight`, `lighthouse_audit`, `take_heapsnapshot`, `evaluate_script`, `emulate`. Write screenshots/traces/large output to `filePath` under the session scratchpad; images are not returned inline. `close_page` when done.
