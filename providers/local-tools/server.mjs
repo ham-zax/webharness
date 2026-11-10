@@ -15,6 +15,8 @@ export const MAX_LIST_LIMIT = 100;
 export const DEFAULT_BATCH_CONCURRENCY = 4;
 export const MAX_BATCH_CONCURRENCY = 16;
 export const MAX_BATCH_CALLS = 32;
+export const BROKER_TOOL_NAMES = Object.freeze(['tool_list', 'tool_schema', 'tool_call', 'fallback_dispatch', 'tool_batch']);
+const MAX_REPORTED_TOOL_NAME_LENGTH = 128;
 
 const CURSOR_VERSION = 1;
 const MAX_CURSOR_LENGTH = 4096;
@@ -170,6 +172,20 @@ function errorDetails(error) {
   const raw = error instanceof Error ? error.message : String(error);
   const message = raw.startsWith(`${code}: `) ? raw.slice(code.length + 2) : raw;
   return { code, message };
+}
+
+function unknownBrokerToolMessage(name) {
+  const text = typeof name === 'string' ? name : String(name);
+  const shown = text.length > MAX_REPORTED_TOOL_NAME_LENGTH ? `${text.slice(0, MAX_REPORTED_TOOL_NAME_LENGTH)}...` : text;
+  const valid = `valid broker tools: ${BROKER_TOOL_NAMES.join(', ')}`;
+  // Server names never contain the separator, but downstream tool names may, so split at the first one.
+  const at = text.indexOf(INNER_TOOL_SEPARATOR);
+  if (at > 0 && at + INNER_TOOL_SEPARATOR.length < text.length && text.length <= MAX_REPORTED_TOOL_NAME_LENGTH) {
+    const server = JSON.stringify(text.slice(0, at));
+    const tool = JSON.stringify(text.slice(at + INNER_TOOL_SEPARATOR.length));
+    return `unknown broker tool: ${shown}; downstream tools are not broker tools, call tool_call with {"server":${server},"tool":${tool},"arguments":{...}}; ${valid}`;
+  }
+  return `unknown broker tool: ${shown}; ${valid}; reach downstream tools with tool_call {server, tool, arguments}`;
 }
 
 function errorResult(error) {
@@ -828,7 +844,7 @@ export function createLocalBrokerServer({ broker } = {}) {
         if (typeof broker.batch !== 'function') throw brokerError('LOCAL_BATCH_UNAVAILABLE', 'local broker does not implement batch dispatch');
         return batchResult(await broker.batch(request.params.arguments ?? {}, extra.signal));
       }
-      return errorResult(brokerError('UNKNOWN_BROKER_TOOL', `unknown broker tool: ${request.params.name}`));
+      return errorResult(brokerError('UNKNOWN_BROKER_TOOL', unknownBrokerToolMessage(request.params.name)));
     } catch (error) {
       return errorResult(error);
     }
