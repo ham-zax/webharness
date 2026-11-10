@@ -50,7 +50,7 @@ test('truncation points to the full output handle', () => {
       truncated: true,
       full_output_path: '/state/dev/bash-a82f.log'
     })),
-    'tail\n[truncated · 0 bytes total · full: /state/dev/bash-a82f.log]\n[exit 0 · 0.0s]'
+    'tail\n[truncated · 0 bytes total · saved on remote host: /state/dev/bash-a82f.log]\n[exit 0 · 0.0s]'
   );
 });
 
@@ -62,7 +62,7 @@ test('capped retained output is labeled as partial rather than full', () => {
       spool_truncated: true,
       full_output_path: '/state/dev/bash-capped.log'
     })),
-    'tail\n[truncated · 0 bytes total · retained output capped · file: /state/dev/bash-capped.log]\n[exit 0 · 0.0s]'
+    'tail\n[truncated · 0 bytes total · retained output capped · saved on remote host: /state/dev/bash-capped.log]\n[exit 0 · 0.0s]'
   );
 });
 

@@ -1,19 +1,26 @@
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
+
+function expandUserTilde(value) {
+  if (value === '~') return os.homedir();
+  if (typeof value === 'string' && value.startsWith('~/')) return path.join(os.homedir(), value.slice(2));
+  return value;
+}
 
 // Pi's resolveToCwd() normalizes these Unicode space characters to ASCII space.
 // Reject them at our boundary so a path validated here cannot silently become a
 // different filesystem path inside Pi after validation.
 const PI_NORMALIZED_UNICODE_SPACES = /[\u00A0\u2000-\u200A\u202F\u205F\u3000]/u;
 
-function requirePiStablePath(value, label) {
+export function requirePiStablePath(value, label) {
   if (PI_NORMALIZED_UNICODE_SPACES.test(value)) {
     throw new Error(`${label} contains a Unicode space character not supported by the Pi path backend`);
   }
   return value;
 }
 
-function isWithin(root, target) {
+export function isWithin(root, target) {
   const relative = path.relative(root, target);
   return relative === '' || (
     relative !== '..' &&
@@ -62,7 +69,8 @@ export async function resolveUserPath(defaultCwd, value, { mustExist = true } = 
   if (typeof value !== 'string' || value.length === 0) throw new Error('path must be non-empty');
   if (value.includes('\0')) throw new Error('path contains a NUL byte');
   requirePiStablePath(value, 'path');
-  const candidate = path.isAbsolute(value) ? value : path.resolve(canonicalDefault, value);
+  const expanded = expandUserTilde(value);
+  const candidate = path.isAbsolute(expanded) ? expanded : path.resolve(canonicalDefault, expanded);
   requirePiStablePath(candidate, 'path');
   if (!mustExist) return candidate;
   const real = await fs.realpath(candidate);
@@ -77,9 +85,10 @@ export async function resolveUserCwd(defaultCwd, value) {
     if (value.includes('\0')) throw new Error('cwd contains a NUL byte');
     requirePiStablePath(value, 'cwd');
   }
-  const candidate = value === undefined || value === ''
+  const expanded = typeof value === 'string' ? expandUserTilde(value) : value;
+  const candidate = expanded === undefined || expanded === ''
     ? canonicalDefault
-    : (path.isAbsolute(value) ? value : path.resolve(canonicalDefault, value));
+    : (path.isAbsolute(expanded) ? expanded : path.resolve(canonicalDefault, expanded));
   requirePiStablePath(candidate, 'cwd');
   const real = await fs.realpath(candidate);
   requirePiStablePath(real, 'cwd');

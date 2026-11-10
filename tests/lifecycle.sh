@@ -83,6 +83,15 @@ test_1mcp_https_callback_csp_compatibility_is_guarded() {
   contains "$helper" 'refusing an unsafe patch'
 }
 
+test_1mcp_clean_tool_namespacing_is_guarded() {
+  local helper="$ROOT/scripts/install-bridge-runtime.sh"
+  contains "$helper" 'constants/mcp\.js' &&
+  contains "$helper" "process\.env\.WEBHARNESS_MCP_URI_SEPARATOR \|\| '_'" &&
+  contains "$helper" "toolPattern: '\{server\}_\{tool\}'" &&
+  contains "$ROOT/providers/local-tools/server.mjs" 'WEBHARNESS_MCP_URI_SEPARATOR: INNER_TOOL_SEPARATOR' &&
+  ! contains "$ROOT/providers/local-tools/server.mjs" 'ONE_MCP_URI_SEPARATOR'
+}
+
 test_shared_bridge_runtime_installer_is_used() {
   local helper="$ROOT/scripts/install-bridge-runtime.sh"
   [ -x "$helper" ] && \
@@ -251,6 +260,7 @@ run_test 'privileged MCP dependencies are pinned' test_dependencies_are_pinned
 run_test 'pinned 1MCP native rotation capability is guarded' test_native_1mcp_rotation_capability_is_guarded
 run_test 'stale incrementing 1MCP logs are pruned before restart' test_stale_incrementing_1mcp_logs_are_pruned_before_restart
 run_test 'pinned 1MCP permits its exact registered HTTPS OAuth callback' test_1mcp_https_callback_csp_compatibility_is_guarded
+run_test 'pinned 1MCP uses clean {server}_{tool} outer tool namespacing' test_1mcp_clean_tool_namespacing_is_guarded
 run_test 'public and personal setup share the pinned bridge runtime installer' test_shared_bridge_runtime_installer_is_used
 run_test 'Cloudflare OAuth Bridge is the only canonical stack' test_cloudflare_oauth_is_canonical
 run_test 'start.sh is the canonical Cloudflare OAuth entrypoint' test_start_is_canonical_entrypoint

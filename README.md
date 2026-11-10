@@ -12,13 +12,13 @@ Agents should reason about two outer MCP surfaces rather than individual backend
 
 | Capability | Use it for | Important boundary |
 |---|---|---|
-| **Dev** | focused files, guarded edits, native file import, aggregate Git review, structured argv execution, native Bash, durable waits | direct high-frequency workstation primitives with the authority of the selected trust profile |
+| **Dev** | structured search, focused files, guarded edits, native file import, aggregate Git review, structured argv execution, native Bash, durable waits | direct high-frequency workstation primitives with the authority of the selected trust profile |
 | **Local** | durable Terminal control, host actions, Browser, owner-added MCPs, and writable-call recovery | exposes only `tool_list`, `tool_schema`, `tool_call`, `fallback_dispatch`, and `tool_batch`; logical servers stay behind one compact broker surface, while only Dev is mirrored as a hidden fallback route |
 
 The full workstation composition is deliberately small at the client boundary:
 
 ```text
-Dev       read list_directory edit write import_file file_ops review_changes wait exec bash
+Dev       read list_directory search edit write import_file file_ops review_changes wait exec bash
 Local     tool_list tool_schema tool_call fallback_dispatch tool_batch
             |-- terminal          durable PTY/session control
             |-- host              pc_sleep
@@ -28,6 +28,10 @@ Local     tool_list tool_schema tool_call fallback_dispatch tool_batch
 ```
 
 `browser-fast` is for routine interaction. `browser-devtools` keeps the full Chrome DevTools MCP surface for network, console, performance, Lighthouse, heap, screenshots, and detailed debugging.
+
+For code navigation, use `search` to locate text, `read(mode="outline")` to inspect an unfamiliar file's structure, and a narrow `read(offset, limit)` for detail. `read(targets=[...])` groups up to 20 files. Default line reads return 160 lines, bounded by 16 KiB per file.
+
+Agents without native MCP can use the optional [WebSession adapter](docs/websession-clients.md). Run `bin/adapter connect --here` on the host and paste its generated HTTP prompt into the remote sandbox. The adapter starts on demand and remains separate from the WebHarness service.
 
 ## Architecture
 
@@ -242,7 +246,7 @@ See [Security](docs/security.md) for the full trust model.
 - [MCP compatibility](docs/compatibility.md) — model-facing contract and breaking-change rules
 - [Operations](docs/operations.md) — run, inspect, restart, recover, and cut over source
 - [Security](docs/security.md) — authority profiles and trust boundaries
-- [WebSession clients](docs/websession-clients.md) — optional HTTPS/curl access for agents without an MCP client; the adapter is started and stopped manually with `bin/adapter` and is never started by the service
+- [WebSession clients](docs/websession-clients.md) — optional HTTPS access with one-command Python pairing, session working directories, and batched calls; operated separately with `bin/adapter`
 - [Personal Workstation](docs/personal/harness.md) — full reference deployment details
 - [Acceptance](docs/acceptance.md) — portable gate plus real-WSL qualification
 - [Development](docs/development.md) — repository/publication workflow

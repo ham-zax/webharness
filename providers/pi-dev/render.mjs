@@ -9,8 +9,8 @@ export function renderBashText(result) {
   const annotations = [];
   if (result.truncated && result.full_output_path) {
     annotations.push(result.spool_truncated
-      ? `[truncated · ${result.output_bytes} bytes total · retained output capped · file: ${result.full_output_path}]`
-      : `[truncated · ${result.output_bytes} bytes total · full: ${result.full_output_path}]`);
+      ? `[truncated · ${result.output_bytes} bytes total · retained output capped · saved on remote host: ${result.full_output_path}]`
+      : `[truncated · ${result.output_bytes} bytes total · saved on remote host: ${result.full_output_path}]`);
   }
   let status;
   if (result.timed_out) {
@@ -130,14 +130,33 @@ function listEntryLine(entry) {
 }
 
 export function renderListDirectoryText(result) {
-  const lines = [`dir: ${result.path}`, `entries: ${result.total}`];
+  const unknownTotal = result.truncated && result.totalKnown === false;
+  const lines = [
+    `dir: ${result.path}`,
+    `entries: ${unknownTotal ? `${result.entries.length}+` : result.total}`,
+  ];
   if (result.entries.length > 0) lines.push(...result.entries.map(listEntryLine));
   else lines.push('[empty directory]');
   if (result.entries.some(entry => entry.kind === 'link')) {
     lines.push('[symlinks are listed and not followed]');
   }
+  if (result.skippedVendor) {
+    lines.push('[vendor/.git directories not expanded; set include_vendor=true or list directly]');
+  }
   if (result.truncated) {
-    lines.push(`[truncated · ${result.total} entries total · raise limit above ${result.limit} or list a subdirectory]`);
+    lines.push(unknownTotal
+      ? `[truncated · more than ${result.limit} entries · raise limit above ${result.limit} or list a subdirectory]`
+      : `[truncated · ${result.total} entries total · raise limit above ${result.limit} or list a subdirectory]`);
   }
   return lines.join('\n');
+}
+
+export function renderSearchText(result) {
+  if (!result.matches || result.matches.length === 0) {
+    return 'No matches.';
+  }
+  const footer = result.truncated
+    ? `[showing ${result.matches.length} matches (capped at ${result.maxResults}) · narrow pattern, path, or globs]`
+    : `[${result.matches.length} ${result.matches.length === 1 ? 'match' : 'matches'}]`;
+  return `${result.matches.join('\n')}\n${footer}`;
 }

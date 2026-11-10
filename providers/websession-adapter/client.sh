@@ -6,7 +6,7 @@ WH_HOME=${WH_HOME:-"$HOME/.wh"}
 WH_WAIT=${WH_WAIT:-90}
 WH_MAX_SECONDS=${WH_MAX_SECONDS:-280}
 WH_MAX_OUTPUT=${WH_MAX_OUTPUT:-8192}
-WH_SH_TOOL=${WH_SH_TOOL:-dev_1mcp_bash}
+WH_SH_TOOL=${WH_SH_TOOL:-dev_bash}
 
 fail() { printf '%s\n' "$*" >&2; exit 1; }
 valid_tool() { [[ $1 =~ ^[A-Za-z0-9._-]{1,128}$ ]] || fail 'invalid tool name'; }

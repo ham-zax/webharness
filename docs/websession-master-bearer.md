@@ -65,7 +65,7 @@ bin/websession-call <exact-native-MCP-tool-name> '<arguments-json>'
 For example:
 
 ```bash
-bin/websession-call dev_1mcp_bash '{"command":"pwd"}'
+bin/websession-call dev_bash '{"command":"pwd"}'
 ```
 
 The wrapper creates a temporary ordinary capability directly in private adapter state, sends the operation through public `POST /v1/calls`, follows status and result chunks, prints only the tool result, and revokes the temporary capability after a known terminal outcome. If submission or later status becomes transport-ambiguous, it does not retry the operation and leaves the temporary capability to expire naturally.

@@ -133,7 +133,7 @@ The WebSession adapter is deliberately not part of Personal Workstation automati
 
 The Dev provider sends this policy as MCP initialization instructions, so it reaches every client without an owner context file:
 
-1. Read a known text file with `read`.
+1. Search text with `search`; use `read(mode="outline")` before reading an unfamiliar large file. Read known files with `read`.
 2. Discover names with `list_directory`, not with `exec` or Bash.
 3. If `exec` or Bash fails, do not conclude that filesystem access is unavailable. Retry with `read` or `list_directory`.
 4. Messages start with a code. `ENOENT`: correct or discover the path. `ENOTDIR` or `EISDIR`: call `list_directory`. `EACCES`: report the restriction.
@@ -144,13 +144,17 @@ When a natural-language request names a project, resolve the real directory firs
 
 ### `read`
 
-Use for focused text/source reads. Relative paths resolve from the personal default cwd; harmless absolute paths are accepted. Output is capped at 16 KiB per page and 500 lines by default; continue with `offset` from the truncation note.
+Use for focused text/source reads. Relative paths resolve from the personal default cwd; harmless absolute paths are accepted. User-mode `~` and `~/...` paths expand against the service user's home. Output is capped at 16 KiB per file and 160 lines by default; continue with `offset` from the truncation note. `mode: "outline"` returns numbered structural landmarks, or a bounded text fallback. `targets` accepts up to 20 files in one call with a combined 32 KiB output budget.
 
 A directory target fails with `EISDIR` and names `list_directory` as the recovery route. Treat that as a routing signal, not as a broken connection.
 
+### `search`
+
+Use structured ripgrep search for text discovery before reading full files. `pattern` is required; `path`, `globs`, `literal`, and `case_sensitive` refine the search without shell quoting. Smart-case is the default. Results are bounded at 80 overall and 20 per file by default (maximum 500 and 200 respectively), with a 32 KiB output budget. Vendored trees are excluded unless `include_vendor: true`; normal ripgrep ignore/hidden-file rules still apply. Search shares the configured Dev path authority.
+
 ### `list_directory`
 
-Read-only discovery of one directory. Each entry reports its kind and name, and regular files add their size in bytes. Entries sort by name, hidden entries are included, and symbolic links are listed without being followed. `path` is optional and defaults to the authority root; `limit` defaults to 200 entries and cannot exceed 1000. A truncated result reports the observed total, so one call is enough to see whether a subdirectory is the better next step.
+Read-only discovery of one directory, or a bounded tree when `depth` is set (`1..4`, default `1`). Each entry reports its kind and relative name, and regular files add their size in bytes. Entries sort by name, hidden entries are included, and symbolic links are listed without ever being followed. When `depth > 1`, `.git`, `node_modules`, `third_party`, and `skill-library/packs` are listed as directories without expanding their contents unless `include_vendor: true`. `path` is optional and defaults to the authority root; `limit` defaults to 200 entries and cannot exceed 1000. Single-directory listings report an exact observed total; recursive traversal stops at the entry limit and reports a lower bound when truncated. Listings use pinned directory handles through Linux `/proc/self/fd` and fail explicitly if that access is unavailable, rather than falling back to a mutable pathname.
 
 Use it before reading an unknown path, and after an `ENOENT` or `ENOTDIR` error. Do not use `exec` with `ls`, `find`, or `rg --files` for this route; that needs shell or process authority for a read-only question.
 
@@ -158,7 +162,7 @@ Path errors stay distinguishable after any client wrapper: `ENOENT` with a paren
 
 ### `edit`
 
-Use for existing-text mutation across one or more files. One exact `oldText` match always wins; only zero exact matches trigger tolerance for line endings, trailing whitespace, and common Unicode punctuation or space differences. Exact and tolerant edits sharing a line must be merged into one edit. Matching must still be unique, so inspect with `read`, `rg`, Code, or ast-grep and include enough context when needed. `edit` rejects missing, ambiguous, overlapping, stale, non-text, or duplicate-alias targets; all targets are planned before the first mutation, and partial post-mutation failures are reported explicitly. File count or a structural label does not change this route.
+Use for existing-text mutation across one or more files. One exact `oldText` match always wins; only zero exact matches trigger tolerance for line endings, trailing whitespace, and common Unicode punctuation or space differences. Exact and tolerant edits sharing a line must be merged into one edit. Matching must still be unique, so inspect with `search`, `read`, or ast-grep and include enough context when needed. `edit` rejects missing, ambiguous, overlapping, stale, non-text, or duplicate-alias targets; all targets are planned before the first mutation, and partial post-mutation failures are reported explicitly. File count or a structural label does not change this route.
 
 The canonical request is always grouped, including one-file edits:
 
@@ -171,6 +175,8 @@ edit({
 ```
 
 For multiple existing text files, add more target records to the same request rather than switching tools only because the file count increased.
+
+A missed anchor can include a bounded closest-match snippet with line numbers. Inspect it and correct the anchor rather than repeating the same failed edit.
 
 ### `write`
 
@@ -190,13 +196,13 @@ Use once after the final related file mutation when you need the aggregate curre
 
 ### `exec`
 
-Runs one bounded executable directly from a structured `argv[]` with no shell parser. Treat it as **short-RPC execution only**: use it when completion is expected comfortably inside the model-facing connector window, with 45 seconds as the routing target. If runtime is uncertain, may approach a minute, or must survive the call, do not start it with `exec`; use Local `server="terminal"`/`terminal_open`, observe completion or readiness with Dev `wait`, then use `terminal_read`. Use `exec` for short Git, builds, tests, `rg`, repository inspection, and other commands that do not require shell semantics. `argv[0]` is the executable and later elements are passed literally. The provider may accept a timeout up to 300 seconds, but that does not extend the connector request lifetime. There is no hidden mutable global cwd; use `cwd` explicitly when needed.
+Runs one bounded executable directly from a structured `argv[]` with no shell parser. Treat it as **short-RPC execution only**: use it when completion is expected comfortably inside the model-facing connector window, with 45 seconds as the routing target. If runtime is uncertain, may approach a minute, or must survive the call, do not start it with `exec`; use Local `server="terminal"`/`terminal_open`, observe completion or readiness with Dev `wait`, then use `terminal_read`. Use `exec` for short Git, builds, tests, structured extraction, repository inspection, and other commands that do not require shell semantics. `argv[0]` is the executable and later elements are passed literally. The provider may accept a timeout up to 300 seconds, but that does not extend the connector request lifetime. There is no hidden mutable global cwd; use `cwd` explicitly when needed.
 
 For long noninteractive work such as installs and builds, `detach: true` starts the command in the background and returns at once with `job_id`, `pid`, `log_path` and `exit_path`. Wait on it with Dev `wait` `{kind:"file_exists", path:exit_path}`; the exit file holds the exit code once the job ends, and the log holds combined stdout and stderr. Detached jobs have stdin closed, have no timeout, and stop if the WebHarness service restarts. Use Terminal instead when the work is interactive or a human should watch it.
 
 ### `bash`
 
-Runs one bounded, noninteractive native Bash program. It has the same **short-RPC-only** lifetime rule as `exec`: use it only when completion is expected comfortably inside the connector window, with 45 seconds as the routing target. If runtime is uncertain or may approach a minute, use Local Terminal + Dev `wait` instead of increasing `timeout_seconds`; the provider-side 300-second maximum does not extend connector lifetime. Within short work, use Bash only when shell semantics such as pipes, redirects, substitutions, variables, loops, or compound commands are materially required. Do not use Bash to orchestrate repeated MCP calls when Local `tool_batch` is available. Resolve unknown names with `list_directory` first, then use `exec` + `rg` plus focused `read` for content discovery.
+Runs one bounded, noninteractive native Bash program. It has the same **short-RPC-only** lifetime rule as `exec`: use it only when completion is expected comfortably inside the connector window, with 45 seconds as the routing target. If runtime is uncertain or may approach a minute, use Local Terminal + Dev `wait` instead of increasing `timeout_seconds`; the provider-side 300-second maximum does not extend connector lifetime. Within short work, use Bash only when shell semantics such as pipes, redirects, substitutions, variables, loops, or compound commands are materially required. Do not use Bash to orchestrate repeated MCP calls when Local `tool_batch` is available. Resolve unknown names with `list_directory` first, then use `search` plus focused `read` for content discovery.
 
 For syntax-shaped discovery or codemods, use ast-grep through `exec` when no shell composition is needed. Inspect bounded matches and normally perform the final mutation through guarded `edit`; use ast-grep bulk rewrite only when the transformation is deterministic and every bounded match is intentionally changed.
 

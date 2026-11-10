@@ -100,6 +100,40 @@ adapter revoke-cap "$CAPABILITY_ID" >/dev/null
 REVOKED_HTTP="$(curl -sS -o /dev/null -w '%{http_code}' "$BASE/v1/s/$CAPABILITY/tools")"
 test "$REVOKED_HTTP" = 404
 
+CONNECT_PROMPT="$(adapter connect --cwd "$TMP/home" --ttl 120 --pair-ttl 60)"
+grep -Fq 'WebSession pairing ready' <<<"$CONNECT_PROMPT"
+grep -Fq "POST $BASE/v1/pair" <<<"$CONNECT_PROMPT"
+if grep -Eq 'urlopen|/v1/client\.(py|sh)' <<<"$CONNECT_PROMPT"; then
+  echo 'default pairing prompt must not bootstrap a downloaded executable' >&2
+  exit 1
+fi
+PAIR_CAP_ID="$(sed -n 's/^  capability_id:   //p' <<<"$CONNECT_PROMPT")"
+PAIR_CODE="$(sed -n 's/^Pair code: //p' <<<"$CONNECT_PROMPT")"
+test -n "$PAIR_CAP_ID"
+test -n "$PAIR_CODE"
+CONNECT_OUT="$(python3 - "$BASE" "$PAIR_CODE" <<'PYTHON'
+import json
+import sys
+import urllib.request
+base, code = sys.argv[1:]
+request = urllib.request.Request(base + '/v1/pair?discover=1', data=json.dumps({'code': code}).encode(), headers={'Content-Type': 'application/json'}, method='POST')
+with urllib.request.urlopen(request, timeout=30) as response:
+    paired = json.load(response)
+assert paired['state'] == 'ready'
+assert paired['discovery_state'] == 'ready'
+assert len(paired['signatures']) == 4
+assert 'POST /v1/calls?wait=2' in paired['instructions']
+assert 'Idempotency-Key' in paired['instructions']
+print('CONNECTED')
+print('cwd: ' + paired['default_cwd'])
+PYTHON
+)"
+grep -Fq 'CONNECTED' <<<"$CONNECT_OUT"
+grep -Fq "cwd: $TMP/home" <<<"$CONNECT_OUT"
+REPLAY_PAIR_HTTP="$(curl -sS -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' --data '{"code":"'$PAIR_CODE'"}' "$BASE/v1/pair")"
+test "$REPLAY_PAIR_HTTP" = 404
+adapter revoke-cap "$PAIR_CAP_ID" >/dev/null
+
 PAYLOAD="$(head -c 512 </dev/zero | tr '\0' A)"
 EXPECTED_SHA="$(printf '%s' "$PAYLOAD" | sha256sum | cut -d' ' -f1)"
 ECHO_RESPONSE="$(curl -fsS "$BASE/probe/echo-path/$PAYLOAD")"

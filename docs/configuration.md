@@ -16,7 +16,7 @@ MCP_WORKSPACE_ROOT=/absolute/path/to/code
 MCP_PUBLIC_URL=https://mcp.example.com
 MCP_TUNNEL_NAME=
 MCP_DEV_MAX_OUTPUT_BYTES=65536
-MCP_DEV_READ_DEFAULT_LINES=500
+MCP_DEV_READ_DEFAULT_LINES=160
 MCP_DEV_IMPORT_MAX_BYTES=104857600
 MCP_DEV_MAX_SPOOL_BYTES=67108864
 MCP_DEV_SPOOL_TTL_SECONDS=604800
@@ -41,9 +41,15 @@ OpenAI Secure MCP Tunnel is a separate possible transport for a ChatGPT develope
 
 `MCP_PERSONAL_DEFAULT_CWD` is optional and applies to the `personal` and `server` profiles. Leave it empty/unset to use the Linux account's `$HOME`. `MCP_TERMINAL_FRONTEND` is also personal-only: unset/empty defaults to `kitty`, and the accepted values are `kitty` and `windows-terminal`. The renderer validates this selector only for `personal`, so a stray value does not break `restricted` or `trusted-dev`.
 
-`MCP_OWNER_CONTEXT_FILE` and `MCP_OWNER_ENV_FILE` are optional personal-profile references to owner-controlled files outside the repository. Both paths must be absolute when set. `pi-dev` requires the context file to be a readable, current-user-owned regular file no larger than 32 KiB and publishes non-empty content as MCP initialization instructions after the built-in Dev file-access policy. That policy always ships: it routes known files to `read`, name discovery to `list_directory`, and it forbids reporting lost filesystem access only because `exec` or Bash failed. The renderer requires the env file to be a readable, current-user-owned regular file no larger than 64 KiB and permits only `GALLIUM_DRIVER`, `MOZ_ENABLE_WAYLAND`, `AGENT_BROWSER_PROFILE`, `AGENT_BROWSER_EXECUTABLE_PATH`, and `MCP_BROWSER_DEFAULT_TARGET`. The Agent Browser settings are Linux `browser-fast`-only; the executable path must be absolute and executable. `MCP_BROWSER_DEFAULT_TARGET` must be `windows` or `linux` and is rendered into all three browser servers. Generated `owner.env` still contains only the validated Dev/Terminal GUI variables, so Agent Browser settings are not imported into systemd service environments. Do not put trust policy or secrets in `.env` or the owner GUI env.
+`MCP_OWNER_CONTEXT_FILE` and `MCP_OWNER_ENV_FILE` are optional personal-profile references to owner-controlled files outside the repository. Both paths must be absolute when set. `pi-dev` requires the context file to be a readable, current-user-owned regular file no larger than 32 KiB and publishes non-empty content as MCP initialization instructions after the built-in Dev file-access policy. That policy always ships: it routes text search to `search`, unfamiliar large files to `read(mode="outline")`, known files to `read`, and name discovery to `list_directory`, and it forbids reporting lost filesystem access only because `exec` or Bash failed. The renderer requires the env file to be a readable, current-user-owned regular file no larger than 64 KiB and permits only `GALLIUM_DRIVER`, `MOZ_ENABLE_WAYLAND`, `AGENT_BROWSER_PROFILE`, `AGENT_BROWSER_EXECUTABLE_PATH`, and `MCP_BROWSER_DEFAULT_TARGET`. The Agent Browser settings are Linux `browser-fast`-only; the executable path must be absolute and executable. `MCP_BROWSER_DEFAULT_TARGET` must be `windows` or `linux` and is rendered into all three browser servers. Generated `owner.env` still contains only the validated Dev/Terminal GUI variables, so Agent Browser settings are not imported into systemd service environments. Do not put trust policy or secrets in `.env` or the owner GUI env.
+
+`MCP_DEV_READ_DEFAULT_LINES` defaults to `160`; set `0` to disable the default line-count limit while retaining the per-file 16 KiB output bound. An explicit `limit` overrides the default. Outline mode uses structural entries rather than the default line limit. Multi-file reads accept up to 20 targets with a combined 32 KiB output budget.
 
 ## WebSession adapter
+
+The adapter is operated separately from the WebHarness service. `bin/adapter connect --cwd <dir>` starts it if needed and creates a single-use pairing code. Session TTL defaults to 21600 seconds (accepted range `60..86400`); pair-code TTL defaults to 300 seconds (accepted range `30..900`). `issue-cap [ttl-seconds] --cwd <dir>` and `--here` can also bind a default directory. A default directory selects context within the existing profile authority; it is not a filesystem sandbox.
+
+`WEBSESSION_ADAPTER_PUBLIC_URL` overrides the public base used by the adapter and its generated pairing prompt. The launcher can otherwise derive the prompt's base from the tunnel or deployment identity. `WEBSESSION_ADAPTER_STATE_DIR` selects the private adapter state directory. See [WebSession clients](websession-clients.md) for the full URL selection order and client environment variables.
 
 The `bin/adapter` server process accepts `WEBSESSION_ADAPTER_TOOL_TIMEOUT_MS` (default `120000`, range `1000..600000` milliseconds) to set the MCP tool-call timeout, and `WEBSESSION_ADAPTER_MAX_JSON_BODY_BYTES` (default `1048576`, range `1024..1048576` bytes) to set the maximum JSON request body size. The launcher forwards these variables when they are set; otherwise the server defaults apply.
 
@@ -70,7 +76,7 @@ Linux `browser-fast` reads the current-user-owned `~/.config/mcp-dev-bridge/brow
 The maintained full reference composition is:
 
 ```text
-Dev       read list_directory edit write import_file file_ops review_changes wait exec bash
+Dev       read list_directory search edit write import_file file_ops review_changes wait exec bash
 Local     tool_list tool_schema tool_call fallback_dispatch tool_batch
             |-- terminal          durable PTY/session control
             |-- host              pc_sleep
@@ -154,7 +160,7 @@ Generated provider commands contain the repository root used during rendering. I
 
 ## Output policy
 
-`MCP_DEV_READ_DEFAULT_LINES` controls how many lines Dev `read` returns when no `limit` is supplied (default 500, range 0..100000). Set it in the deployment environment or `.env`; the renderer carries it into every Dev provider, including the Personal fallback mirror. `0` disables this default line limit; the reader's 2000-line ceiling and 16 KiB text-content budget still apply. An explicit `limit` overrides the default line count. Truncated reads report total file bytes and the next line offset; complete lines are preserved. An individual line larger than the byte budget returns a diagnostic recommending a focused command extract. Binary and invalid UTF-8 files are rejected.
+`MCP_DEV_READ_DEFAULT_LINES` controls how many lines Dev `read` returns when no `limit` is supplied (default 160, range 0..100000). Set it in the deployment environment or `.env`; the renderer carries it into every Dev provider, including the Personal fallback mirror. `0` disables this default line limit; the reader's 2000-line ceiling and 16 KiB text-content budget still apply. An explicit `limit` overrides the default line count. Truncated reads report total file bytes and the next line offset; complete lines are preserved. An individual line larger than the byte budget returns a diagnostic recommending a focused command extract. Binary and invalid UTF-8 files are rejected.
 
 `MCP_DEV_MAX_OUTPUT_BYTES` is deployment policy, not a model-facing tool argument. It defaults to 65536 bytes: a command result shows the output tail within that budget and, when it truncates, reports the total observed byte count and a retained-output path. Retained output has its own storage ceiling described below. Commands append a compact status/timing footer such as `[exit 0 · 0.3s]`; timeout, cancellation and termination are distinguished from normal exits. Increase the output budget only when the operator deliberately wants larger model-visible results.
 

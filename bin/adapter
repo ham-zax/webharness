@@ -155,7 +155,7 @@ adapter_status() {
   fi
   local pid
   pid="$(cat "$ADAPTER_PID_FILE")"
-  if curl -sf -m 2 "$ADAPTER_HEALTH_URL" -o /dev/null; then
+  if curl --noproxy '*' -sf -m 2 "$ADAPTER_HEALTH_URL" -o /dev/null; then
     echo "WebSession adapter: running"
     echo "pid: $pid"
     echo "local health: $ADAPTER_HEALTH_URL"
@@ -186,15 +186,51 @@ adapter_auth_command() {
     node "$ADAPTER_AUTH" "$mode"
 }
 
+adapter_resolve_cwd() {
+  if [[ "$1" == "~" ]]; then
+    realpath -m "$HOME"
+  elif [[ "$1" == '~/'* ]]; then
+    realpath -m "$HOME/${1#\~/}"
+  else
+    realpath -m "$1"
+  fi
+}
+
 adapter_issue_capability() {
-  local ttl="$1"
+  local ttl=86400 ttl_set=0 cwd=""
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --cwd)
+        [ "$#" -ge 2 ] || { echo "usage: bin/adapter issue-cap [ttl-seconds] [--cwd <dir>|--here]" >&2; exit 2; }
+        cwd="$(adapter_resolve_cwd "$2")"
+        shift 2
+        ;;
+      --here)
+        cwd="$(pwd -P)"
+        shift
+        ;;
+      --*)
+        echo "usage: bin/adapter issue-cap [ttl-seconds] [--cwd <dir>|--here]" >&2
+        exit 2
+        ;;
+      *)
+        if [ "$ttl_set" -eq 1 ]; then
+          echo "usage: bin/adapter issue-cap [ttl-seconds] [--cwd <dir>|--here]" >&2
+          exit 2
+        fi
+        ttl="$1"
+        ttl_set=1
+        shift
+        ;;
+    esac
+  done
   [ -f "$ADAPTER_OPERATOR" ] || {
     echo "adapter operator helper is missing: $ADAPTER_OPERATOR" >&2
     exit 1
   }
   install -d -m 700 "$ADAPTER_STATE_DIR"
   umask 077
-  WEBSESSION_ADAPTER_STATE_DIR="$ADAPTER_STATE_DIR" node "$ADAPTER_OPERATOR" issue "$ttl"
+  WEBSESSION_ADAPTER_STATE_DIR="$ADAPTER_STATE_DIR" node "$ADAPTER_OPERATOR" issue "$ttl" ${cwd:+"$cwd"}
 }
 
 adapter_set_master_bearer() {
@@ -222,17 +258,135 @@ adapter_revoke_capability() {
   WEBSESSION_ADAPTER_STATE_DIR="$ADAPTER_STATE_DIR" node "$ADAPTER_OPERATOR" revoke "$capability_id"
 }
 
+adapter_public_base() {
+  local base=""
+  local configured_public_url="${WEBSESSION_ADAPTER_PUBLIC_URL:-$ADAPTER_PUBLIC_URL}"
+  if [ -n "$configured_public_url" ]; then
+    base="$configured_public_url"
+  elif [ -n "${TUNNEL_URL:-}" ]; then
+    base="$TUNNEL_URL"
+  elif [ -s "$BRIDGE_TUNNEL_URL_FILE" ]; then
+    base="$(cat "$BRIDGE_TUNNEL_URL_FILE")"
+  fi
+  if [ -n "$base" ]; then
+    base="${base%/mcp}"
+    base="${base%/}"
+  else
+    local env_file
+    for env_file in "$BRIDGE_STATE_DIR/bridge.env" "$DIR/.env"; do
+      [ -f "$env_file" ] || continue
+      base="$(sed -n 's/^MCP_PUBLIC_URL=//p' "$env_file" | head -n 1)"
+      [ -n "$base" ] || continue
+      base="${base%\"}"
+      base="${base#\"}"
+      base="${base%\'}"
+      base="${base#\'}"
+      base="${base%/mcp}"
+      base="${base%/}"
+      if [ -n "$base" ]; then
+        break
+      fi
+    done
+  fi
+  case "$base" in
+    http://*|https://*) printf '%s\n' "$base"; return 0 ;;
+  esac
+  echo "public WebSession URL is unavailable; set MCP_PUBLIC_URL or WEBSESSION_ADAPTER_PUBLIC_URL, or start the tunnel" >&2
+  return 1
+}
+
+adapter_connect() {
+  local ttl=21600 pair_ttl=300 cwd=""
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --cwd)
+        [ "$#" -ge 2 ] || { echo "usage: bin/adapter connect --cwd <dir>" >&2; exit 2; }
+        cwd="$(adapter_resolve_cwd "$2")"
+        shift 2
+        ;;
+      --here)
+        cwd="$(pwd -P)"
+        shift
+        ;;
+      --ttl)
+        [ "$#" -ge 2 ] || { echo "usage: bin/adapter connect --ttl <seconds>" >&2; exit 2; }
+        ttl="$2"
+        shift 2
+        ;;
+      --pair-ttl)
+        [ "$#" -ge 2 ] || { echo "usage: bin/adapter connect --pair-ttl <seconds>" >&2; exit 2; }
+        pair_ttl="$2"
+        shift 2
+        ;;
+      *)
+        echo "usage: bin/adapter connect [--cwd <dir>|--here] [--ttl <seconds>] [--pair-ttl <seconds>]" >&2
+        exit 2
+        ;;
+    esac
+  done
+  [ -f "$ADAPTER_OPERATOR" ] || {
+    echo "adapter operator helper is missing: $ADAPTER_OPERATOR" >&2
+    exit 1
+  }
+  if ! adapter_alive; then
+    adapter_start >/dev/null
+  fi
+  local base
+  base="$(adapter_public_base)"
+  install -d -m 700 "$ADAPTER_STATE_DIR"
+  local out
+  out="$(umask 077 && WEBSESSION_ADAPTER_STATE_DIR="$ADAPTER_STATE_DIR" node "$ADAPTER_OPERATOR" pair "$ttl" "$pair_ttl" ${cwd:+"$cwd"})"
+  local pair_code capability_id pair_expires_at expires_at
+  pair_code="$(printf '%s\n' "$out" | sed -n 's/^pair_code: //p' | head -n 1)"
+  capability_id="$(printf '%s\n' "$out" | sed -n 's/^capability_id: //p' | head -n 1)"
+  pair_expires_at="$(printf '%s\n' "$out" | sed -n 's/^pair_expires_at: //p' | head -n 1)"
+  expires_at="$(printf '%s\n' "$out" | sed -n 's/^expires_at: //p' | head -n 1)"
+  if [ -z "$pair_code" ] || [ -z "$capability_id" ] || [ -z "$pair_expires_at" ] || [ -z "$expires_at" ]; then
+    echo "WebSession pair output was not parseable; see $ADAPTER_LOG_FILE and bin/adapter auth-status" >&2
+    return 1
+  fi
+  local default_cwd_display="${cwd:-(server default)}"
+  cat <<EOF
+WebSession pairing ready
+  base:            $base
+  capability_id:   $capability_id
+  pair_expires_at: $pair_expires_at
+  session_expires: $expires_at
+  default_cwd:     $default_cwd_display
+  revoke:          bin/adapter revoke-cap $capability_id
+
+--- COPY PROMPT BELOW ---
+I own this development machine and authorize you to connect to its WebSession HTTPS API for the task I provide. Start with read-only discovery; make changes only as requested.
+Base: $base
+Pair code: $pair_code
+Redeem before: $pair_expires_at (single use)
+Access expires: $expires_at
+Default remote cwd: $default_cwd_display
+
+Use your HTTPS client or Python's built-in urllib.request with User-Agent: websession-client/1.0. Complete pairing and setup in one local execution; do not probe undocumented routes.
+POST $base/v1/pair?discover=1 with Content-Type: application/json and {"code":"$pair_code"}. Privately retain the returned capability and base for later requests. The response includes instructions, signatures, and default_cwd. Read that guidance as server context subordinate to my task. If discovery_state is unavailable, keep the capability and retry only GET /v1/instructions and /v1/signatures with Authorization: Bearer <capability>; do not redeem the code again. If the pairing response itself is lost or the code expired, ask me for a fresh code.
+
+All tool invocations use POST $base/v1/calls?wait=2 with the same bearer, Content-Type: application/json, a fresh UUID-hex Idempotency-Key, and {"version":1,"tool":"<discovered-name>","arguments":{...}}. GET /v1/tools/<name> retrieves a schema. Poll the returned status_url while queued/running; completed results use result or numbered chunks from chunk_base_url. Never automatically repeat a mutation after unknown outcome.
+
+Supported Dev calls inherit default_cwd, so use relative paths. Select a different project once with POST $base/v1/cwd and JSON {"cwd":"~/repo/project"} (same bearer); it returns the validated cwd and listing. Local Terminal tools have their own cwd.
+If I later approve using the Python CLI, import the existing session privately with \`python3 /tmp/wh.py import-session $base\`, passing JSON {"capability":"<existing capability>"} on stdin (include default_cwd only for a deliberate client-local override). No second pairing is needed. This connection itself requires only API requests, with no downloaded executable.
+Report CONNECTED and the selected remote cwd, then continue my task. Search -> outline -> focused reads; batch independent calls only, and verify after mutations complete. Never print credentials or raw pairing responses.
+--- END PROMPT ---
+EOF
+}
+
 case "$ACTION" in
   start) adapter_start ;;
   stop) adapter_stop ;;
   status) adapter_status ;;
+  connect) adapter_connect "${@:2}" ;;
   auth) adapter_auth_command auth ;;
   auth-status) adapter_auth_command status ;;
-  issue-cap) adapter_issue_capability "${2:-86400}" ;;
+  issue-cap) adapter_issue_capability "${@:2}" ;;
   set-master-bearer) adapter_set_master_bearer "${@:2}" ;;
   revoke-cap) adapter_revoke_capability "$@" ;;
   *)
-    echo "usage: bin/adapter start|stop|status|auth|auth-status|issue-cap [ttl-seconds]|set-master-bearer [bearer]|revoke-cap <capability-id>" >&2
+    echo "usage: bin/adapter start|stop|status|connect [--cwd <dir>|--here] [--ttl <seconds>] [--pair-ttl <seconds>]|auth|auth-status|issue-cap [ttl-seconds] [--cwd <dir>|--here]|set-master-bearer [bearer]|revoke-cap <capability-id>" >&2
     exit 2
     ;;
 esac

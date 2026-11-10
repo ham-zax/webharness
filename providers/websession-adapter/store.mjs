@@ -1,4 +1,4 @@
-import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, randomBytes, randomInt, randomUUID, timingSafeEqual } from 'node:crypto';
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -9,6 +9,35 @@ function sha256(value) {
 
 const CHUNK_BYTES = 8192;
 const MASTER_BEARER_FILE = 'master-bearer.sha256';
+const PAIRING_CODE_RE = /^[a-z]{4,7}-[0-9]{4}-[a-z0-9]{4}$/;
+const PAIRING_TTL_MIN_SECONDS = 30;
+const PAIRING_TTL_MAX_SECONDS = 900;
+const PAIRING_STALE_MS = 86_400_000;
+const PAIRING_WORDS = [
+  'amber', 'birch', 'cedar', 'coral', 'delta', 'ember', 'fjord', 'frost',
+  'grove', 'haven', 'ivory', 'jasper', 'maple', 'misty', 'noble', 'ocean',
+  'olive', 'pearl', 'pine', 'prism', 'quartz', 'river', 'robin', 'sable',
+  'slate', 'solar', 'stone', 'swift', 'terra', 'topaz', 'velvet', 'zephyr',
+];
+const PAIRING_SUFFIX_ALPHABET = 'abcdefghjkmnpqrstuvwxyz23456789';
+
+function normalizeDefaultCwd(value) {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== 'string' || value.length === 0 || value.includes('\0')) {
+    throw new Error('default cwd must be a non-empty string without NUL bytes');
+  }
+  return value;
+}
+
+function randomPairingCode() {
+  const word = PAIRING_WORDS[randomInt(PAIRING_WORDS.length)];
+  const digits = String(randomInt(0, 10_000)).padStart(4, '0');
+  let suffix = '';
+  for (let index = 0; index < 4; index += 1) {
+    suffix += PAIRING_SUFFIX_ALPHABET[randomInt(PAIRING_SUFFIX_ALPHABET.length)];
+  }
+  return `${word}-${digits}-${suffix}`;
+}
 
 function validMasterBearer(value) {
   return typeof value === 'string' && /^[A-Za-z0-9._-]{32,128}$/.test(value);
@@ -66,7 +95,8 @@ export class AdapterStore {
         scope TEXT NOT NULL,
         created_ms INTEGER NOT NULL,
         expires_ms INTEGER NOT NULL,
-        revoked_ms INTEGER
+        revoked_ms INTEGER,
+        default_cwd TEXT
       );
       CREATE TABLE IF NOT EXISTS operations (
         id TEXT PRIMARY KEY,
@@ -86,6 +116,10 @@ export class AdapterStore {
         error_text TEXT,
         created_ms INTEGER NOT NULL,
         updated_ms INTEGER NOT NULL,
+        turn_id INTEGER,
+        batch_id TEXT,
+        batch_index INTEGER,
+        stop_on_error INTEGER,
         UNIQUE(principal_id, client_nonce),
         FOREIGN KEY(principal_id) REFERENCES capabilities(id)
       );
@@ -101,10 +135,21 @@ export class AdapterStore {
         principal_id TEXT PRIMARY KEY REFERENCES capabilities(id),
         turn_id INTEGER NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS pairing_codes (
+        code TEXT PRIMARY KEY,
+        capability_id TEXT NOT NULL REFERENCES capabilities(id) ON DELETE CASCADE,
+        capability_token TEXT NOT NULL,
+        created_ms INTEGER NOT NULL,
+        expires_ms INTEGER NOT NULL,
+        redeemed_ms INTEGER
+      );
     `);
     const capabilityColumns = this.db.prepare('PRAGMA table_info(capabilities)').all();
     if (!capabilityColumns.some(column => column.name === 'revoked_ms')) {
       this.db.exec('ALTER TABLE capabilities ADD COLUMN revoked_ms INTEGER');
+    }
+    if (!capabilityColumns.some(column => column.name === 'default_cwd')) {
+      this.db.exec('ALTER TABLE capabilities ADD COLUMN default_cwd TEXT');
     }
     const operationColumns = this.db.prepare('PRAGMA table_info(operations)').all().map(column => column.name);
     const migrations = [
@@ -116,30 +161,101 @@ export class AdapterStore {
       ['confirmation_used_ms', 'INTEGER'],
       ['dispatch_started_ms', 'INTEGER'],
       ['turn_id', 'INTEGER'],
+      ['batch_id', 'TEXT'],
+      ['batch_index', 'INTEGER'],
+      ['stop_on_error', 'INTEGER'],
     ];
     for (const [name, definition] of migrations) {
       if (!operationColumns.includes(name)) this.db.exec(`ALTER TABLE operations ADD COLUMN ${name} ${definition}`);
     }
+    this.db.exec('CREATE INDEX IF NOT EXISTS idx_operations_batch ON operations(principal_id, batch_id, batch_index)');
   }
 
   close() {
     this.db.close();
   }
 
-  issueCapability(scope, ttlSeconds, maxTtlSeconds) {
+  issueCapability(scope, ttlSeconds, maxTtlSeconds, options = {}) {
     if (!Number.isInteger(ttlSeconds) || ttlSeconds < 60 || ttlSeconds > maxTtlSeconds) {
       throw new Error(`capability TTL must be an integer from 60 to ${maxTtlSeconds} seconds`);
     }
+    const defaultCwd = normalizeDefaultCwd(options.defaultCwd);
     const token = randomBytes(32).toString('base64url');
     const id = randomUUID();
     const now = Date.now();
-    this.db.prepare('INSERT INTO capabilities (id, token_hash, scope, created_ms, expires_ms) VALUES (?, ?, ?, ?, ?)')
-      .run(id, sha256(token), scope, now, now + ttlSeconds * 1000);
-    return { id, token, scope, expiresMs: now + ttlSeconds * 1000 };
+    this.db.prepare('INSERT INTO capabilities (id, token_hash, scope, created_ms, expires_ms, default_cwd) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(id, sha256(token), scope, now, now + ttlSeconds * 1000, defaultCwd);
+    return { id, token, scope, expiresMs: now + ttlSeconds * 1000, defaultCwd: defaultCwd ?? null };
   }
 
-  issueMainCapability(ttlSeconds = 86400) {
-    return this.issueCapability('main', ttlSeconds, 86400);
+  issueMainCapability(ttlSeconds = 86400, options = {}) {
+    return this.issueCapability('main', ttlSeconds, 86400, options);
+  }
+
+  issuePairingCode({ ttlSeconds = 21600, pairTtlSeconds = 300, defaultCwd = null } = {}) {
+    const pairSeconds = Number(pairTtlSeconds);
+    if (!Number.isInteger(pairSeconds) || pairSeconds < PAIRING_TTL_MIN_SECONDS || pairSeconds > PAIRING_TTL_MAX_SECONDS) {
+      throw new Error(`pairing code TTL must be an integer from ${PAIRING_TTL_MIN_SECONDS} to ${PAIRING_TTL_MAX_SECONDS} seconds`);
+    }
+    const now = Date.now();
+    this.db.prepare('DELETE FROM pairing_codes WHERE expires_ms <= ?').run(now - PAIRING_STALE_MS);
+    const issued = this.issueMainCapability(ttlSeconds, { defaultCwd });
+    const insert = this.db.prepare(`
+      INSERT OR IGNORE INTO pairing_codes (code, capability_id, capability_token, created_ms, expires_ms, redeemed_ms)
+      VALUES (?, ?, ?, ?, ?, NULL)
+    `);
+    const pairExpiresMs = now + pairSeconds * 1000;
+    let code;
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      const candidate = randomPairingCode();
+      if (insert.run(candidate, issued.id, issued.token, now, pairExpiresMs).changes === 1) {
+        code = candidate;
+        break;
+      }
+    }
+    if (!code) throw new Error('failed to allocate a unique pairing code');
+    return {
+      code,
+      capabilityId: issued.id,
+      expiresMs: issued.expiresMs,
+      pairExpiresMs,
+      defaultCwd: issued.defaultCwd,
+    };
+  }
+
+  redeemPairingCode(code) {
+    if (typeof code !== 'string' || !PAIRING_CODE_RE.test(code)) return undefined;
+    const now = Date.now();
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const row = this.db.prepare('SELECT * FROM pairing_codes WHERE code = ?').get(code);
+      if (!row || row.redeemed_ms !== null || row.expires_ms <= now || !row.capability_token) {
+        this.db.exec('ROLLBACK');
+        return undefined;
+      }
+      const principal = this.activeCapabilityById(row.capability_id);
+      if (!principal) {
+        this.db.exec('ROLLBACK');
+        return undefined;
+      }
+      const redeemed = this.db.prepare('UPDATE pairing_codes SET redeemed_ms = ?, capability_token = ? WHERE code = ? AND redeemed_ms IS NULL')
+        .run(now, '', code);
+      if (redeemed.changes !== 1) {
+        this.db.exec('ROLLBACK');
+        return undefined;
+      }
+      this.db.exec('COMMIT');
+      return {
+        token: row.capability_token,
+        capabilityId: row.capability_id,
+        scope: principal.scope,
+        expiresMs: principal.expiresMs,
+        defaultCwd: principal.defaultCwd,
+      };
+    } catch (error) {
+      try { this.db.exec('ROLLBACK'); } catch {}
+      throw error;
+    }
   }
 
   setMasterBearer(token) {
@@ -170,16 +286,24 @@ export class AdapterStore {
     return result.changes === 1;
   }
 
+  updateCapabilityDefaultCwd(id, defaultCwd) {
+    const normalized = defaultCwd === '' ? null : normalizeDefaultCwd(defaultCwd);
+    const result = this.db.prepare(
+      'UPDATE capabilities SET default_cwd = ? WHERE id = ? AND scope = ? AND revoked_ms IS NULL AND expires_ms > ?'
+    ).run(normalized, id, 'main', Date.now());
+    return result.changes === 1 ? normalized : undefined;
+  }
+
   resolveCapability(token) {
-    const row = this.db.prepare('SELECT id, scope, expires_ms, revoked_ms FROM capabilities WHERE token_hash = ?').get(sha256(token));
+    const row = this.db.prepare('SELECT id, scope, expires_ms, revoked_ms, default_cwd FROM capabilities WHERE token_hash = ?').get(sha256(token));
     if (!row || row.scope !== 'main' || row.expires_ms <= Date.now() || row.revoked_ms !== null) return undefined;
-    return { id: row.id, scope: row.scope, expiresMs: row.expires_ms };
+    return { id: row.id, scope: row.scope, expiresMs: row.expires_ms, defaultCwd: row.default_cwd ?? null };
   }
 
   activeCapabilityById(id) {
-    const row = this.db.prepare('SELECT id, scope, expires_ms, revoked_ms FROM capabilities WHERE id = ?').get(id);
+    const row = this.db.prepare('SELECT id, scope, expires_ms, revoked_ms, default_cwd FROM capabilities WHERE id = ?').get(id);
     if (!row || row.scope !== 'main' || row.expires_ms <= Date.now() || row.revoked_ms !== null) return undefined;
-    return { id: row.id, scope: row.scope, expiresMs: row.expires_ms };
+    return { id: row.id, scope: row.scope, expiresMs: row.expires_ms, defaultCwd: row.default_cwd ?? null };
   }
 
   advanceTurn(principalId, turnId) {
@@ -230,13 +354,15 @@ export class AdapterStore {
     const inserted = this.db.prepare(`
       INSERT INTO operations (
         id, principal_id, client_nonce, request_hash, request_json, tool, policy_class, source_profile,
-        state, confirmation_hash, confirmation_expires_ms, created_ms, updated_ms, turn_id
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        state, confirmation_hash, confirmation_expires_ms, created_ms, updated_ms, turn_id,
+        batch_id, batch_index, stop_on_error
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(principal_id, client_nonce) DO NOTHING
     `).run(
       id, principalId, clientNonce, requestHash, requestJson,
       options.tool || 'read', options.policyClass || 'automatic', options.sourceProfile || 'unknown',
       state, confirmationHash, confirmationExpiresMs, now, now, options.turnId ?? null,
+      options.batchId ?? null, options.batchIndex ?? null, options.stopOnError ?? null,
     );
 
     let row;
@@ -307,6 +433,14 @@ export class AdapterStore {
       .all(id).map(chunk => chunk.content).join('');
   }
 
+  getOperationTailText(id) {
+    const operation = this.db.prepare('SELECT state, result_text FROM operations WHERE id = ?').get(id);
+    if (!operation || operation.state !== 'completed') return undefined;
+    if (typeof operation.result_text === 'string') return operation.result_text;
+    const chunks = this.db.prepare('SELECT content FROM operation_chunks WHERE operation_id = ? ORDER BY chunk_number DESC LIMIT 2').all(id);
+    return chunks.reverse().map(chunk => chunk.content).join('');
+  }
+
   claimQueued(id) {
     const now = Date.now();
     const result = this.db.prepare("UPDATE operations SET state = 'running', updated_ms = ? WHERE id = ? AND state = 'queued'").run(now, id);
@@ -373,7 +507,31 @@ export class AdapterStore {
   }
 
   queuedOperationIds() {
-    return this.db.prepare("SELECT id FROM operations WHERE state = 'queued' ORDER BY created_ms").all().map(row => row.id);
+    return this.db.prepare("SELECT id FROM operations WHERE state = 'queued' ORDER BY created_ms, rowid").all().map(row => row.id);
+  }
+
+  getBatchOperations(principalId, batchId) {
+    return this.db.prepare('SELECT * FROM operations WHERE principal_id = ? AND batch_id = ? ORDER BY batch_index ASC').all(principalId, batchId);
+  }
+
+  recoverableScheduleItems() {
+    const singles = this.db.prepare(
+      "SELECT id, created_ms AS sort_ms, rowid AS sort_rowid FROM operations WHERE state = 'queued' AND batch_id IS NULL"
+    ).all().map(row => ({ kind: 'single', id: row.id, sortMs: row.sort_ms, sortRowid: row.sort_rowid }));
+    const batches = this.db.prepare(`
+      SELECT principal_id, batch_id, MIN(created_ms) AS sort_ms, MIN(rowid) AS sort_rowid
+      FROM operations
+      WHERE batch_id IS NOT NULL
+      GROUP BY principal_id, batch_id
+      HAVING SUM(CASE WHEN state = 'queued' THEN 1 ELSE 0 END) > 0
+    `).all().map(row => ({
+      kind: 'sequential_batch',
+      principalId: row.principal_id,
+      batchId: row.batch_id,
+      sortMs: row.sort_ms,
+      sortRowid: row.sort_rowid,
+    }));
+    return [...singles, ...batches].sort((a, b) => (a.sortMs - b.sortMs) || (a.sortRowid - b.sortRowid));
   }
 }
 

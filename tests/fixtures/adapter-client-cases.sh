@@ -36,8 +36,10 @@ cmp "$TMP/tools.expected" "$TMP/tools"
 "$CLIENT" schema echo > "$TMP/schema"
 assert_json "$TMP/schema" 'value.name === "echo" && value.inputSchema.properties.text.type === "string"'
 "$CLIENT" instructions > "$TMP/instructions"
-printf 'Adapter integration test instructions.' > "$TMP/instructions.expected"
-cmp "$TMP/instructions.expected" "$TMP/instructions"
+test "$(head -n 1 "$TMP/instructions")" = 'Adapter integration test instructions.'
+grep -Fq 'WebSession HTTP contract:' "$TMP/instructions"
+grep -Fq 'POST /v1/calls?wait=2' "$TMP/instructions"
+grep -Fq 'Idempotency-Key' "$TMP/instructions"
 grep -Fq 'long_poll_max_seconds: 90' <<<"$ABOUT_RESPONSE"
 grep -Fq "client_url: $BASE/v1/client.sh" <<<"$ABOUT_RESPONSE"
 grep -Fq 'tool_timeout_ms: 120000' <<<"$ABOUT_RESPONSE"

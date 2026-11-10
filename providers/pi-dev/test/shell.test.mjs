@@ -538,3 +538,40 @@ test('detached exec rejects timeout_seconds and prunes expired finished jobs', a
   assert.ok(names.includes('running.log'));
   assert.ok(names.includes(path.basename(result.log_path)));
 });
+
+test('bounded capture keeps the head and the tail of long output within the byte cap', async () => {
+  const workspaceRoot = await tempDir('pi-bash-head-tail-root-');
+  const stateDir = await tempDir('pi-bash-head-tail-state-');
+  const result = await runBash({
+    workspaceRoot,
+    command: `node -e "process.stdout.write('START_MARKER' + 'x'.repeat(4900) + 'END_MARKER')"`,
+    maxOutputBytes: 1024,
+    stateDir
+  });
+  assert.equal(result.exit_code, 0);
+  assert.equal(result.truncated, true);
+  assert.equal(result.output_bytes, 4922);
+  assert.ok(result.output.startsWith('START_MARKER'));
+  assert.ok(result.output.endsWith('END_MARKER'));
+  assert.match(result.output, /\n\[\.\.\. \d+ bytes omitted \.\.\.\]\n/);
+  assert.ok(Buffer.byteLength(result.output, 'utf8') <= 1024);
+  assert.equal(result.output.includes('\uFFFD'), false);
+  assert.ok(result.full_output_path);
+  assert.equal((await fs.readFile(result.full_output_path)).length, 4922);
+});
+
+test('bounded head plus tail keeps multibyte characters whole at both cut points', async () => {
+  const workspaceRoot = await tempDir('pi-bash-head-tail-utf8-root-');
+  const stateDir = await tempDir('pi-bash-head-tail-utf8-state-');
+  const result = await runBash({
+    workspaceRoot,
+    command: `node -e "process.stdout.write('é'.repeat(2000))"`,
+    maxOutputBytes: 300,
+    stateDir
+  });
+  assert.equal(result.truncated, true);
+  assert.ok(Buffer.byteLength(result.output, 'utf8') <= 300);
+  assert.equal(result.output.includes('\uFFFD'), false);
+  assert.match(result.output, /\n\[\.\.\. \d+ bytes omitted \.\.\.\]\n/);
+  assert.ok(result.output.length > 0);
+});
