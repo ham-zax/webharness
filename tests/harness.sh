@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 set -uo pipefail
 
+# Start from a clean slate. The config renderer reads the process environment, so variables
+# exported by a live deployment (for example MCP_DEV_WORKER_IDLE_MS) would override the values
+# each test sets for itself and make the suite fail only on a configured machine.
+while IFS= read -r _inherited; do unset "$_inherited"; done < <(compgen -e | grep -E '^(MCP|BRIDGE)_')
+unset _inherited
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 FAILURES=0
 TESTS=0
