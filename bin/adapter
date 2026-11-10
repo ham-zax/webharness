@@ -356,15 +356,26 @@ WebSession pairing ready
   revoke:          bin/adapter revoke-cap $capability_id
 
 --- COPY PROMPT BELOW ---
-Connect to my WSL workstation through WebSession using Python stdlib (do not use curl or shell scripts):
+Connect to my development machine through WebSession using the served Python stdlib client.
+Base: $base
+Pair before: $pair_expires_at (single use)
+Session expires: $expires_at
+Default remote cwd: $default_cwd_display
 
+Run this bootstrap command in your sandbox:
 python3 -c "import urllib.request as u; open('/tmp/wh.py','wb').write(u.urlopen(u.Request('$base/v1/client.py',headers={'User-Agent':'websession-client/1.0'}),timeout=30).read())" && python3 /tmp/wh.py connect $base $pair_code
 
-Use \`python3 /tmp/wh.py\` for all workstation operations:
-- Discovery & context: \`sigs\`, \`instructions\`, \`pwd\`, \`cd <dir>\`, \`ls [path]\`
-- Code navigation (search -> outline -> narrow slice): \`rg <pattern> [path]\`, \`read <path> --outline\`, \`read <path> <offset> <limit>\`, or \`read --targets\` via stdin
-- Mutations & verification: \`edit\` (JSON on stdin), \`write <path>\` (content on stdin), \`sh\` (script on stdin), \`review [paths...]\`
-- Multi-step efficiency: group independent reads/checks with \`batch\` (JSON array on stdin) to minimize turns and context growth. Never retry exit code 2 (\`unknown_outcome\`) without checking effects first.
+After CONNECTED, run \`python3 /tmp/wh.py instructions\` and \`python3 /tmp/wh.py pwd\`. Read the authenticated guidance, then continue my task. The client saves a private session; do not print its capability or session file. If pairing expired or was already redeemed, request a fresh prompt from \`bin/adapter connect\`.
+
+Use \`python3 /tmp/wh.py\` for workstation operations:
+- Discover: \`tools\` or \`sigs\` for live signatures; \`schema <tool>\` before an unfamiliar raw call. Use the returned names and arguments exactly.
+- Navigate: \`ls [path]\`, \`rg <pattern> [path]\`, \`read <path> --outline\`, then \`read <path> <offset> <limit>\`; \`read --targets\` accepts JSON on stdin (up to 20 files).
+- Context: \`cd <dir>\` changes the client cwd. Relative paths use it; ~ and ~/... refer to the remote user's home.
+- Change and verify: \`edit\` (JSON on stdin), \`write <path>\` (content on stdin), \`sh\` (script on stdin), and \`review [paths...]\`.
+- Batch independent work with \`batch\` (1..20 tool/arguments objects as a JSON array on stdin). Admission is atomic; tool effects are not rolled back. Reads can overlap writes: wait for a mutation to finish before its verification.
+- Keep direct calls short. Use discovered Local Terminal tools for long or uncertain work, or Dev exec detach when available; observe completion and read saved logs.
+- Exit code 2 means the submission or outcome is unknown: inspect effects or a returned status URL before any retry. Never repeat a mutation to recover omitted output. Python output files are in this sandbox; Dev spool paths are on the remote host.
+Report CONNECTED, the remote cwd, and a compact result for my task; do not echo credentials.
 --- END PROMPT ---
 EOF
 }

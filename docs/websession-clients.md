@@ -1,6 +1,6 @@
 # WebSession client bootstrap prompts
 
-Use this guide when connecting an AI environment to the existing WSL bridge through ordinary HTTPS. WebSession is intentionally an **on-demand transport adapter**: the main WebHarness lifecycle does not start, stop, or supervise it.
+Use this guide when connecting an AI environment to the existing WebHarness deployment through ordinary HTTPS. WebSession is intentionally an **on-demand transport adapter**: the main WebHarness lifecycle does not start, stop, or supervise it.
 
 While the adapter is running, an AI environment with a usable outbound HTTPS primitive can use WebSession as long as it can retain an ordinary capability secret for the session. Programmable clients that support POST plus custom headers use the richer JSON profile. Constrained `GET`/`open`/`fetch`-only agents use the universal GET profile with an explicit confirmation step. Native MCP clients should normally use `/mcp` directly and treat WebSession as an optional secondary path.
 
@@ -189,26 +189,73 @@ Authorization: Bearer <MASTER_BEARER>
 
 The response contains a fresh ordinary `main` capability with `ttl_seconds: 21600`. Use that returned capability for discovery and calls exactly as below. Reusing the master bearer later issues another independent six-hour capability; rotating the master does not change capabilities that were already issued.
 
+## Python sandbox pairing prompt
+
+Prefer the exact prompt printed by `bin/adapter connect --here`: it includes the current base, one-use code, expiry, and remote cwd. The template below also works in a Python execution environment without a shell. Replace `<BASE>` and `<PAIR_CODE>` with the values from that generated prompt; keep any existing task instruction after this prompt.
+
+````text
+Connect to my development machine through WebSession using Python stdlib.
+Base: <BASE>
+Pair code: <PAIR_CODE> (single use; redeem before the operator's printed expiry)
+
+Execute this Python code once in your sandbox:
+
+```python
+import subprocess
+import sys
+import urllib.request
+
+base = "<BASE>".rstrip("/")
+request = urllib.request.Request(
+    base + "/v1/client.py", headers={"User-Agent": "websession-client/1.0"}
+)
+with urllib.request.urlopen(request, timeout=30) as response:
+    source = response.read()
+with open("/tmp/wh.py", "wb") as client:
+    client.write(source)
+subprocess.run([sys.executable, "/tmp/wh.py", "connect", base, "<PAIR_CODE>"], check=True)
+```
+
+The client deliberately saves a private 0600 session; do not print the capability or session file. If the code expired or was already redeemed, request a fresh `bin/adapter connect` prompt instead of guessing auth routes.
+
+After CONNECTED, execute `instructions` and `pwd` through /tmp/wh.py. Read the guidance, then continue my task. Invoke later commands with subprocess.run([sys.executable, "/tmp/wh.py", ...], check=True); supply JSON or script content using input=..., text=True when a command reads stdin.
+
+- Discover exact tool signatures with `tools`/`sigs`, and inspect `schema <tool>` before an unfamiliar raw call.
+- Navigate with `ls`, `rg <pattern> [path]`, `read <path> --outline`, then `read <path> <offset> <limit>`. `read --targets` reads JSON on stdin for up to 20 files.
+- `cd <dir>` selects client context; relative paths use it and ~ / ~/... refer to the remote user's home.
+- Use `edit` (JSON stdin), `write <path>` (content stdin), `sh` (script stdin), and `review [paths...]` to change and verify work.
+- `batch` reads a JSON array of 1..20 {"tool":"<discovered-name>","arguments":{...}} objects on stdin. Group independent calls only. Admission is atomic; tool effects are not rolled back, and reads may overlap writes. Verify mutations after they complete.
+- Keep direct calls short. For long or uncertain commands, use discovered Local Terminal tools or Dev exec detach when available, then observe completion and read logs.
+- Exit code 2 means submission/outcome is unknown. Inspect effects or a returned status URL before retrying. Never rerun a mutation just to recover display output. Python output files are in this sandbox; Dev spool files are on the remote host.
+
+Report CONNECTED, the remote cwd, and a compact result for my task. Do not echo credentials.
+````
+
 ## Programmable HTTP agent bootstrap prompt
 
-Prefer `bin/adapter connect` above whenever the client has Python 3 stdlib—it avoids pasting bearer secrets into chat. When you instead supply an already-issued `<CAPABILITY>` (or `<MASTER_BEARER>`) directly to a programmable runtime, use this compact prompt:
+Use this when the client has a general HTTPS runtime but cannot run the Python reference client. Supply one credential type: `<PAIR_CODE>` from `bin/adapter connect`, an ordinary `<CAPABILITY>`, or `<MASTER_BEARER>`. Remove unused credential lines before sharing.
 
 ```text
-Connect to my WSL workstation through WebSession using the served Python reference client:
-
+Connect to my development machine through WebSession using your HTTPS runtime.
 Base: https://mcp.example.com
+Pair code: <PAIR_CODE_IF_PROVIDED>
 Capability: <CAPABILITY_IF_PROVIDED>
 Master bearer: <MASTER_BEARER_IF_PROVIDED>
 
-Keep credentials strictly in memory; never echo, log, or write them to disk, and never put a bearer in a URL.
-1. Fetch `GET /v1/client.py` to `/tmp/wh.py` (`User-Agent: websession-client/1.0`). If only a master bearer was supplied, exchange it once via `POST /v1/access` (`Authorization: Bearer <MASTER_BEARER>`) and hold the returned `capability` in memory.
-2. Run commands with `WS_BASE=<Base> WS_CAP=<Capability> python3 /tmp/wh.py <cmd>`:
-   - Discovery: `tools` (compact signatures), `instructions`, `schema <tool>`, `pwd`, `ls [path]`
-   - Search -> outline -> slice: `rg <pattern> [path]`, `read <path> --outline`, `read <path> <offset> <limit>`, `read --targets` (stdin)
-   - Mutate & verify: `edit` (JSON on stdin), `write <path>` (stdin), `sh` (script on stdin), `review [paths...]`
-   - Coarse-grained turns: group independent reads/checks in one round-trip with `batch` (JSON array on stdin).
-3. Exit code 2 means `unknown_outcome`: never retry automatically; inspect effects first. Results >8 KiB print head+tail and save the full text in the local sandbox (`saved in local sandbox: /tmp/...`).
+Keep credentials in memory; never echo/log them or put a bearer in a URL. Use the documented routes exactly:
+1. GET /v1/about and confirm WEBSESSION-MCP-BRIDGE/1. This response is text, not JSON.
+2. If a capability was supplied, use it. Otherwise redeem a pair code once with POST /v1/pair, Content-Type: application/json, body {"code":"<PAIR_CODE>"}; or exchange a master bearer with POST /v1/access and Authorization: Bearer <MASTER_BEARER>. Require state=ready and retain the returned capability. Do not use a pair code as a bearer. If pairing expires or its response is lost, request a fresh code.
+3. GET /v1/signatures and /v1/instructions with Authorization: Bearer <CAPABILITY>. Read the guidance. Use exact live tool names; inspect GET /v1/tools/<name> before an unfamiliar call. If discovery returns default_cwd, resolve relative Dev paths against it; ~ / ~/... retain their remote-home meaning.
+4. POST /v1/calls?wait=2 with Authorization: Bearer <CAPABILITY>, Content-Type: application/json, and a fresh runtime-generated Idempotency-Key matching ^[A-Za-z0-9._-]{1,64}$. Body fields are exactly {"version":1,"tool":"<discovered-name>","arguments":{...}}. Do not guess alternative envelope fields or tool aliases.
+5. If queued/running, long-poll the returned status_url with wait=90. Treat returned URLs as opaque: preserve their paths, tokens, and other query parameters. If completed with chunk_count=1, read result. If chunk_count>1, GET chunk_base_url + each number from 1 through chunk_count and concatenate the JSON content values in order.
+6. For independent calls, POST /v1/batch?wait=2 with the same headers and a fresh key. Body: {"version":1,"calls":[{"tool":"<name>","arguments":{...}}, ...]} (1..20 items). Track every returned result/status URL. Admission is atomic, execution is not: reads may overlap writes, mutations serialize, and completed effects are not rolled back. Submit dependent verification after the mutation completes.
+7. Search -> outline -> focused reads using the discovered Dev tools before editing. Group independent checks; keep direct execution short and use discovered durable Terminal or detached-exec support for long work.
+8. A lost/invalid submission response or unknown_outcome may mean the tool ran. Never automatically resubmit a mutation. A failed status read or HTTP 404 also does not prove non-execution. Keep recovery URLs private and inspect effects before retrying.
+
+Verify the remote cwd with the discovered shell tool if available, then continue my task. Report CONNECTED, the remote cwd, and compact results only; do not print credentials or transport objects.
 ```
+
+If Python is available but you already have a capability, fetch `/v1/client.py` and run it with `WS_BASE` and `WS_CAP` passed through your runtime's subprocess environment. If only a master bearer was supplied, first exchange it through `/v1/access`. This mode keeps the supplied capability in memory; set `WS_CWD` explicitly when needed. Pairing via `connect` instead intentionally saves a private session. Avoid stale `WS_BASE`/`WS_CAP` overrides when switching back to a paired session.
 
 ## HTTP wire contract reference
 
@@ -225,7 +272,7 @@ Integrators implementing custom non-Python HTTPS clients against `WEBSESSION-MCP
 ## ChatGPT / native MCP + optional WebSession bootstrap prompt
 
 ```text
-You already have native MCP access to my WSL. You also have a local WebSession wrapper for sending an operation through the public WebSession HTTPS path without placing bearer credentials or curl construction in the model-visible Bash command.
+You already have native MCP access to my development machine. You also have a local WebSession wrapper for sending an operation through the public WebSession HTTPS path without placing bearer credentials or curl construction in the model-visible Bash command.
 
 Use native MCP as the primary interface and discover/use its tools normally.
 
@@ -243,18 +290,18 @@ Use exact tool names and argument schemas from the native MCP catalog; WebSessio
 
 For multi-part work, use only genuinely independent tasks:
 - native MCP for primary repository/tool work
-- WebSession for one independent durable operation when useful
+- WebSession for an independent HTTP operation when useful
 - Local Terminal + Dev `wait` as the mandatory path for long-running or duration-uncertain processes; direct Dev `exec`/`bash` is short-RPC work only
 
 Never execute the same mutation through both paths or run competing edits against the same files.
-Read-only WebSession operations run concurrently in the adapter while mutating WebSession calls stay serialized.
+Read-only WebSession operations can overlap mutations while mutating WebSession calls stay serialized. Wait for a mutation to complete before submitting its verification.
 
 First verify WSL access with `pwd` through native MCP. When a WebSession-path check is useful, run the wrapper `pwd` example above. Then proceed with my task autonomously.
 ```
 
 ## curl-only agent bootstrap prompt
 
-Use this for an agent with a shell and `curl` but no MCP client. The served client keeps the prompt short: `wh tools` prints one signature line per tool, a full schema is fetched only when needed, shell scripts go through `wh sh` without JSON quoting, and large results are capped. It provides parity for tools only, not MCP resources or prompts, and adapter calls run one at a time.
+Use this for an agent with a shell and `curl` but no MCP client. The served client keeps the prompt short: `wh tools` prints one signature line per tool, a full schema is fetched only when needed, shell scripts go through `wh sh` without JSON quoting, and large results are capped. It provides parity for tools only, not MCP resources or prompts, and each shell invocation submits one call. Read-only adapter operations can run concurrently; mutations stay serialized.
 
 Replace `<HOST>` and paste the prompt as the first message. It contains no secret. The agent first asks you to run one command on the workstation, then does the setup itself once you reply:
 
@@ -263,12 +310,12 @@ You have a shell with curl. I want you to use the tools on my workstation throug
 
 Step 1. Do nothing yet. Tell me to run this in the webharness checkout on my workstation, and to reply "did it" together with the output line that starts with `capability:`
   bin/adapter start && bin/adapter issue-cap
-Tell me too that access lasts 24 hours and that the adapter keeps running until I stop it myself.
+Tell me too that access lasts 24 hours and that the adapter keeps running until I stop it myself. If Python 3 is available, prefer the one-use pairing flow from `bin/adapter connect` instead.
 
 Step 2. After I reply, set up once:
   mkdir -p ~/.wh && curl -fsS https://<HOST>/v1/client.sh -o ~/.wh/wh && chmod +x ~/.wh/wh
   printf '%s' '<capability from my reply>' | ~/.wh/wh login https://<HOST>
-It must print `ok: <N> tools`. If it does not, show me the error and stop. Then run `~/.wh/wh tools` and `~/.wh/wh instructions`, tell me briefly what you can now do, and ask what I want done.
+It must print `ok: <N> tools`. If it does not, show me the error and stop. Then run `~/.wh/wh tools` and `~/.wh/wh instructions`, verify the cwd with `~/.wh/wh sh pwd`, and continue the task I already supplied. Ask for a task only if I have not supplied one.
 
 Shell work: pass the script on stdin so it needs no JSON quoting, and put several checks in one script instead of one call each:
   ~/.wh/wh sh <<'EOF'
@@ -276,10 +323,10 @@ Shell work: pass the script on stdin so it needs no JSON quoting, and put severa
   EOF
 Other tools: `~/.wh/wh tools` shows each tool's parameters on one line, `~/.wh/wh call <tool> '<json-arguments>'` runs one (`@file` or `-` reads the arguments from a file or stdin), and `~/.wh/wh schema <tool>` gives the full schema when the one-line form is not enough.
 Results print as plain text. One over 8 KB shows its start and end, and the full text is saved to `~/.wh/last`: search that file locally instead of repeating the call.
-One call must finish within 60 seconds. For a build, test run or anything else that may take longer, start it detached, wait in short calls, then read the log:
+Keep direct execution comfortably under the connector window (target 45 seconds). For long or uncertain commands, prefer the discovered Local Terminal tools; when unavailable and Dev exec supports detach, start detached, wait in short calls, then read the log. Discover the exact exec/wait names first; these examples use dev_exec/dev_wait:
   ~/.wh/wh call dev_exec '{"argv":["bash","-c","<command>"],"detach":true}'    # prints log and exit paths
   ~/.wh/wh call dev_wait '{"name":"job1","condition":{"kind":"file_exists","path":"<exit path>"},"hold_seconds":45}'
-Repeat the wait with only `{"name":"job1","hold_seconds":45}` until it prints `matched`; repeating a wait is always safe, even after exit code 2. Then `~/.wh/wh sh 'tail -50 <log path>; cat <exit path>'`.
+After a confirmed wait creation, resume with only `{"name":"job1","hold_seconds":45}` until it prints `matched`. If creation had an unknown outcome, inspect/resume that same name rather than starting the command again. Then `~/.wh/wh sh 'tail -50 <log path>; cat <exit path>'`.
 After login, never print, echo or log the capability, and never put it in a URL.
 Exit code 2 means the outcome is unknown: do not retry, check whether the effect happened first. Exit code 3 means the client timed out; run `~/.wh/wh status <status_url>` if it printed a status URL. If no status URL was available, do not retry automatically.
 When I say I am finished, remind me to run `bin/adapter revoke-cap <capability-id>` and `bin/adapter stop`.
@@ -307,7 +354,7 @@ The client long-polls `POST /v1/calls?wait=N`, where N can be up to the `long_po
 Use this for any constrained AI environment whose only usable network primitive is readable HTTPS GET/open/fetch. Replace `<CAPABILITY>` with a freshly issued ordinary capability. A GET-only client cannot safely exchange the master bearer because the master is header-only and must never appear in a URL.
 
 ```text
-Use your readable HTTPS GET/open/fetch tool to connect to my WSL through WebSession. Do not decide that the tool is unsuitable before trying the documented `/v1/about` request.
+Use your readable HTTPS GET/open/fetch tool to connect to my development machine through WebSession. Do not decide that the tool is unsuitable before trying the documented `/v1/about` request.
 
 Base: https://mcp.example.com
 Capability: <CAPABILITY>
@@ -323,9 +370,9 @@ Connection test: confirm `dev_bash` exists, then use this pre-encoded `{"command
 
 https://mcp.example.com/v1/s/<CAPABILITY>/call/<nonce>/eyJ2ZXJzaW9uIjoxLCJ0b29sIjoiZGV2X2Jhc2giLCJhcmd1bWVudHMiOnsiY29tbWFuZCI6InB3ZCJ9fQ
 
-Complete confirmation/polling, then report only:
+Discover the exact shell-tool name before using the encoded example; it is valid only if that name is dev_bash. Otherwise encode the discovered name with a real encoder. Complete confirmation/polling, then report only:
 
 CONNECTED
-WSL_PWD: <actual result>
+REMOTE_CWD: <actual result>
 TOOLS_AVAILABLE: <actual tool_count>
 ```
