@@ -78,6 +78,17 @@ BRIDGE_LOCK_HELD=0
 
 mkdir -p "$BRIDGE_RUN_DIR"
 
+# Loopback health checks must bypass any HTTP proxy in the environment.
+# T3 and corporate proxies set http_proxy to 127.0.0.1:45553 which intercepts
+# localhost requests and returns 501; explicit no_proxy keeps bridge_wait_url
+# and bridge_local_health from going through the proxy.
+if [[ ",${no_proxy:-}," != *",127.0.0.1,"* ]]; then
+  export no_proxy="${no_proxy:+$no_proxy,}127.0.0.1,localhost,::1"
+fi
+if [[ ",${NO_PROXY:-}," != *",127.0.0.1,"* ]]; then
+  export NO_PROXY="${NO_PROXY:+$NO_PROXY,}127.0.0.1,localhost,::1"
+fi
+
 bridge_enabled() {
   [ -f "$BRIDGE_ENABLED_FILE" ]
 }
@@ -248,14 +259,14 @@ bridge_listener_pid() {
 }
 
 bridge_local_health() {
-  curl -sf -m 3 "http://127.0.0.1:$BRIDGE_ONE_MCP_PORT/health/ready" -o /dev/null
+  curl --noproxy '*' -sf -m 3 "http://127.0.0.1:$BRIDGE_ONE_MCP_PORT/health/ready" -o /dev/null
 }
 
 bridge_wait_url() {
   local url="$1" attempts="${2:-30}" interval="${3:-1}" timeout="${4:-3}"
   local i
   for i in $(seq 1 "$attempts"); do
-    if curl -sf -m "$timeout" "$url" -o /dev/null; then
+    if curl --noproxy '*' -sf -m "$timeout" "$url" -o /dev/null; then
       return 0
     fi
     sleep "$interval"

@@ -100,6 +100,22 @@ adapter revoke-cap "$CAPABILITY_ID" >/dev/null
 REVOKED_HTTP="$(curl -sS -o /dev/null -w '%{http_code}' "$BASE/v1/s/$CAPABILITY/tools")"
 test "$REVOKED_HTTP" = 404
 
+CONNECT_PROMPT="$(adapter connect --cwd "$TMP/home" --ttl 120 --pair-ttl 60)"
+grep -Fq 'WebSession pairing ready' <<<"$CONNECT_PROMPT"
+grep -Fq "$BASE/v1/client.py" <<<"$CONNECT_PROMPT"
+PAIR_CAP_ID="$(sed -n 's/^  capability_id:   //p' <<<"$CONNECT_PROMPT")"
+PAIR_CODE="$(sed -n "s|.*connect $BASE \([a-z0-9-]*\).*|\1|p" <<<"$CONNECT_PROMPT")"
+test -n "$PAIR_CAP_ID"
+test -n "$PAIR_CODE"
+curl -fsS "$BASE/v1/client.py" -o "$TMP/wh.py"
+CONNECT_OUT="$(WH_SESSION_FILE="$TMP/wh-session.json" WS_BASE='' WS_CAP='' python3 "$TMP/wh.py" connect "$BASE" "$PAIR_CODE")"
+grep -Fq 'CONNECTED' <<<"$CONNECT_OUT"
+grep -Fq "cwd: $TMP/home" <<<"$CONNECT_OUT"
+test "$(WH_SESSION_FILE="$TMP/wh-session.json" WS_BASE='' WS_CAP='' python3 "$TMP/wh.py" pwd)" = "$TMP/home"
+REPLAY_PAIR_HTTP="$(curl -sS -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' --data '{"code":"'$PAIR_CODE'"}' "$BASE/v1/pair")"
+test "$REPLAY_PAIR_HTTP" = 404
+adapter revoke-cap "$PAIR_CAP_ID" >/dev/null
+
 PAYLOAD="$(head -c 512 </dev/zero | tr '\0' A)"
 EXPECTED_SHA="$(printf '%s' "$PAYLOAD" | sha256sum | cut -d' ' -f1)"
 ECHO_RESPONSE="$(curl -fsS "$BASE/probe/echo-path/$PAYLOAD")"

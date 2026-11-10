@@ -1,4 +1,4 @@
-import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, randomBytes, randomInt, randomUUID, timingSafeEqual } from 'node:crypto';
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -9,6 +9,35 @@ function sha256(value) {
 
 const CHUNK_BYTES = 8192;
 const MASTER_BEARER_FILE = 'master-bearer.sha256';
+const PAIRING_CODE_RE = /^[a-z]{4,7}-[0-9]{4}-[a-z0-9]{4}$/;
+const PAIRING_TTL_MIN_SECONDS = 30;
+const PAIRING_TTL_MAX_SECONDS = 900;
+const PAIRING_STALE_MS = 86_400_000;
+const PAIRING_WORDS = [
+  'amber', 'birch', 'cedar', 'coral', 'delta', 'ember', 'fjord', 'frost',
+  'grove', 'haven', 'ivory', 'jasper', 'maple', 'misty', 'noble', 'ocean',
+  'olive', 'pearl', 'pine', 'prism', 'quartz', 'river', 'robin', 'sable',
+  'slate', 'solar', 'stone', 'swift', 'terra', 'topaz', 'velvet', 'zephyr',
+];
+const PAIRING_SUFFIX_ALPHABET = 'abcdefghjkmnpqrstuvwxyz23456789';
+
+function normalizeDefaultCwd(value) {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== 'string' || value.length === 0 || value.includes('\0')) {
+    throw new Error('default cwd must be a non-empty string without NUL bytes');
+  }
+  return value;
+}
+
+function randomPairingCode() {
+  const word = PAIRING_WORDS[randomInt(PAIRING_WORDS.length)];
+  const digits = String(randomInt(0, 10_000)).padStart(4, '0');
+  let suffix = '';
+  for (let index = 0; index < 4; index += 1) {
+    suffix += PAIRING_SUFFIX_ALPHABET[randomInt(PAIRING_SUFFIX_ALPHABET.length)];
+  }
+  return `${word}-${digits}-${suffix}`;
+}
 
 function validMasterBearer(value) {
   return typeof value === 'string' && /^[A-Za-z0-9._-]{32,128}$/.test(value);
@@ -66,7 +95,8 @@ export class AdapterStore {
         scope TEXT NOT NULL,
         created_ms INTEGER NOT NULL,
         expires_ms INTEGER NOT NULL,
-        revoked_ms INTEGER
+        revoked_ms INTEGER,
+        default_cwd TEXT
       );
       CREATE TABLE IF NOT EXISTS operations (
         id TEXT PRIMARY KEY,
@@ -101,10 +131,21 @@ export class AdapterStore {
         principal_id TEXT PRIMARY KEY REFERENCES capabilities(id),
         turn_id INTEGER NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS pairing_codes (
+        code TEXT PRIMARY KEY,
+        capability_id TEXT NOT NULL REFERENCES capabilities(id) ON DELETE CASCADE,
+        capability_token TEXT NOT NULL,
+        created_ms INTEGER NOT NULL,
+        expires_ms INTEGER NOT NULL,
+        redeemed_ms INTEGER
+      );
     `);
     const capabilityColumns = this.db.prepare('PRAGMA table_info(capabilities)').all();
     if (!capabilityColumns.some(column => column.name === 'revoked_ms')) {
       this.db.exec('ALTER TABLE capabilities ADD COLUMN revoked_ms INTEGER');
+    }
+    if (!capabilityColumns.some(column => column.name === 'default_cwd')) {
+      this.db.exec('ALTER TABLE capabilities ADD COLUMN default_cwd TEXT');
     }
     const operationColumns = this.db.prepare('PRAGMA table_info(operations)').all().map(column => column.name);
     const migrations = [
@@ -126,20 +167,87 @@ export class AdapterStore {
     this.db.close();
   }
 
-  issueCapability(scope, ttlSeconds, maxTtlSeconds) {
+  issueCapability(scope, ttlSeconds, maxTtlSeconds, options = {}) {
     if (!Number.isInteger(ttlSeconds) || ttlSeconds < 60 || ttlSeconds > maxTtlSeconds) {
       throw new Error(`capability TTL must be an integer from 60 to ${maxTtlSeconds} seconds`);
     }
+    const defaultCwd = normalizeDefaultCwd(options.defaultCwd);
     const token = randomBytes(32).toString('base64url');
     const id = randomUUID();
     const now = Date.now();
-    this.db.prepare('INSERT INTO capabilities (id, token_hash, scope, created_ms, expires_ms) VALUES (?, ?, ?, ?, ?)')
-      .run(id, sha256(token), scope, now, now + ttlSeconds * 1000);
-    return { id, token, scope, expiresMs: now + ttlSeconds * 1000 };
+    this.db.prepare('INSERT INTO capabilities (id, token_hash, scope, created_ms, expires_ms, default_cwd) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(id, sha256(token), scope, now, now + ttlSeconds * 1000, defaultCwd);
+    return { id, token, scope, expiresMs: now + ttlSeconds * 1000, defaultCwd: defaultCwd ?? null };
   }
 
-  issueMainCapability(ttlSeconds = 86400) {
-    return this.issueCapability('main', ttlSeconds, 86400);
+  issueMainCapability(ttlSeconds = 86400, options = {}) {
+    return this.issueCapability('main', ttlSeconds, 86400, options);
+  }
+
+  issuePairingCode({ ttlSeconds = 21600, pairTtlSeconds = 300, defaultCwd = null } = {}) {
+    const pairSeconds = Number(pairTtlSeconds);
+    if (!Number.isInteger(pairSeconds) || pairSeconds < PAIRING_TTL_MIN_SECONDS || pairSeconds > PAIRING_TTL_MAX_SECONDS) {
+      throw new Error(`pairing code TTL must be an integer from ${PAIRING_TTL_MIN_SECONDS} to ${PAIRING_TTL_MAX_SECONDS} seconds`);
+    }
+    const now = Date.now();
+    this.db.prepare('DELETE FROM pairing_codes WHERE expires_ms <= ?').run(now - PAIRING_STALE_MS);
+    const issued = this.issueMainCapability(ttlSeconds, { defaultCwd });
+    const insert = this.db.prepare(`
+      INSERT OR IGNORE INTO pairing_codes (code, capability_id, capability_token, created_ms, expires_ms, redeemed_ms)
+      VALUES (?, ?, ?, ?, ?, NULL)
+    `);
+    const pairExpiresMs = now + pairSeconds * 1000;
+    let code;
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      const candidate = randomPairingCode();
+      if (insert.run(candidate, issued.id, issued.token, now, pairExpiresMs).changes === 1) {
+        code = candidate;
+        break;
+      }
+    }
+    if (!code) throw new Error('failed to allocate a unique pairing code');
+    return {
+      code,
+      capabilityId: issued.id,
+      expiresMs: issued.expiresMs,
+      pairExpiresMs,
+      defaultCwd: issued.defaultCwd,
+    };
+  }
+
+  redeemPairingCode(code) {
+    if (typeof code !== 'string' || !PAIRING_CODE_RE.test(code)) return undefined;
+    const now = Date.now();
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const row = this.db.prepare('SELECT * FROM pairing_codes WHERE code = ?').get(code);
+      if (!row || row.redeemed_ms !== null || row.expires_ms <= now || !row.capability_token) {
+        this.db.exec('ROLLBACK');
+        return undefined;
+      }
+      const principal = this.activeCapabilityById(row.capability_id);
+      if (!principal) {
+        this.db.exec('ROLLBACK');
+        return undefined;
+      }
+      const redeemed = this.db.prepare('UPDATE pairing_codes SET redeemed_ms = ?, capability_token = ? WHERE code = ? AND redeemed_ms IS NULL')
+        .run(now, '', code);
+      if (redeemed.changes !== 1) {
+        this.db.exec('ROLLBACK');
+        return undefined;
+      }
+      this.db.exec('COMMIT');
+      return {
+        token: row.capability_token,
+        capabilityId: row.capability_id,
+        scope: principal.scope,
+        expiresMs: principal.expiresMs,
+        defaultCwd: principal.defaultCwd,
+      };
+    } catch (error) {
+      try { this.db.exec('ROLLBACK'); } catch {}
+      throw error;
+    }
   }
 
   setMasterBearer(token) {
@@ -171,15 +279,15 @@ export class AdapterStore {
   }
 
   resolveCapability(token) {
-    const row = this.db.prepare('SELECT id, scope, expires_ms, revoked_ms FROM capabilities WHERE token_hash = ?').get(sha256(token));
+    const row = this.db.prepare('SELECT id, scope, expires_ms, revoked_ms, default_cwd FROM capabilities WHERE token_hash = ?').get(sha256(token));
     if (!row || row.scope !== 'main' || row.expires_ms <= Date.now() || row.revoked_ms !== null) return undefined;
-    return { id: row.id, scope: row.scope, expiresMs: row.expires_ms };
+    return { id: row.id, scope: row.scope, expiresMs: row.expires_ms, defaultCwd: row.default_cwd ?? null };
   }
 
   activeCapabilityById(id) {
-    const row = this.db.prepare('SELECT id, scope, expires_ms, revoked_ms FROM capabilities WHERE id = ?').get(id);
+    const row = this.db.prepare('SELECT id, scope, expires_ms, revoked_ms, default_cwd FROM capabilities WHERE id = ?').get(id);
     if (!row || row.scope !== 'main' || row.expires_ms <= Date.now() || row.revoked_ms !== null) return undefined;
-    return { id: row.id, scope: row.scope, expiresMs: row.expires_ms };
+    return { id: row.id, scope: row.scope, expiresMs: row.expires_ms, defaultCwd: row.default_cwd ?? null };
   }
 
   advanceTurn(principalId, turnId) {

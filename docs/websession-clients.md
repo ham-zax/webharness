@@ -18,6 +18,7 @@ For master-bearer lifetime, rotation, exchange, and storage rules, see [WebSessi
 | Client capability | WebSession profile | Credential bootstrap |
 |---|---|---|
 | HTTPS GET + POST + custom headers | enhanced JSON (`json-post-v1`) | master bearer exchange or finite capability |
+| Python stdlib HTTPS (chat or code sandbox) | pair + served client (`wh.py` through `POST /v1/pair`) | one-time pair code from `bin/adapter connect` |
 | Generic code/runtime HTTP client | enhanced JSON (`json-post-v1`) | master bearer exchange or finite capability |
 | Shell with curl only (no MCP client) | enhanced JSON via served client (`/v1/client.sh`) | finite capability issued by the operator |
 | HTTPS GET/open/fetch only | universal GET (`universal-get-v1`) | finite capability issued by the operator |
@@ -42,8 +43,9 @@ The adapter lifecycle is manual. Nothing starts it: not `webharness setup --enab
 For a finite client capability:
 
 ```bash
-bin/adapter issue-cap          # 24 hours, the default and the maximum
-bin/adapter issue-cap 3600     # or a shorter lifetime in seconds, minimum 60
+bin/adapter issue-cap                         # 24 hours, the default and the maximum
+bin/adapter issue-cap 3600 --here             # pin the current directory as default cwd
+bin/adapter issue-cap --cwd ~/repo/webharness # 24 hours with an explicit default cwd
 ```
 
 `issue-cap` prints:
@@ -75,6 +77,46 @@ bin/websession-call dev_1mcp_bash '{"command":"pwd"}'
 
 `bin/websession-call <tool> '<arguments-json>'` creates a temporary ordinary capability in private adapter state, submits the exact tool call through the public WebSession `POST /v1/calls` path, follows status/chunks to a terminal result, and revokes the temporary capability after a known terminal outcome. It never prints the capability. If submission or status transport becomes ambiguous, it does not retry the operation and leaves the temporary capability to expire rather than changing an unresolved operation.
 
+## Recommended: One-command sandbox-safe pairing
+
+For AI environments inside cloud sandboxes or chat surfaces, skip hand-built bearer flows and pair with one command. On the workstation run:
+
+```bash
+bin/adapter connect --here           # pin the current directory as the sticky cwd
+bin/adapter connect --cwd ~/repo/webharness
+bin/adapter connect --ttl 86400 --pair-ttl 600
+```
+
+`bin/adapter connect` starts the adapter when it is not running, resolves the public HTTPS base URL (in this order: `WEBSESSION_ADAPTER_PUBLIC_URL`, `TUNNEL_URL`, the tunnel URL file, then `MCP_PUBLIC_URL` from bridge state or a repo `.env`), creates a one-time pair code with a default `--pair-ttl 300` (five minutes), and prints a ready-to-paste prompt. The client fetches `/v1/client.py` (`wh.py`), exchanges the pair code through `POST /v1/pair`, and stores the resulting ordinary capability in a `0600` private session file (`~/.wh/session.json` or `$WH_SESSION_FILE`) for the default `--ttl 21600` seconds (six hours) so later commands never pass secrets on the command line. The helper never prints the capability bearer secret: only `capability_id`, the operator revocation handle, travels with the summary. Revoke access with `bin/adapter revoke-cap <capability-id>`.
+
+Why `POST /v1/pair` + `wh.py connect` is the canonical pairing path for cloud sandboxes:
+
+- The chat never contains a 43-character capability bearer token in a Bash command, which earlier LLM content-safety filters could block.
+- No capability-bearing URL exists in the conversation, so GET link-prefetchers cannot burn single-use capability codes before the client uses them.
+- The Turn-1 prompt shrinks by roughly ~85%: five short lines of `wh.py` guidance replace the long manual bootstrap prompt.
+- The connection keeps a sticky default `cwd` from `--here` or `--cwd`, so commands run in the intended project directory.
+- Native subcommands (`sigs`, `ls`, `rg`, `read --outline`, `edit`, `write`, `sh`, `review`, and `batch` without JSON-escaping errors) replace hand-written JSON envelopes.
+
+### `wh.py` subcommand reference
+
+`/v1/client.py` (`wh.py`) implements the WebSession JSON profile over these subcommands:
+
+| Command | Meaning |
+|---|---|
+| `wh.py connect <base> <pair_code>` | exchange the one-time pair code; store base and capability; set the sticky cwd |
+| `wh.py tools` / `wh.py sigs` | one compact signature line per live 1MCP tool (`tools --names` for bare names) |
+| `wh.py instructions` | authenticated owner and server guidance (compacted) |
+| `wh.py pwd`, `wh.py cd <dir>`, `wh.py ls [path]` | session working directory and listings |
+| `wh.py rg <pattern> [path]` | structured `dev_1mcp_search` ripgrep call (vendor dirs excluded by default) |
+| `wh.py read <path> --outline` | structural symbol outline of a file |
+| `wh.py read <path> <offset> <limit>` | narrow slice read |
+| `wh.py read --targets` | targets JSON on stdin; read several files in one call |
+| `wh.py edit` | edit JSON on stdin |
+| `wh.py write <path>` | file content on stdin |
+| `wh.py sh` | shell script on stdin or as arguments |
+| `wh.py review [paths...]` | review changed files |
+| `wh.py batch` | JSON array on stdin; single-RTT `POST /v1/batch` across up to 20 calls |
+
 ## Reusable six-hour bootstrap
 
 For a stable password-equivalent bootstrap secret, configure a master bearer once:
@@ -100,60 +142,36 @@ The response contains a fresh ordinary `main` capability with `ttl_seconds: 2160
 
 ## Programmable HTTP agent bootstrap prompt
 
-Use this for any AI environment that can make HTTPS GET/POST requests with custom headers, whether through Python, JavaScript, a generic HTTP tool, or another code/runtime surface. Provide either `<MASTER_BEARER>` or an already-issued `<CAPABILITY>`. Prefer the master bearer when the client supports POST plus custom headers; it exchanges into a fresh six-hour capability without putting the master in a URL. Prefer the served reference client over a client written by the model: generated clients commonly corrupt escapes and parse `/v1/about` as JSON.
+Prefer `bin/adapter connect` above whenever the client has Python 3 stdlib—it avoids pasting bearer secrets into chat. When you instead supply an already-issued `<CAPABILITY>` (or `<MASTER_BEARER>`) directly to a programmable runtime, use this compact prompt:
 
 ```text
-Use your available HTTPS client/runtime to connect to my WSL through WebSession. Use the documented routes exactly; do not probe or guess authentication endpoints.
+Connect to my WSL workstation through WebSession using the served Python reference client:
 
 Base: https://mcp.example.com
-Master bearer: <MASTER_BEARER_IF_PROVIDED>
 Capability: <CAPABILITY_IF_PROVIDED>
+Master bearer: <MASTER_BEARER_IF_PROVIDED>
 
-Keep both credentials secret. Never echo them, log them, or write them to disk. Never put the master bearer in a URL. WebSession is transport only; discover and use the exact live 1MCP tool names and schemas rather than relying on a remembered catalog.
-
-Alternatively, fetch the reference client that already implements this contract:
-`GET /v1/client.py`, then run `WS_BASE=<Base> WS_CAP=<CAPABILITY> python3 client.py sh pwd`.
-
-The reference client generates its own valid idempotency keys. If implementing requests yourself, generate the key in your runtime: Python `import uuid; nonce = uuid.uuid4().hex` or `import secrets; nonce = secrets.token_urlsafe(16)`. It must match `^[A-Za-z0-9._-]{1,64}$`. Do not rely on `uuidgen` or `/proc/sys/kernel/random/uuid`: sandbox environments may provide neither. An empty or malformed `Idempotency-Key` causes HTTP 400 `invalid_idempotency_key` before the tool runs.
-
-The Python client's `call` and `sh` commands show at most 8192 UTF-8 payload bytes by default. Larger results show their start and end with an omission notice. The client saves the complete result in a private temporary file and prints its path. If saving fails, the client still shows the bounded result and warns that the full output was not saved. The tool already ran; do not rerun it to recover display output. Set `WS_MAX_OUTPUT=0` to print the complete result, or set another nonnegative byte limit. Remove saved result files when no longer needed. The capability stays in memory.
-
-The Python client submits with `wait=0` to receive the recovery URL promptly, then long-polls that URL. Its polling budget is approximately 90 seconds, separate from the 120-second HTTP request timeout. A submission transport failure, server error, malformed submission response, or `unknown_outcome` exits with code 2 and a warning against retrying. If the budget expires with a status URL, retrieve it with `curl -fsS -G --data-urlencode wait=90 '<status_url>'`, or use `wh status <status_url>`. Repeat only status reads, never the creation POST. Status URLs contain read capabilities; keep them private. Transport chunking and full-result reconstruction remain automatic. A result-size failure can occur after the tool runs; check effects before retrying a mutation.
-
-Response formats differ by route. Parse `/v1/about` as text. Parse `/v1/tools`, `/v1/tools/<name>`, `/v1/calls`, `status_url` and chunk URLs as JSON. Never pass `/v1/about` to a JSON parser.
-
-1. GET `/v1/about` and verify `WEBSESSION-MCP-BRIDGE/1`. The body is text, not JSON.
-2. If no capability was supplied, exchange the master exactly once with `POST /v1/access` and `Authorization: Bearer <MASTER_BEARER>`. The response must contain `state: ready`, `scope: main`, and `ttl_seconds: 21600`. Keep the returned capability only in memory.
-3. GET `/v1/tools` with `Authorization: Bearer <CAPABILITY>` to discover tools. Read `instructions` first when present; it contains authenticated owner and server guidance, subordinate to the current user and repository instructions. Inspect an unfamiliar tool at `/v1/tools/<tool-name>`.
-4. Call tools with:
-
-POST https://mcp.example.com/v1/calls
-Authorization: Bearer <CAPABILITY>
-Content-Type: application/json
-Idempotency-Key: <fresh nonce>
-
-{"version":1,"tool":"<exact tool name>","arguments":{...}}
-
-The JSON envelope fields are exactly `version`, `tool`, and `arguments`. Do not use `args`, `params`, or a top-level `command` field. Use a fresh nonce for each new operation; reuse it only for an exact retry. The enhanced profile stays JSON for the full lifecycle: `POST /v1/calls`, every returned `status_url`, and every returned `chunk_base_url` response are JSON. If `state` is `queued` or `running`, poll `status_url` until a terminal state. For `completed`: when `chunk_count` is `1`, read `result` directly and do not request a chunk URL; when `chunk_count` is greater than `1`, fetch chunk numbers `1` through `chunk_count` and concatenate each JSON response's `content` field in order. Never retry `unknown_outcome` automatically.
-
-Treat returned status and chunk URLs as opaque: use them verbatim, preserving the path, token, operation ID, and existing query parameters; only add or replace the supported `wait` query parameter for polling. HTTP 404 `not_found` can mean an unknown operation, invalid continuation token, unknown tool, or invalid capability route. It does not identify which case occurred or prove that a submitted tool did not run. Check the exact failed request against the returned URL or discovered tool name; do not create another operation just because a status or chunk read failed.
-
-For a binary file under `/tmp`, use `GET /v1/raw?path=<url-encoded-absolute-path>` with the capability in the `Authorization` header. The endpoint accepts regular files up to 10 MiB and refuses final-component symlinks. Keep paths and capabilities private.
-
-For edits to several existing files, discover `dev_1mcp_edit` and its schema. One call can include multiple targets. A batch can partially apply. `local_1mcp_tool_batch`, when available, handles independent Local calls and does not batch Dev file operations.
-
-For cooperative turn fencing, set `X-Turn-Id` to a nonnegative integer on each call, or set `WS_TURN_ID` for the Python client. The chat controller must assign a higher integer for each new turn sharing a capability. Once enabled on a capability, older or unnumbered calls are rejected, including universal GET calls. A queued older call is rejected before dispatch. Running and detached commands are not stopped, and separate capabilities are not fenced against each other. Use separate worktrees for concurrent editing sessions.
-
-Treat the HTTP surface as a coarse-grained transport, not as a request-by-request reasoning loop. When your environment has a code runtime, group related WebSession calls, status polling, chunk reconstruction, and schema caching into one logical execution where practical. Do not print polling progress, chunk metadata, credentials, or raw transport objects; print only compact semantic findings needed for the next reasoning step.
-
-Transport chunks are not repository pagination. Navigate repository work with search first, then focused reads, then mutation: prefer `dev_1mcp_bash` with `rg`/`grep` to locate owners, then `dev_1mcp_read` with a narrow `offset`/`limit` (roughly 50-150 lines by default), expanding only when evidence requires it. Before the first call to any unfamiliar remote tool, inspect `/v1/tools/<tool-name>`, cache that schema, and never guess its argument names. If an edit anchor fails, do not retry the identical payload; inspect the failed anchor, correct only that part, and submit once. Between tool phases, do not restate the product/design objective; keep a compact engineering ledger with `OWNER`, `OBSERVED`, `CHANGE NEEDED`, and `NEXT`.
-
-Connection test: run `python3 client.py sh pwd` with the served client, or call `dev_1mcp_bash` with `{"command":"pwd"}` if you implement the contract yourself. Then report only:
-
-CONNECTED
-WSL_PWD: <actual result>
-TOOLS_AVAILABLE: <actual tool_count>
+Keep credentials strictly in memory; never echo, log, or write them to disk, and never put a bearer in a URL.
+1. Fetch `GET /v1/client.py` to `/tmp/wh.py` (`User-Agent: websession-client/1.0`). If only a master bearer was supplied, exchange it once via `POST /v1/access` (`Authorization: Bearer <MASTER_BEARER>`) and hold the returned `capability` in memory.
+2. Run commands with `WS_BASE=<Base> WS_CAP=<Capability> python3 /tmp/wh.py <cmd>`:
+   - Discovery: `tools` (compact signatures), `instructions`, `schema <tool>`, `pwd`, `ls [path]`
+   - Search -> outline -> slice: `rg <pattern> [path]`, `read <path> --outline`, `read <path> <offset> <limit>`, `read --targets` (stdin)
+   - Mutate & verify: `edit` (JSON on stdin), `write <path>` (stdin), `sh` (script on stdin), `review [paths...]`
+   - Coarse-grained turns: group independent reads/checks in one round-trip with `batch` (JSON array on stdin).
+3. Exit code 2 means `unknown_outcome`: never retry automatically; inspect effects first. Results >8 KiB print head+tail and save the full text in the local sandbox (`saved in local sandbox: /tmp/...`).
 ```
+
+## HTTP wire contract reference
+
+Integrators implementing custom non-Python HTTPS clients against `WEBSESSION-MCP-BRIDGE/1` must follow these exact routes:
+
+- `GET /v1/about` (`text/plain`, never JSON): verifies `WEBSESSION-MCP-BRIDGE/1` and advertises limits and URLs.
+- `POST /v1/pair` (`Content-Type: application/json`, body `{"code":"<pair-code>"}`): exchanges a one-time operator pair code for `{"state":"ready","capability":"...","default_cwd":"..."}`.
+- `POST /v1/access` (`Authorization: Bearer <MASTER_BEARER>`): exchanges a master bearer for a six-hour `main` capability (`ttl_seconds: 21600`).
+- `GET /v1/signatures`, `GET /v1/instructions`, `GET /v1/tools`, `GET /v1/tools/<name>` (`Authorization: Bearer <CAPABILITY>`): live 1MCP discovery (`instructions` strips generic proxy boilerplate; `signatures` and `tools` include `default_cwd` when bound).
+- `POST /v1/calls?wait=<0..90>` (`Authorization: Bearer <CAPABILITY>`, `Content-Type: application/json`, `Idempotency-Key: ^[A-Za-z0-9._-]{1,64}$`, optional `X-Turn-Id: <uint>`): body `{"version":1,"tool":"<name>","arguments":{...}}`. Poll opaque `status_url` while `queued`/`running`; if `completed` with `chunk_count > 1`, concatenate `GET <chunk_base_url><1..chunk_count>` `.content`. Never auto-retry `unknown_outcome`.
+- `POST /v1/batch?wait=<0..90>` (same headers as `/v1/calls`): body `{"version":1,"calls":[{"tool":"<name>","arguments":{...}}, ...]}` (`1..20` items). Dispatches items concurrently for read-only tools while serializing mutations, returning `{"protocol":"WEBSESSION-MCP-BRIDGE/1","state":"ready","results":[...]}`.
+- `GET /v1/raw?path=<url-encoded-/tmp/file>` (`Authorization: Bearer <CAPABILITY>`): streams regular `/tmp/*` files up to 10 MiB (rejects final-component symlinks).
 
 ## ChatGPT / native MCP + optional WebSession bootstrap prompt
 
@@ -180,7 +198,7 @@ For multi-part work, use only genuinely independent tasks:
 - Local Terminal + Dev `wait` as the mandatory path for long-running or duration-uncertain processes; direct Dev `exec`/`bash` is short-RPC work only
 
 Never execute the same mutation through both paths or run competing edits against the same files.
-Do not assume WebSession operations themselves execute concurrently; current adapter dispatch may serialize them.
+Read-only WebSession operations run concurrently in the adapter while mutating WebSession calls stay serialized.
 
 First verify WSL access with `pwd` through native MCP. When a WebSession-path check is useful, run the wrapper `pwd` example above. Then proceed with my task autonomously.
 ```

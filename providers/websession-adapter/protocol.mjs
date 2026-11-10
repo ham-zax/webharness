@@ -16,9 +16,23 @@ export function parseToolName(value) {
   return value;
 }
 
-export function toolListSnapshot(tools, instructions = undefined) {
+const ONEMCP_PREAMBLE = '# 1MCP - Model Context Protocol Proxy';
+
+export function compactInstructions(instructions) {
+  if (typeof instructions !== 'string' || !instructions) return instructions;
+  if (!instructions.startsWith(ONEMCP_PREAMBLE)) return instructions;
+  const devBlock = instructions.match(/<dev>[\s\S]*/);
+  if (devBlock) return devBlock[0].trim();
+  const blockStart = instructions.search(/<[a-zA-Z0-9_-]+>\s*\n/);
+  if (blockStart !== -1) return instructions.slice(blockStart).trim();
+  return '';
+}
+
+export function toolListSnapshot(tools, instructions = undefined, defaultCwd = undefined) {
   const value = { protocol: 'WEBSESSION-MCP-BRIDGE/1', state: 'ready', tool_count: tools.length, tools: tools.map(tool => tool.name) };
-  if (instructions) value.instructions = instructions;
+  const compacted = compactInstructions(instructions);
+  if (compacted) value.instructions = compacted;
+  if (defaultCwd) value.default_cwd = defaultCwd;
   return value;
 }
 

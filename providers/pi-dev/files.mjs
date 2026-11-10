@@ -122,6 +122,116 @@ function matchedLineRange(content, index, length) {
   return { start, end };
 }
 
+const ANCHOR_MAX_CONTENT_BYTES = 512 * 1024;
+const ANCHOR_MIN_SCORE = 0.35;
+const ANCHOR_SNIPPET_MAX_LINES = 10;
+const ANCHOR_SNIPPET_MAX_CHARS = 800;
+const ANCHOR_CANDIDATE_LIMIT = 200;
+
+function bigramSet(text) {
+  const compact = text.replace(/\s+/g, ' ').trim().toLowerCase();
+  const grams = new Set();
+  if (compact.length === 1) grams.add(compact);
+  for (let index = 0; index < compact.length - 1; index += 1) {
+    grams.add(compact.slice(index, index + 2));
+  }
+  return grams;
+}
+
+function bigramSimilarity(left, right) {
+  if (left.size === 0 && right.size === 0) return 1;
+  if (left.size === 0 || right.size === 0) return 0;
+  let shared = 0;
+  for (const gram of left) {
+    if (right.has(gram)) shared += 1;
+  }
+  return (2 * shared) / (left.size + right.size);
+}
+
+function anchorWords(text) {
+  return new Set(text.toLowerCase().match(/[A-Za-z0-9_$]{3,}/g) ?? []);
+}
+
+// Recovery hint for a missed anchor: the closest numbered window of the file, or null when
+// no window is similar enough to be useful.
+function findClosestAnchorSnippet(content, oldText) {
+  if (Buffer.byteLength(content, 'utf8') > ANCHOR_MAX_CONTENT_BYTES) return null;
+  const oldLines = normalizeLineEndings(oldText).split('\n');
+  const needleLines = oldLines.map(line => line.trim()).filter(Boolean);
+  if (needleLines.length === 0) return null;
+  const anchorLine = needleLines.reduce(
+    (longest, line) => (line.length > longest.length ? line : longest),
+    ''
+  );
+  const anchorIndex = Math.max(0, oldLines.findIndex(line => line.trim() === anchorLine));
+  const needleGrams = bigramSet(needleLines.join('\n').slice(0, ANCHOR_SNIPPET_MAX_CHARS * 2));
+  const needleWords = anchorWords(anchorLine);
+  const contentLines = content.split('\n');
+  const windowSize = oldLines.length;
+
+  const candidates = [];
+  for (let index = 0; index < contentLines.length; index += 1) {
+    const line = contentLines[index].trim();
+    if (!line) continue;
+    let related = false;
+    for (const word of anchorWords(line)) {
+      if (needleWords.has(word)) {
+        related = true;
+        break;
+      }
+    }
+    if (!related && anchorLine.length >= 8) {
+      const probe = anchorLine.slice(0, Math.min(anchorLine.length, 40));
+      related = line.includes(probe) || probe.includes(line.slice(0, 40));
+    }
+    if (related) candidates.push(index);
+    if (candidates.length >= ANCHOR_CANDIDATE_LIMIT) break;
+  }
+  if (candidates.length === 0) {
+    const anchorGrams = bigramSet(anchorLine.slice(0, 200));
+    for (let index = 0; index < contentLines.length; index += 1) {
+      if (candidates.length >= ANCHOR_CANDIDATE_LIMIT) break;
+      const line = contentLines[index].trim();
+      if (!line) continue;
+      if (bigramSimilarity(bigramSet(line.slice(0, 200)), anchorGrams) >= 0.5) candidates.push(index);
+    }
+  }
+  if (candidates.length === 0) return null;
+
+  let best = null;
+  for (const candidate of candidates) {
+    const start = Math.max(0, candidate - anchorIndex);
+    const windowText = contentLines
+      .slice(start, start + windowSize)
+      .map(line => line.trim())
+      .join('\n')
+      .slice(0, ANCHOR_SNIPPET_MAX_CHARS * 2);
+    const score = bigramSimilarity(bigramSet(windowText), needleGrams);
+    if (best === null || score > best.score) best = { start, score };
+  }
+  if (best === null || best.score < ANCHOR_MIN_SCORE) return null;
+
+  const snippetLines = [];
+  let chars = 0;
+  for (
+    let index = best.start;
+    index < contentLines.length && snippetLines.length < ANCHOR_SNIPPET_MAX_LINES;
+    index += 1
+  ) {
+    const prefix = `  L${index + 1}: `;
+    const room = ANCHOR_SNIPPET_MAX_CHARS - chars - prefix.length;
+    if (room <= 0) break;
+    const line = contentLines[index];
+    const text = line.length > room ? line.slice(0, room) : line;
+    snippetLines.push(`${prefix}${text}`);
+    chars += prefix.length + text.length + 1;
+  }
+  if (snippetLines.length === 0) return null;
+  const startLine = best.start + 1;
+  const endLine = best.start + snippetLines.length;
+  return `\nClosest match in file (lines ${startLine}-${endLine}):\n${snippetLines.join('\n')}`;
+}
+
 function classifyEdits(content, edits, path, sourceOffsets = null) {
   const tolerantView = tolerantMatchView(content);
   const tolerantContent = tolerantView.content;
@@ -149,7 +259,10 @@ function classifyEdits(content, edits, path, sourceOffsets = null) {
     const tolerantOldText = normalizeTolerantText(oldText);
     const tolerantMatch = occurrenceMatch(tolerantContent, tolerantOldText);
     if (tolerantMatch.count === 0) {
-      throw new Error(`edits[${editIndex}] text was not found, including tolerant normalization`);
+      const hint = findClosestAnchorSnippet(content, oldText);
+      throw new Error(
+        `edits[${editIndex}] text was not found, including tolerant normalization${hint ?? ''}`
+      );
     }
     if (tolerantMatch.count > 1) {
       throw new Error(`edits[${editIndex}] tolerant text is not unique (${tolerantMatch.count} occurrences)`);
@@ -278,7 +391,90 @@ async function resolveFilePolicy({ pathMode = 'workspace', workspaceRoot, defaul
   throw new Error('MCP_DEV_PATH_MODE must be workspace or user');
 }
 
-export async function runRead({ pathMode = 'workspace', defaultCwd, workspaceRoot, path, offset, limit }, signal) {
+const OUTLINE_MAX_BYTES = 16384;
+const OUTLINE_ENTRY_MAX_CHARS = 140;
+const OUTLINE_FALLBACK_LINES = 30;
+const READ_TARGETS_MAX = 20;
+const READ_BATCH_MAX_BYTES = 32768;
+
+// Structural landmarks. The read outline has no path, so every language rule applies to
+// every file; the patterns are narrow enough that cross-language noise stays low.
+const OUTLINE_LANDMARK_PATTERNS = [
+  /^\s*export\s+/,
+  /^\s*(async\s+)?function\s+/,
+  /^\s*class\s+/,
+  /^\s*(const|let|var)\s+[A-Za-z_$][\w$]*\s*=\s*(async\s+)?(function\b|\([^)]*\)\s*=>|[A-Za-z0-9_$]+\s*=>)/,
+  /^\s{2,4}(async\s+|static\s+|get\s+|set\s+)*[A-Za-z_$][\w$]*\s*\([^;]*\)\s*\{/,
+  /^\s*(async\s+)?def\s+/,
+  /^\s*[A-Za-z_][A-Za-z0-9_]*\s*\(\)\s*\{/,
+  /^\s*function\s+[A-Za-z_]/,
+  /^#{1,4}\s+/,
+  /^\s*(pub\s+)?(fn|struct|enum|trait|impl|type|interface)\s+/,
+];
+
+function isOutlineLandmark(line) {
+  return OUTLINE_LANDMARK_PATTERNS.some(pattern => pattern.test(line));
+}
+
+function outlineEntryText(line) {
+  const trimmed = line.trim();
+  return trimmed.length > OUTLINE_ENTRY_MAX_CHARS
+    ? trimmed.slice(0, OUTLINE_ENTRY_MAX_CHARS)
+    : trimmed;
+}
+
+function outlineEntries(text) {
+  const lines = text.split('\n');
+  const entries = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    if (!isOutlineLandmark(lines[index])) continue;
+    entries.push({ line: index + 1, text: outlineEntryText(lines[index]) });
+  }
+  return entries;
+}
+
+function renderOutline({ text, totalBytes, offset = 1, limit }) {
+  const lines = text.split('\n');
+  const allEntries = outlineEntries(text);
+  let output;
+  let lastLine;
+  if (allEntries.length === 0) {
+    const windowLimit = Math.min(limit ?? OUTLINE_FALLBACK_LINES, OUTLINE_FALLBACK_LINES);
+    const first = Math.max(0, offset - 1);
+    const window = lines.slice(first, first + windowLimit);
+    const body = window
+      .map((line, index) => `L${first + index + 1}: ${outlineEntryText(line)}`)
+      .join('\n');
+    output = `[outline · ${lines.length} lines · ${totalBytes} bytes · no structural symbols matched; first ${OUTLINE_FALLBACK_LINES} lines:]${body ? `\n${body}` : ''}`;
+    lastLine = first + window.length;
+  } else {
+    const visible = allEntries.filter(entry => entry.line >= offset);
+    const selected = limit === undefined ? visible : visible.slice(0, limit);
+    const body = selected.map(entry => `L${entry.line}: ${entry.text}`).join('\n');
+    output = `[outline · ${lines.length} lines · ${totalBytes} bytes]${body ? `\n${body}` : ''}`;
+    lastLine = selected.length > 0 ? selected[selected.length - 1].line : offset - 1;
+  }
+
+  const page = truncateHead(output, { maxBytes: OUTLINE_MAX_BYTES });
+  if (page.truncated) {
+    return `${page.content}\n\n[outline truncated at ${OUTLINE_MAX_BYTES} bytes; request a smaller limit.]`;
+  }
+  const hasMore = allEntries.length === 0
+    ? lastLine < lines.length
+    : allEntries.some(entry => entry.line > lastLine);
+  if (hasMore && limit !== undefined) {
+    return `${page.content}\n\n[outline continues; use offset=${lastLine + 1} for more symbols.]`;
+  }
+  return page.content;
+}
+
+// Compact landmark outline: one 1-based entry per structural line, or a bounded plain
+// head of the file when no landmark matches.
+export function extractOutline(text, totalBytes = Buffer.byteLength(text, 'utf8')) {
+  return renderOutline({ text, totalBytes });
+}
+
+async function readFilePage({ pathMode, defaultCwd, workspaceRoot, path }, signal) {
   const policy = await resolveFilePolicy({ pathMode, workspaceRoot, defaultCwd });
   const target = policy.pathMode === 'user'
     ? await resolveUserPath(policy.root, path)
@@ -299,24 +495,88 @@ export async function runRead({ pathMode = 'workspace', defaultCwd, workspaceRoo
       throw new Error('dev.read supports UTF-8 text files only');
     }
     if (text.includes('\0')) throw new Error('dev.read supports text files only');
-    const lines = text.split('\n');
-    const start = (offset ?? 1) - 1;
-    if (start >= lines.length) {
-      throw new Error(`Offset ${offset} is beyond end of file (${lines.length} lines total)`);
-    }
-    const selected = lines.slice(start, limit === undefined ? undefined : start + limit);
-    const page = truncateHead(selected.join('\n'), { maxBytes: 16384 });
-    let output = page.content;
-    if (page.firstLineExceedsLimit) {
-      output = `[Line ${start + 1} exceeds the 16384-byte read limit; ${buffer.length} bytes total. Use exec with rg or a structured extractor for this line.]`;
-    } else if (page.truncated || (limit !== undefined && start + limit < lines.length)) {
-      const nextOffset = start + (page.truncated ? page.outputLines : selected.length) + 1;
-      output += `\n\n[truncated · ${buffer.length} bytes total; use offset=${nextOffset} to continue.]`;
-    }
-    return { content: [{ type: 'text', text: output }] };
+    return { text, totalBytes: buffer.length };
   } catch (error) {
     throw modelFacingPathError(error, target, path);
   }
+}
+
+async function readOne({ pathMode, defaultCwd, workspaceRoot, path, offset, limit, mode }, signal) {
+  if (mode !== 'lines' && mode !== 'outline') {
+    throw new Error('INVALID_ARGUMENT: read mode must be lines or outline');
+  }
+  const { text, totalBytes } = await readFilePage({ pathMode, defaultCwd, workspaceRoot, path }, signal);
+  if (mode === 'outline') {
+    return {
+      content: [{ type: 'text', text: renderOutline({ text, totalBytes, offset: offset ?? 1, limit }) }]
+    };
+  }
+  const lines = text.split('\n');
+  const start = (offset ?? 1) - 1;
+  if (start >= lines.length) {
+    throw new Error(`Offset ${offset} is beyond end of file (${lines.length} lines total)`);
+  }
+  const selected = lines.slice(start, limit === undefined ? undefined : start + limit);
+  const page = truncateHead(selected.join('\n'), { maxBytes: 16384 });
+  let output = page.content;
+  if (page.firstLineExceedsLimit) {
+    output = `[Line ${start + 1} exceeds the 16384-byte read limit; ${totalBytes} bytes total. Use exec with rg or a structured extractor for this line.]`;
+  } else if (page.truncated || (limit !== undefined && start + limit < lines.length)) {
+    const nextOffset = start + (page.truncated ? page.outputLines : selected.length) + 1;
+    output += `\n\n[truncated · ${totalBytes} bytes total; use offset=${nextOffset} to continue.]`;
+  }
+  return { content: [{ type: 'text', text: output }] };
+}
+
+async function readTargets({ pathMode, defaultCwd, workspaceRoot, targets, offset, limit, defaultLines, mode }, signal) {
+  if (!Array.isArray(targets) || targets.length < 1 || targets.length > READ_TARGETS_MAX) {
+    throw new Error(`INVALID_ARGUMENT: read targets must contain from 1 to ${READ_TARGETS_MAX} entries`);
+  }
+  let combined = '';
+  let truncated = false;
+  for (let index = 0; index < targets.length; index += 1) {
+    const item = targets[index];
+    if (!item || typeof item.path !== 'string' || item.path.length === 0) {
+      throw new Error(`INVALID_ARGUMENT: read targets[${index}].path must be a non-empty string`);
+    }
+    const itemMode = item.mode ?? mode;
+    const itemLimit = item.limit ?? limit ?? (itemMode === 'outline' ? undefined : defaultLines);
+    const result = await readOne({
+      pathMode,
+      defaultCwd,
+      workspaceRoot,
+      path: item.path,
+      offset: item.offset ?? offset,
+      limit: itemLimit,
+      mode: itemMode,
+    }, signal);
+    const sectionText = result.content.map(block => block.text).join('\n');
+    const section = `=== ${item.path} ===\n${sectionText}`;
+    const next = combined.length === 0 ? section : `${combined}\n${section}`;
+    if (Buffer.byteLength(next, 'utf8') > READ_BATCH_MAX_BYTES) {
+      truncated = true;
+      break;
+    }
+    combined = next;
+  }
+  if (truncated) {
+    combined += `\n\n[batch read truncated at ${READ_BATCH_MAX_BYTES} bytes; request remaining targets separately]`;
+  }
+  return { content: [{ type: 'text', text: combined }] };
+}
+
+export async function runRead({
+  pathMode = 'workspace', defaultCwd, workspaceRoot, path, offset, limit, defaultLines,
+  mode = 'lines', targets
+}, signal) {
+  if ((path === undefined) === (targets === undefined)) {
+    throw new Error('INVALID_ARGUMENT: read requires either path or targets, not both');
+  }
+  if (targets !== undefined) {
+    return readTargets({ pathMode, defaultCwd, workspaceRoot, targets, offset, limit, defaultLines, mode }, signal);
+  }
+  const singleLimit = limit ?? (mode === 'outline' ? undefined : defaultLines);
+  return readOne({ pathMode, defaultCwd, workspaceRoot, path, offset, limit: singleLimit, mode }, signal);
 }
 
 

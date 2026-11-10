@@ -1014,3 +1014,125 @@ test('user write mkdir_parents creates absolute parents', async () => {
   await runWrite({ pathMode: 'user', defaultCwd, path: target, content: 'ok\n', mkdir_parents: true });
   assert.equal(await fs.readFile(target, 'utf8'), 'ok\n');
 });
+
+test('user mode expands leading tilde paths against HOME', async (t) => {
+  const fakeHome = await tempDir('pi-tilde-home-');
+  const otherCwd = await tempDir('pi-tilde-cwd-');
+  const prevHome = process.env.HOME;
+  process.env.HOME = fakeHome;
+  t.after(() => {
+    if (prevHome === undefined) delete process.env.HOME;
+    else process.env.HOME = prevHome;
+  });
+  await fs.mkdir(path.join(fakeHome, 'repo'), { recursive: true });
+  await fs.writeFile(path.join(fakeHome, 'repo', 'hello.txt'), 'tilde-ok\n');
+  const readRes = await runRead({ pathMode: 'user', defaultCwd: otherCwd, path: '~/repo/hello.txt' });
+  assert.equal(readRes.content[0].text, 'tilde-ok\n');
+});
+
+test('read mode outline returns compact structural landmarks for JavaScript', async () => {
+  const workspaceRoot = await tempDir('pi-read-outline-js-');
+  const content = [
+    'export function alpha() {',
+    '  return 1;',
+    '}',
+    '',
+    'export class Beta {',
+    '  run() {',
+    '    return 2;',
+    '  }',
+    '}',
+    '',
+    'const gamma = async () => 3;',
+    ''
+  ].join('\n');
+  await fs.writeFile(path.join(workspaceRoot, 'mod.mjs'), content);
+  const text = (await runRead({ workspaceRoot, path: 'mod.mjs', mode: 'outline' })).content[0].text;
+  assert.match(text, new RegExp(`^\\[outline · 12 lines · ${Buffer.byteLength(content)} bytes\\]`));
+  assert.match(text, /L1: export function alpha\(\) \{/);
+  assert.match(text, /L5: export class Beta \{/);
+  assert.match(text, /L6: run\(\) \{/);
+  assert.match(text, /L11: const gamma = async \(\) => 3;/);
+  assert.doesNotMatch(text, /L2: return 1;/);
+  assert.doesNotMatch(text, /�/);
+});
+
+test('read mode outline lists Markdown headings and falls back to a bounded head', async () => {
+  const workspaceRoot = await tempDir('pi-read-outline-md-');
+  const markdown = '# Title\n\nintro\n\n## Section\n\nbody\n\n### Detail\n';
+  await fs.writeFile(path.join(workspaceRoot, 'notes.md'), markdown);
+  const outline = (await runRead({ workspaceRoot, path: 'notes.md', mode: 'outline' })).content[0].text;
+  assert.match(outline, /L1: # Title/);
+  assert.match(outline, /L5: ## Section/);
+  assert.match(outline, /L9: ### Detail/);
+  assert.doesNotMatch(outline, /intro/);
+
+  await fs.writeFile(path.join(workspaceRoot, 'plain.txt'), 'alpha\nbeta\ngamma\n');
+  const plain = (await runRead({ workspaceRoot, path: 'plain.txt', mode: 'outline' })).content[0].text;
+  assert.match(plain, /^\[outline · 4 lines · 17 bytes · no structural symbols matched; first 30 lines:\]/);
+  assert.match(plain, /L1: alpha/);
+  assert.match(plain, /L3: gamma/);
+
+  const limited = (await runRead({
+    workspaceRoot, path: 'notes.md', mode: 'outline', offset: 5, limit: 1
+  })).content[0].text;
+  assert.match(limited, /L5: ## Section/);
+  assert.doesNotMatch(limited, /L9: ### Detail/);
+  assert.match(limited, /use offset=6/);
+});
+
+test('read accepts targets and rejects both or neither path and targets', async () => {
+  const workspaceRoot = await tempDir('pi-read-targets-');
+  await fs.writeFile(path.join(workspaceRoot, 'a.txt'), 'one\ntwo\n');
+  await fs.writeFile(path.join(workspaceRoot, 'b.txt'), 'three\n');
+  const text = (await runRead({
+    workspaceRoot,
+    targets: [{ path: 'a.txt', limit: 1 }, { path: 'b.txt' }]
+  })).content[0].text;
+  assert.match(text, /^=== a\.txt ===\none\n/);
+  assert.match(text, /\n=== b\.txt ===\nthree\n$/);
+  assert.doesNotMatch(text, /two/);
+
+  const outlineBatch = (await runRead({
+    workspaceRoot,
+    mode: 'outline',
+    targets: [{ path: 'a.txt', mode: 'lines' }, { path: 'b.txt' }]
+  })).content[0].text;
+  assert.match(outlineBatch, /=== a\.txt ===\none\ntwo/);
+  assert.match(outlineBatch, /=== b\.txt ===\n\[outline · /);
+
+  const expected = /INVALID_ARGUMENT: read requires either path or targets, not both/;
+  await assert.rejects(() => runRead({ workspaceRoot, path: 'a.txt', targets: [{ path: 'b.txt' }] }), expected);
+  await assert.rejects(() => runRead({ workspaceRoot }), expected);
+});
+
+test('edit anchor miss reports the closest numbered file lines', async () => {
+  const workspaceRoot = await tempDir('pi-edit-anchor-');
+  const file = path.join(workspaceRoot, 'anchor.txt');
+  await fs.writeFile(file, [
+    'const alpha = 1;',
+    'export function computeTotal(items) {',
+    '  return items.length;',
+    '}',
+    'const omega = 2;'
+  ].join('\n'));
+  await assert.rejects(
+    () => runEdit({
+      workspaceRoot,
+      targets: [{
+        path: 'anchor.txt',
+        edits: [{
+          oldText: 'export function computeTotals(items) {\n  return items.length;\n}',
+          newText: 'export function computeTotal(items) {\n  return items.length + 1;\n}'
+        }]
+      }]
+    }),
+    (error) => {
+      assert.match(error.message, /edits\[0\] text was not found, including tolerant normalization/);
+      assert.match(error.message, /Closest match in file \(lines \d+-\d+\):/);
+      assert.match(error.message, /  L2: export function computeTotal\(items\) \{/);
+      assert.doesNotMatch(error.message, /�/);
+      return true;
+    }
+  );
+});

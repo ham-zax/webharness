@@ -52,6 +52,78 @@ function decodeBoundedUtf8Tail(buffer, limit) {
   return encoded.subarray(encodedStart).toString('utf8');
 }
 
+// Head plus tail capture keeps the start and the end of long output. Tiny limits keep the
+// exact legacy tail-only behaviour.
+const HEAD_TAIL_MIN_BYTES = 256;
+const HEAD_BUDGET_SHARE = 0.4;
+
+function headBudgetFor(maxOutputBytes) {
+  if (maxOutputBytes < HEAD_TAIL_MIN_BYTES) return 0;
+  return Math.floor(maxOutputBytes * HEAD_BUDGET_SHARE);
+}
+
+function trimSplitTrailingSequence(buffer) {
+  let lead = buffer.length - 1;
+  while (lead >= 0 && (buffer[lead] & 0xc0) === 0x80) lead -= 1;
+  if (lead < 0) return buffer.subarray(0, 0);
+  const byte = buffer[lead];
+  const expected = byte >= 0xf0 ? 4 : byte >= 0xe0 ? 3 : byte >= 0xc0 ? 2 : 1;
+  if (expected > 1 && lead + expected > buffer.length) return buffer.subarray(0, lead);
+  return buffer;
+}
+
+function decodeUtf8WithoutReplacement(buffer) {
+  try {
+    return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(buffer);
+  } catch {
+    return buffer.toString('utf8').replace(/\uFFFD/g, '');
+  }
+}
+
+function decodeBoundedUtf8Head(buffer, limit) {
+  if (limit <= 0) return '';
+  const slice = trimSplitTrailingSequence(buffer.subarray(0, Math.min(buffer.length, limit)));
+  const text = decodeUtf8WithoutReplacement(slice);
+  return Buffer.byteLength(text, 'utf8') <= limit ? text : '';
+}
+
+function decodeBoundedUtf8TailStrict(buffer, limit) {
+  if (limit <= 0) return '';
+  let start = 0;
+  while (start < buffer.length && (buffer[start] & 0xc0) === 0x80) start += 1;
+  const text = decodeUtf8WithoutReplacement(trimSplitTrailingSequence(buffer.subarray(start)));
+  if (Buffer.byteLength(text, 'utf8') <= limit) return text;
+  const encoded = Buffer.from(text, 'utf8');
+  let encodedStart = encoded.length - limit;
+  while (encodedStart < encoded.length && (encoded[encodedStart] & 0xc0) === 0x80) encodedStart += 1;
+  const trimmed = decodeUtf8WithoutReplacement(encoded.subarray(encodedStart));
+  return Buffer.byteLength(trimmed, 'utf8') <= limit ? trimmed : '';
+}
+
+function omittedMarker(omittedBytes) {
+  return `\n[... ${omittedBytes} bytes omitted ...]\n`;
+}
+
+function composeHeadTail(headBuffer, tailBuffer, totalBytes, maxOutputBytes) {
+  const headText = decodeBoundedUtf8Head(headBuffer, headBudgetFor(maxOutputBytes));
+  const headBytes = Buffer.byteLength(headText, 'utf8');
+  let omittedBytes = Math.max(0, totalBytes - headBytes);
+  let marker = omittedMarker(omittedBytes);
+  let tailText = '';
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const budget = maxOutputBytes - headBytes - Buffer.byteLength(marker, 'utf8');
+    tailText = decodeBoundedUtf8TailStrict(tailBuffer, Math.max(0, budget));
+    const nextOmitted = Math.max(0, totalBytes - headBytes - Buffer.byteLength(tailText, 'utf8'));
+    if (nextOmitted === omittedBytes) break;
+    omittedBytes = nextOmitted;
+    marker = omittedMarker(omittedBytes);
+  }
+  const combined = headText + marker + tailText;
+  if (Buffer.byteLength(combined, 'utf8') <= maxOutputBytes) return combined;
+  const budget = maxOutputBytes - headBytes - Buffer.byteLength(marker, 'utf8');
+  return headText + marker + decodeBoundedUtf8TailStrict(tailBuffer, Math.max(0, budget));
+}
+
 async function resolveExecutionCwd({ pathMode, defaultCwd, workspaceRoot, cwd }) {
   if (pathMode === 'workspace') return resolveWorkspaceCwd(workspaceRoot, cwd);
   if (pathMode === 'user') return resolveUserCwd(defaultCwd, cwd);
@@ -232,6 +304,9 @@ async function runCaptured({
   const activeSpool = `${spool}.active`;
   const fd = openSync(activeSpool, 'wx', 0o600);
   const started = process.hrtime.bigint();
+  const headBudget = headBudgetFor(maxOutputBytes);
+  const headBuffer = headBudget > 0 ? Buffer.allocUnsafe(headBudget) : null;
+  let headBytes = 0;
   let tail = Buffer.alloc(0);
   let outputBytes = 0;
   let spoolBytes = 0;
@@ -251,6 +326,12 @@ async function runCaptured({
       spoolBytes += retained.length;
     }
     outputBytes += chunk.length;
+    if (headBuffer !== null && headBytes < headBudget) {
+      const room = headBudget - headBytes;
+      const copied = Math.min(room, chunk.length);
+      chunk.copy(headBuffer, headBytes, 0, copied);
+      headBytes += copied;
+    }
     tail = boundedTail(tail, chunk, maxOutputBytes);
   };
 
@@ -298,7 +379,9 @@ async function runCaptured({
   return {
     cwd: resolvedCwd,
     exit_code: timedOut || cancelled ? null : exitCode,
-    output: decodeBoundedUtf8Tail(tail, maxOutputBytes),
+    output: truncated && headBuffer !== null
+      ? composeHeadTail(headBuffer.subarray(0, headBytes), tail, outputBytes, maxOutputBytes)
+      : decodeBoundedUtf8Tail(tail, maxOutputBytes),
     output_bytes: outputBytes,
     duration_ms: Math.round(durationMs),
     timed_out: timedOut,

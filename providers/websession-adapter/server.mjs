@@ -4,7 +4,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { createServer } from 'node:http';
 import { OperationCore } from './core.mjs';
-import { decodeToolName, parseToolName, toolListSnapshot, enhancedSnapshot, parseWait, prefersPlainText, parseCapabilityToken, parseClientNonce, parseRequest, parseUniversalRequest, renderBridgeError, renderChunk, renderOperation, toolSignature, upstreamUnavailable } from './protocol.mjs';
+import { compactInstructions, decodeToolName, parseToolName, toolListSnapshot, enhancedSnapshot, parseWait, prefersPlainText, parseCapabilityToken, parseClientNonce, parseRequest, parseUniversalRequest, renderBridgeError, renderChunk, renderOperation, toolSignature, upstreamUnavailable } from './protocol.mjs';
 
 const host = process.env.WEBSESSION_ADAPTER_HOST || '127.0.0.1';
 const port = Number.parseInt(process.env.WEBSESSION_ADAPTER_PORT || '3051', 10);
@@ -181,6 +181,7 @@ async function handleUniversalGet(req, res, parts) {
       'fast_wait_ms: 1900',
       'long_poll_max_seconds: 90',
       `call_url: ${base}/v1/calls`,
+      `batch_url: ${base}/v1/batch`,
       'call_body: {"version":1,"tool":"<tool_name>","arguments":{...}}',
       'call_headers: Authorization: Bearer <capability>; Content-Type: application/json; Idempotency-Key: <fresh nonce>',
       'idempotency_key: Generate in your runtime (Python: uuid.uuid4().hex or secrets.token_urlsafe(16)); must match ^[A-Za-z0-9._-]{1,64}$. Do not rely on uuidgen or /proc/sys/kernel/random/uuid in a sandbox. Prefer the served Python client.',
@@ -190,6 +191,7 @@ async function handleUniversalGet(req, res, parts) {
       `raw_url: ${base}/v1/raw?path=<absolute-tmp-file-path> (Bearer capability required; maximum 10 MiB)`,
       `client_url: ${base}/v1/client.sh`,
       `client_python_url: ${base}/v1/client.py`,
+      `pair_url: ${base}/v1/pair`,
       `tool_timeout_ms: ${toolTimeoutMs}`,
     ].join('\n'));
     return true;
@@ -208,7 +210,8 @@ async function handleUniversalGet(req, res, parts) {
       return true;
     }
     const lines = ['WEBSESSION-MCP-BRIDGE/1', 'state: ready', `tool_count: ${access.tools.length}`];
-    if (access.instructions) lines.push(`instructions_json: ${JSON.stringify(access.instructions)}`);
+    const instructions = compactInstructions(access.instructions);
+    if (instructions) lines.push(`instructions_json: ${JSON.stringify(instructions)}`);
     access.tools.forEach((tool, index) => {
       const number = index + 1;
       lines.push(
@@ -369,16 +372,21 @@ async function handleHeaderDiscovery(req, res, parts) {
   }
   const text = prefersPlainText(req.headers.accept);
   if (parts[1] === 'instructions') {
-    const instructions = access.instructions || '';
+    const instructions = compactInstructions(access.instructions) || '';
     if (text) sendPlainBody(res, instructions);
     else sendJson(res, 200, { protocol: 'WEBSESSION-MCP-BRIDGE/1', state: 'ready', instructions });
   } else if (parts[1] === 'signatures') {
     const signatures = access.tools.map(toolSignature);
     if (text) sendPlainBody(res, signatures.map(line => `${line}\n`).join(''));
-    else sendJson(res, 200, { protocol: 'WEBSESSION-MCP-BRIDGE/1', state: 'ready', signatures });
+    else sendJson(res, 200, {
+      protocol: 'WEBSESSION-MCP-BRIDGE/1',
+      state: 'ready',
+      signatures,
+      ...(access.principal.defaultCwd ? { default_cwd: access.principal.defaultCwd } : {}),
+    });
   } else if (parts.length === 2) {
     if (text) sendPlainBody(res, access.tools.map(tool => `${tool.name}\n`).join(''));
-    else sendJson(res, 200, toolListSnapshot(access.tools, access.instructions));
+    else sendJson(res, 200, toolListSnapshot(access.tools, access.instructions, access.principal.defaultCwd));
   } else {
     let name;
     try {
@@ -520,6 +528,118 @@ async function handleEnhancedCall(req, res, url) {
   sendEnhancedOperation(req, res, operation, submitted.continuationToken, statusUrl, confirmation, wait.timeoutMs !== undefined);
 }
 
+async function handleEnhancedBatch(req, res, url) {
+  const wait = enhancedWait(res, url);
+  if (!wait) return;
+  const authorization = req.headers.authorization || '';
+  if (typeof authorization !== 'string' || !authorization.startsWith('Bearer ')) {
+    sendJson(res, 401, { protocol: 'WEBSESSION-MCP-BRIDGE/1', state: 'rejected', code: 'authorization_required' });
+    return;
+  }
+  const capability = parseCapabilityToken(authorization.slice('Bearer '.length));
+  if (!capability) {
+    sendJson(res, 401, { protocol: 'WEBSESSION-MCP-BRIDGE/1', state: 'rejected', code: 'authorization_required' });
+    return;
+  }
+
+  let nonce;
+  try {
+    nonce = parseClientNonce(req.headers['idempotency-key'] || '');
+  } catch {
+    sendJson(res, 400, { protocol: 'WEBSESSION-MCP-BRIDGE/1', state: 'rejected', code: 'invalid_idempotency_key' });
+    return;
+  }
+
+  const contentType = String(req.headers['content-type'] || '').split(';', 1)[0].trim().toLowerCase();
+  if (contentType !== 'application/json') {
+    sendJson(res, 415, { protocol: 'WEBSESSION-MCP-BRIDGE/1', state: 'rejected', code: 'content_type_required' });
+    return;
+  }
+
+  const rawTurn = req.headers['x-turn-id'];
+  if (rawTurn !== undefined && (typeof rawTurn !== 'string' || !/^(0|[1-9][0-9]{0,15})$/.test(rawTurn) || !Number.isSafeInteger(Number(rawTurn)))) {
+    sendJson(res, 400, { protocol: 'WEBSESSION-MCP-BRIDGE/1', state: 'rejected', code: 'invalid_turn_id' });
+    return;
+  }
+  const turnId = rawTurn === undefined ? null : Number(rawTurn);
+
+  let body;
+  try {
+    body = await readBoundedBody(req, maxJsonBodyBytes);
+  } catch (error) {
+    const tooLarge = error.message.startsWith('body exceeds ');
+    sendJson(res, tooLarge ? 413 : 400, {
+      protocol: 'WEBSESSION-MCP-BRIDGE/1',
+      state: 'rejected',
+      code: tooLarge ? 'body_too_large' : 'invalid_request',
+    });
+    return;
+  }
+
+  let parsedItems;
+  try {
+    const payload = JSON.parse(body.toString('utf8'));
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+      throw new Error('batch request must be an object');
+    }
+    const payloadKeys = Object.keys(payload).sort().join(',');
+    if (payloadKeys !== 'calls,version' || payload.version !== 1) {
+      throw new Error('batch request fields must be exactly version: 1 and calls');
+    }
+    if (!Array.isArray(payload.calls) || payload.calls.length < 1 || payload.calls.length > 20) {
+      throw new Error('batch calls must be an array of 1 to 20 items');
+    }
+    parsedItems = payload.calls.map((item, index) => {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) {
+        throw new Error(`batch[${index}] must be an object`);
+      }
+      const allowed = Object.keys(item).every(key => key === 'tool' || key === 'arguments');
+      if (!allowed) throw new Error(`batch[${index}] fields must be tool and optional arguments`);
+      return parseRequest({
+        version: 1,
+        tool: item.tool,
+        arguments: item.arguments === undefined ? {} : item.arguments,
+      });
+    });
+  } catch (error) {
+    sendJson(res, 400, { protocol: 'WEBSESSION-MCP-BRIDGE/1', state: 'rejected', code: 'invalid_request', message: error.message });
+    return;
+  }
+
+  const batch = operationCore.submitBatch(capability, nonce, parsedItems, turnId);
+  if (batch.unauthorized) {
+    sendJson(res, 401, { protocol: 'WEBSESSION-MCP-BRIDGE/1', state: 'rejected', code: 'authorization_required' });
+    return;
+  }
+  if (batch.superseded) {
+    sendJson(res, 409, { protocol: 'WEBSESSION-MCP-BRIDGE/1', state: 'rejected', code: 'superseded_by_newer_turn' });
+    return;
+  }
+  if (batch.nonceConflict) {
+    sendJson(res, 409, { protocol: 'WEBSESSION-MCP-BRIDGE/1', state: 'rejected', code: 'nonce_conflict' });
+    return;
+  }
+  const { submissions } = batch;
+
+  const base = publicBase(req);
+  const holdMs = wait.timeoutMs ?? 30_000;
+  const resolved = await Promise.all(
+    submissions.map(item => (
+      item.operation.state === 'queued' || item.operation.state === 'running' || wait.timeoutMs !== undefined
+        ? waitForEnhancedResponse(res, item.operation, holdMs)
+        : Promise.resolve(item.operation)
+    )),
+  );
+  if (res.destroyed || res.writableEnded || resolved.some(op => !op)) return;
+
+  const results = resolved.map((op, index) => {
+    const continuation = submissions[index].continuationToken;
+    const statusUrl = enhancedStatusUrl(base, continuation, op.id);
+    return enhancedSnapshot(op, statusUrl);
+  });
+  sendJson(res, 200, { protocol: 'WEBSESSION-MCP-BRIDGE/1', state: 'ready', results });
+}
+
 function handleRaw(req, res, url) {
   const authorization = req.headers.authorization || '';
   const token = authorization.startsWith('Bearer ') ? parseCapabilityToken(authorization.slice(7)) : undefined;
@@ -571,6 +691,48 @@ function handleMasterAccess(req, res) {
     scope: issued.scope,
     ttl_seconds: masterAccessTtlSeconds,
     expires_at: new Date(issued.expiresMs).toISOString(),
+  });
+}
+
+async function handlePair(req, res) {
+  const contentType = String(req.headers['content-type'] || '').split(';', 1)[0].trim().toLowerCase();
+  if (contentType !== 'application/json') {
+    sendJson(res, 415, { protocol: 'WEBSESSION-MCP-BRIDGE/1', state: 'rejected', code: 'content_type_required' });
+    return;
+  }
+
+  let code;
+  try {
+    const body = await readBoundedBody(req, 4096);
+    const value = JSON.parse(body.toString('utf8'));
+    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('pairing body must be an object');
+    const keys = Object.keys(value);
+    if (keys.length !== 1 || keys[0] !== 'code') throw new Error('pairing body must contain only code');
+    if (typeof value.code !== 'string') throw new Error('pairing code must be a string');
+    code = value.code;
+  } catch (error) {
+    const tooLarge = error.message.startsWith('body exceeds ');
+    sendJson(res, tooLarge ? 413 : 400, {
+      protocol: 'WEBSESSION-MCP-BRIDGE/1',
+      state: 'rejected',
+      code: tooLarge ? 'body_too_large' : 'invalid_request',
+      ...(tooLarge ? {} : { message: error.message }),
+    });
+    return;
+  }
+
+  const redeemed = operationCore.store.redeemPairingCode(code);
+  if (!redeemed) {
+    sendJson(res, 404, { protocol: 'WEBSESSION-MCP-BRIDGE/1', state: 'rejected', code: 'not_found' });
+    return;
+  }
+  sendJson(res, 200, {
+    protocol: 'WEBSESSION-MCP-BRIDGE/1',
+    state: 'ready',
+    capability: redeemed.token,
+    scope: redeemed.scope,
+    expires_at: new Date(redeemed.expiresMs).toISOString(),
+    ...(redeemed.defaultCwd ? { default_cwd: redeemed.defaultCwd } : {}),
   });
 }
 
@@ -748,6 +910,11 @@ const server = createServer((req, res) => {
     return;
   }
 
+  if (req.method === 'POST' && url.pathname === '/v1/batch') {
+    handleEnhancedBatch(req, res, url).catch(error => sendFailure(res, error));
+    return;
+  }
+
   if (req.method === 'GET' && parts[0] === 'v1' && parts[1] === 'operations' && parts.length === 4) {
     handleEnhancedStatus(req, res, parts, url).catch(error => sendFailure(res, error));
     return;
@@ -769,6 +936,11 @@ const server = createServer((req, res) => {
 
   if (req.method === 'POST' && parts[0] === 'v1' && parts[1] === 'confirm' && parts.length === 3) {
     handleEnhancedConfirm(req, res, parts[2]).catch(error => sendFailure(res, error));
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/v1/pair') {
+    handlePair(req, res).catch(error => sendFailure(res, error));
     return;
   }
 

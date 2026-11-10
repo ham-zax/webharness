@@ -9,8 +9,8 @@ export function renderBashText(result) {
   const annotations = [];
   if (result.truncated && result.full_output_path) {
     annotations.push(result.spool_truncated
-      ? `[truncated · ${result.output_bytes} bytes total · retained output capped · file: ${result.full_output_path}]`
-      : `[truncated · ${result.output_bytes} bytes total · full: ${result.full_output_path}]`);
+      ? `[truncated · ${result.output_bytes} bytes total · retained output capped · saved on remote host: ${result.full_output_path}]`
+      : `[truncated · ${result.output_bytes} bytes total · saved on remote host: ${result.full_output_path}]`);
   }
   let status;
   if (result.timed_out) {
@@ -140,4 +140,14 @@ export function renderListDirectoryText(result) {
     lines.push(`[truncated · ${result.total} entries total · raise limit above ${result.limit} or list a subdirectory]`);
   }
   return lines.join('\n');
+}
+
+export function renderSearchText(result) {
+  if (!result.matches || result.matches.length === 0) {
+    return 'No matches.';
+  }
+  const footer = result.truncated
+    ? `[showing ${result.matches.length} matches (capped at ${result.maxResults}) · narrow pattern, path, or globs]`
+    : `[${result.matches.length} ${result.matches.length === 1 ? 'match' : 'matches'}]`;
+  return `${result.matches.join('\n')}\n${footer}`;
 }

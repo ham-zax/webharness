@@ -47,10 +47,12 @@ async function userFixture(maxBytes = '1048576') {
 }
 
 async function withClientAt(serverPath, env, fn) {
+  const cleanParentEnv = { ...process.env };
+  delete cleanParentEnv.MCP_DEV_READ_DEFAULT_LINES;
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [serverPath],
-    env: { ...process.env, ...env },
+    env: { ...cleanParentEnv, ...env },
     stderr: 'pipe'
   });
   const client = new Client({ name: 'pi-dev-test', version: '1.0.0' });
@@ -248,7 +250,7 @@ test('trusted-dev exposes structured exec alongside Bash and minimal schemas', a
   const { env } = await fixture('unrestricted');
   await withClient(env, async client => {
     const listed = await client.listTools();
-    assert.deepEqual(listed.tools.map(x => x.name).sort(), ['bash', 'edit', 'exec', 'list_directory', 'read', 'write']);
+    assert.deepEqual(listed.tools.map(x => x.name).sort(), ['bash', 'edit', 'exec', 'list_directory', 'read', 'search', 'write']);
     const exec = listed.tools.find(x => x.name === 'exec');
     assert.match(exec.description, /structured argv/i);
     assert.match(exec.description, /no shell parsing/i);
@@ -258,7 +260,7 @@ test('trusted-dev exposes structured exec alongside Bash and minimal schemas', a
     assert.match(bash.description, /prefer exec/i);
     assert.deepEqual(Object.keys(bash.inputSchema.properties).sort(), ['command', 'cwd', 'timeout_seconds']);
     const read = listed.tools.find(x => x.name === 'read');
-    assert.deepEqual(Object.keys(read.inputSchema.properties).sort(), ['limit', 'offset', 'path']);
+    assert.deepEqual(Object.keys(read.inputSchema.properties).sort(), ['limit', 'mode', 'offset', 'path', 'targets']);
     const edit = listed.tools.find(x => x.name === 'edit');
     assertEditV2Schema(edit);
     assert.match(edit.inputSchema.properties.targets.items.properties.path.description, /workspace root/i);
@@ -294,7 +296,7 @@ test('restricted omits unrestricted Pi exec and bash', async () => {
   const { env } = await fixture('allowlist');
   await withClient(env, async client => {
     const listed = await client.listTools();
-    assert.deepEqual(listed.tools.map(x => x.name).sort(), ['edit', 'list_directory', 'read', 'write']);
+    assert.deepEqual(listed.tools.map(x => x.name).sort(), ['edit', 'list_directory', 'read', 'search', 'write']);
     const edit = listed.tools.find(x => x.name === 'edit');
     assertEditV2Schema(edit);
     assert.match(edit.inputSchema.properties.targets.items.properties.path.description, /workspace root/i);
@@ -305,7 +307,7 @@ test('personal user mode exposes file_ops alongside edit with user-path descript
   const { env } = await userFixture();
   await withClient(env, async client => {
     const listed = await client.listTools();
-    assert.deepEqual(listed.tools.map(x => x.name).sort(), ['bash', 'edit', 'exec', 'file_ops', 'import_file', 'list_directory', 'read', 'review_changes', 'wait', 'write']);
+    assert.deepEqual(listed.tools.map(x => x.name).sort(), ['bash', 'edit', 'exec', 'file_ops', 'import_file', 'list_directory', 'read', 'review_changes', 'search', 'wait', 'write']);
     const read = listed.tools.find(x => x.name === 'read');
     assert.match(read.description, /UTF-8|text/i);
     assert.match(read.description, /1-based/i);
@@ -849,7 +851,7 @@ test('workspace-mode pi-dev loads from a smaller-profile fixture with the Termin
   const { env } = await fixture('unrestricted');
   await withClientAt(path.join(copiedPi, 'server.mjs'), env, async client => {
     const listed = await client.listTools();
-    assert.deepEqual(listed.tools.map(tool => tool.name).sort(), ['bash', 'edit', 'exec', 'list_directory', 'read', 'write']);
+    assert.deepEqual(listed.tools.map(tool => tool.name).sort(), ['bash', 'edit', 'exec', 'list_directory', 'read', 'search', 'write']);
   });
 });
 
@@ -1092,7 +1094,7 @@ test('deployment output limit is applied without appearing in schema', async () 
       arguments: { command: `node -e "process.stdout.write('x'.repeat(5000))"` }
     });
     const text = textOf(result);
-    assert.match(text, /\[truncated · \d+ bytes total · full: .*\]/);
+    assert.match(text, /\[truncated · \d+ bytes total · saved on remote host: .*\]/);
     assert.ok(Buffer.byteLength(text) < 1300);
   });
 });
@@ -1183,14 +1185,14 @@ test('read caps output at the default line limit and says how to continue; expli
   await fs.writeFile(path.join(workspaceRoot, 'big.txt'), `${lines.join('\n')}\n`);
   await withClient(env, async client => {
     const capped = textOf(await client.callTool({ name: 'read', arguments: { path: 'big.txt' } }));
-    assert.match(capped, /line 500\b/);
-    assert.doesNotMatch(capped, /line 501\b/);
-    assert.match(capped, /offset=501/);
+    assert.match(capped, /line 160\b/);
+    assert.doesNotMatch(capped, /line 161\b/);
+    assert.match(capped, /offset=161/);
     const wide = textOf(await client.callTool({ name: 'read', arguments: { path: 'big.txt', limit: 800 } }));
     assert.match(wide, /line 800\b/);
     const tools = await client.listTools();
     const read = tools.tools.find(tool => tool.name === 'read');
-    assert.match(read.description, /at most 500 lines/);
+    assert.match(read.description, /at most 160 lines/);
   });
 });
 
@@ -1246,7 +1248,7 @@ test('command output defaults to a 64 KiB tail with the full output retained, no
       arguments: { command: "head -c 300000 /dev/zero | tr '\\0' 'a'; printf END" }
     });
     const text = textOf(result);
-    assert.match(text, /\[truncated · 300003 bytes total · full: .+\]\n\[exit 0 · \d+\.\ds\]$/);
+    assert.match(text, /\[truncated · 300003 bytes total · saved on remote host: .+\]\n\[exit 0 · \d+\.\ds\]$/);
     assert.ok(text.length > 60_000 && text.length < 70_000, `unexpected result size ${text.length}`);
     assert.match(text, /aEND\n/);
   });
@@ -1277,5 +1279,71 @@ test('user exec detach runs through the worker and completes a file_exists wait'
     });
     assert.equal(wrote.isError, undefined);
     assert.deepEqual(await fs.readFile(path.join(defaultCwd, 'a/b/c.bin')), Buffer.from([0, 255]));
+  });
+});
+
+test('read serves outline mode and multi-file targets through MCP', async () => {
+  const { workspaceRoot, env } = await fixture();
+  await fs.writeFile(path.join(workspaceRoot, 'mod.mjs'), [
+    'export function alpha() {',
+    '  return 1;',
+    '}',
+    '',
+    'export class Beta {',
+    '  run() {',
+    '    return 2;',
+    '  }',
+    '}',
+    ''
+  ].join('\n'));
+  await fs.writeFile(path.join(workspaceRoot, 'notes.md'), '# Title\n\nbody\n\n## Section\n');
+  await withClient(env, async client => {
+    const outline = textOf(await client.callTool({
+      name: 'read',
+      arguments: { path: 'mod.mjs', mode: 'outline' }
+    }));
+    assert.match(outline, /^\[outline · 10 lines · \d+ bytes\]/);
+    assert.match(outline, /L1: export function alpha\(\) \{/);
+    assert.match(outline, /L5: export class Beta \{/);
+    assert.doesNotMatch(outline, /L2: return 1;/);
+
+    const markdown = textOf(await client.callTool({
+      name: 'read',
+      arguments: { path: 'notes.md', mode: 'outline' }
+    }));
+    assert.match(markdown, /L1: # Title/);
+    assert.match(markdown, /L5: ## Section/);
+
+    const batch = textOf(await client.callTool({
+      name: 'read',
+      arguments: { targets: [{ path: 'mod.mjs', mode: 'outline' }, { path: 'notes.md' }] }
+    }));
+    assert.match(batch, /^=== mod\.mjs ===\n\[outline · 10 lines · \d+ bytes\]/);
+    assert.match(batch, /\n=== notes\.md ===\n# Title\n\nbody\n\n## Section\n/);
+
+    const both = await client.callTool({
+      name: 'read',
+      arguments: { path: 'mod.mjs', targets: [{ path: 'notes.md' }] }
+    });
+    assert.equal(both.isError, true);
+    assert.match(textOf(both), /INVALID_ARGUMENT: read requires either path or targets, not both/);
+
+    const neither = await client.callTool({ name: 'read', arguments: {} });
+    assert.equal(neither.isError, true);
+    assert.match(textOf(neither), /INVALID_ARGUMENT: read requires either path or targets, not both/);
+
+    const missing = await client.callTool({
+      name: 'read',
+      arguments: { targets: [{ path: 'absent.txt' }] }
+    });
+    assert.equal(missing.isError, true);
+    assert.match(textOf(missing), /absent\.txt/);
+
+    const searched = textOf(await client.callTool({
+      name: 'search',
+      arguments: { pattern: 'export class', globs: ['*.mjs'] }
+    }));
+    assert.match(searched, /mod\.mjs:5:export class Beta/);
+    assert.match(searched, /\[1 match\]$/);
   });
 });

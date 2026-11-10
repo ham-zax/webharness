@@ -16,7 +16,7 @@ MCP_WORKSPACE_ROOT=/absolute/path/to/code
 MCP_PUBLIC_URL=https://mcp.example.com
 MCP_TUNNEL_NAME=
 MCP_DEV_MAX_OUTPUT_BYTES=65536
-MCP_DEV_READ_DEFAULT_LINES=500
+MCP_DEV_READ_DEFAULT_LINES=160
 MCP_DEV_IMPORT_MAX_BYTES=104857600
 MCP_DEV_MAX_SPOOL_BYTES=67108864
 MCP_DEV_SPOOL_TTL_SECONDS=604800
@@ -154,7 +154,7 @@ Generated provider commands contain the repository root used during rendering. I
 
 ## Output policy
 
-`MCP_DEV_READ_DEFAULT_LINES` controls how many lines Dev `read` returns when no `limit` is supplied (default 500, range 0..100000). Set it in the deployment environment or `.env`; the renderer carries it into every Dev provider, including the Personal fallback mirror. `0` disables this default line limit; the reader's 2000-line ceiling and 16 KiB text-content budget still apply. An explicit `limit` overrides the default line count. Truncated reads report total file bytes and the next line offset; complete lines are preserved. An individual line larger than the byte budget returns a diagnostic recommending a focused command extract. Binary and invalid UTF-8 files are rejected.
+`MCP_DEV_READ_DEFAULT_LINES` controls how many lines Dev `read` returns when no `limit` is supplied (default 160, range 0..100000). Set it in the deployment environment or `.env`; the renderer carries it into every Dev provider, including the Personal fallback mirror. `0` disables this default line limit; the reader's 2000-line ceiling and 16 KiB text-content budget still apply. An explicit `limit` overrides the default line count. Truncated reads report total file bytes and the next line offset; complete lines are preserved. An individual line larger than the byte budget returns a diagnostic recommending a focused command extract. Binary and invalid UTF-8 files are rejected.
 
 `MCP_DEV_MAX_OUTPUT_BYTES` is deployment policy, not a model-facing tool argument. It defaults to 65536 bytes: a command result shows the output tail within that budget and, when it truncates, reports the total observed byte count and a retained-output path. Retained output has its own storage ceiling described below. Commands append a compact status/timing footer such as `[exit 0 · 0.3s]`; timeout, cancellation and termination are distinguished from normal exits. Increase the output budget only when the operator deliberately wants larger model-visible results.
 

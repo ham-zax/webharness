@@ -167,7 +167,7 @@ function completed(result, base) {
   };
 }
 
-const OMISSION = /^([\s\S]*?)\n\[ws: ([0-9]+) of ([0-9]+) bytes shown, middle omitted; full output: (\/\S+); WS_MAX_OUTPUT=0 prints everything\]\n([\s\S]*)\n$/;
+const OMISSION = /^([\s\S]*?)\n\[ws: ([0-9]+) of ([0-9]+) bytes shown, middle omitted; saved in local sandbox: (\/\S+); WS_MAX_OUTPUT=0 prints everything\]\n([\s\S]*)\n$/;
 
 test('python client generates a fresh valid runtime idempotency key for each call', async (t) => {
   const { base, requests } = await pythonFixture(t, () => completed('ok', base));
@@ -228,7 +228,7 @@ test('python client bounds multi-byte output and saves the exact result at 0600'
   assert.equal(statSync(path).mode & 0o777, 0o600);
   assert.equal(readFileSync(path, 'utf8').includes(capability), false);
   assert.equal(requests.length, 1);
-  assert.equal(requests[0].query.get('wait'), '0');
+  assert.equal(requests[0].query.get('wait'), '2');
   assert.equal(requests[0].headers.authorization, `Bearer ${capability}`);
 });
 
@@ -329,7 +329,7 @@ test('python client long-polls queued status with one initiator and no 1.5s slee
   const posts = requests.filter(entry => entry.method === 'POST');
   const gets = requests.filter(entry => entry.method === 'GET');
   assert.equal(posts.length, 1);
-  assert.equal(posts[0].query.get('wait'), '0');
+  assert.equal(posts[0].query.get('wait'), '2');
   assert.equal(gets.length, 2);
   assert.ok(Number(gets[0].query.get('wait')) <= 89);
   assert.ok(Number(gets[0].query.get('wait')) >= 0);
@@ -348,7 +348,7 @@ test('python client keeps a bounded completed result when saving the full output
   assert.equal(run.status, 0, run.stderr);
   assert.ok(run.stdout.startsWith('HEAD'));
   assert.ok(run.stdout.endsWith('TAIL\n'));
-  assert.match(run.stdout, /full output not saved: fixture disk full; do not rerun the tool/);
+  assert.match(run.stdout, /local sandbox file not saved: fixture disk full; do not rerun the tool/);
   assert.ok(Buffer.byteLength(run.stdout) < 9000);
   assert.equal(requests.length, 1);
   assert.equal(JSON.parse(requests[0].body).tool, 'dev_1mcp_bash');
@@ -362,7 +362,7 @@ test('python client reports lost creation responses as unknown without resubmitt
   assert.equal(run.status, 2, run.stderr);
   assert.match(run.stderr, /submission outcome unknown; do not retry/);
   assert.equal(requests.length, 1);
-  assert.equal(requests[0].query.get('wait'), '0');
+  assert.equal(requests[0].query.get('wait'), '2');
 });
 
 test('python client treats post-persist server errors as unknown and keeps client errors definite', async (t) => {
@@ -465,7 +465,7 @@ test('python client stops after a zero-second final status hold without resubmit
     state: 'running', status_url: `${base}/v1/operations/token/op`,
   }));
   const setup = 'import time\nclock = iter([0.0, 89.5])\ntime.monotonic = lambda: next(clock)';
-  const run = await runPython(['call', 'echo', '{}'], { WS_BASE: base }, setup);
+  const run = await runPython(['call', 'echo', '{}'], { WS_BASE: base, WS_WAIT: '0' }, setup);
   assert.equal(run.status, 1, run.stderr);
   assert.match(run.stderr, /operation still running/);
   assert.deepEqual(requests.map(entry => [entry.method, entry.query.get('wait')]), [['POST', '0'], ['GET', '0']]);
@@ -582,4 +582,274 @@ test('client caps large results, keeps head and tail, and saves the full output'
   assert.equal(run(['call', 'echo'], [response('completed', big)], '', { WH_MAX_OUTPUT: '0' }).stdout, big);
   assert.equal(run(['call', 'echo'], [response('completed', big)], '', { WH_MAX_OUTPUT: '280' }).stdout, big);
   assert.equal(run(['tools'], [], '', { WH_MAX_OUTPUT: 'x' }).status, 1);
+});
+
+function runPythonInput(args, env = {}, input = '') {
+  return new Promise((resolve, reject) => {
+    const childEnv = { ...process.env, PYTHONIOENCODING: 'utf-8', ...env };
+    const child = spawn('python3', [clientPython.pathname, ...args], {
+      env: childEnv,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    const stdout = [];
+    const stderr = [];
+    child.stdout.on('data', chunk => stdout.push(chunk));
+    child.stderr.on('data', chunk => stderr.push(chunk));
+    child.once('error', reject);
+    child.once('close', code => resolve({
+      status: code,
+      stdout: Buffer.concat(stdout).toString('utf8'),
+      stderr: Buffer.concat(stderr).toString('utf8'),
+    }));
+    child.stdin.end(input, 'utf8');
+  });
+}
+
+test('python client connect exchanges pair code, writes 0600 session file without leaking secret, and uses wait=2 fast path', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'wh-py-session-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const sessionFile = join(dir, 'nested', 'session.json');
+  const issuedSecret = 'p'.repeat(43);
+  const { base, requests } = await pythonFixture(t, (entry, fixtureBase, _req, res) => {
+    if (entry.method === 'POST' && entry.path === '/v1/pair') {
+      const parsed = JSON.parse(entry.body);
+      if (parsed.code !== 'cedar-4821-k9xm') {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ protocol: 'WEBSESSION-MCP-BRIDGE/1', state: 'rejected', code: 'not_found' }));
+        return undefined;
+      }
+      return {
+        protocol: 'WEBSESSION-MCP-BRIDGE/1',
+        state: 'ready',
+        capability: issuedSecret,
+        scope: 'main',
+        expires_at: '2026-12-01T00:00:00.000Z',
+        default_cwd: '/home/ubuntu/repo/webharness',
+      };
+    }
+    if (entry.method === 'GET' && entry.path === '/v1/signatures') {
+      return {
+        protocol: 'WEBSESSION-MCP-BRIDGE/1',
+        state: 'ready',
+        signatures: ['dev_1mcp_read(path?: string)  Read UTF-8 text.', 'dev_1mcp_bash(command: string)  Run Bash.'],
+      };
+    }
+    if (entry.method === 'GET' && entry.path === '/v1/instructions') {
+      return { protocol: 'WEBSESSION-MCP-BRIDGE/1', state: 'ready', instructions: '<dev>\nSafe policy\n</dev>' };
+    }
+    if (entry.method === 'POST' && entry.path === '/v1/calls') {
+      return completed('ok-fast', fixtureBase);
+    }
+    return undefined;
+  });
+
+  const env = { WH_SESSION_FILE: sessionFile, WS_BASE: '', WS_CAP: '' };
+  const badPair = await runPythonInput(['connect', base, 'wrong-0000-code'], env);
+  assert.equal(badPair.status, 1, badPair.stderr);
+  assert.doesNotMatch(badPair.stderr, /submission outcome unknown/);
+
+  const connected = await runPythonInput(['connect', base, 'cedar-4821-k9xm'], env);
+  assert.equal(connected.status, 0, connected.stderr);
+  assert.equal(connected.stdout.includes(issuedSecret), false);
+  assert.equal(connected.stderr.includes(issuedSecret), false);
+  assert.match(connected.stdout, /^CONNECTED\nbase: http:\/\/127\.0\.0\.1:[0-9]+\ncwd: \/home\/ubuntu\/repo\/webharness\ntools: 2\ndev_1mcp_read/);
+  assert.equal(statSync(sessionFile).mode & 0o777, 0o600);
+  const saved = JSON.parse(readFileSync(sessionFile, 'utf8'));
+  assert.equal(saved.cap, issuedSecret);
+  assert.equal(saved.cwd, '/home/ubuntu/repo/webharness');
+  assert.equal(saved.wait, 2);
+
+  // Pair POST must not carry Authorization or Idempotency-Key, and all requests carry User-Agent.
+  const pairReq = requests.find(r => r.path === '/v1/pair' && r.body.includes('cedar-4821-k9xm'));
+  assert.ok(pairReq);
+  assert.equal(pairReq.headers.authorization, undefined);
+  assert.equal(pairReq.headers['idempotency-key'], undefined);
+  assert.equal(pairReq.headers['user-agent'], 'websession-client/1.0');
+
+  const sigs = await runPythonInput(['sigs'], env);
+  assert.equal(sigs.status, 0, sigs.stderr);
+  assert.match(sigs.stdout, /dev_1mcp_bash\(command: string\)/);
+
+  const toolsCompact = await runPythonInput(['tools'], env);
+  assert.equal(toolsCompact.status, 0, toolsCompact.stderr);
+  assert.equal(toolsCompact.stdout, sigs.stdout);
+
+  const inst = await runPythonInput(['instructions'], env);
+  assert.equal(inst.status, 0, inst.stderr);
+  assert.equal(inst.stdout, '<dev>\nSafe policy\n</dev>\n');
+
+  const fastCall = await runPythonInput(['sh', 'echo hi'], env);
+  assert.equal(fastCall.status, 0, fastCall.stderr);
+  assert.equal(fastCall.stdout, 'ok-fast\n');
+  const callPost = requests.find(r => r.path === '/v1/calls');
+  assert.equal(callPost.query.get('wait'), '2');
+  assert.equal(callPost.headers.authorization, `Bearer ${issuedSecret}`);
+  assert.deepEqual(JSON.parse(callPost.body), {
+    version: 1,
+    tool: 'dev_1mcp_bash',
+    arguments: { command: 'echo hi', cwd: '/home/ubuntu/repo/webharness' },
+  });
+});
+
+test('python client harness subcommands resolve sticky cwd, accept stdin payloads, unwrap structuredContent, and batch calls', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'wh-py-cmds-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const sessionFile = join(dir, 'session.json');
+  const calls = [];
+  const batches = [];
+  const { base } = await pythonFixture(t, (entry, fixtureBase) => {
+    if (entry.method === 'GET' && entry.path === '/v1/tools') {
+      return { protocol: 'WEBSESSION-MCP-BRIDGE/1', state: 'ready', tool_count: 2, tools: ['dev_1mcp_read', 'dev_1mcp_search'] };
+    }
+    if (entry.method === 'POST' && entry.path === '/v1/calls') {
+      const parsed = JSON.parse(entry.body);
+      calls.push(parsed);
+      if (parsed.tool === 'dev_1mcp_review_changes') {
+        return completed(JSON.stringify({
+          content: [{ type: 'text', text: '1 changed file\n--- patch ---\n+clean' }],
+          structuredContent: { files: 1, patch: '+clean' },
+        }), fixtureBase);
+      }
+      return completed(`${parsed.tool}:ok`, fixtureBase);
+    }
+    if (entry.method === 'POST' && entry.path === '/v1/batch') {
+      const parsed = JSON.parse(entry.body);
+      batches.push(parsed);
+      return {
+        protocol: 'WEBSESSION-MCP-BRIDGE/1',
+        state: 'ready',
+        results: parsed.calls.map((item, idx) => ({
+          protocol: 'WEBSESSION-MCP-BRIDGE/1',
+          state: 'completed',
+          operation_id: `op-${idx}`,
+          status_url: `${fixtureBase}/v1/operations/token/op-${idx}`,
+          chunk_count: 1,
+          result: `${item.tool}:batch-ok`,
+        })),
+      };
+    }
+    return undefined;
+  });
+  writeFileSync(sessionFile, JSON.stringify({ base, cap: capability, cwd: '/workspace/app', wait: 2 }), { mode: 0o600 });
+  const env = { WH_SESSION_FILE: sessionFile, WS_BASE: '', WS_CAP: '' };
+
+  const pwd1 = await runPythonInput(['pwd'], env);
+  assert.equal(pwd1.stdout, '/workspace/app\n');
+
+  const cdSub = await runPythonInput(['cd', 'packages/core'], env);
+  assert.equal(cdSub.status, 0, cdSub.stderr);
+  assert.equal(cdSub.stdout, 'cwd: /workspace/app/packages/core\n');
+
+  assert.equal((await runPythonInput(['ls', 'src', '--limit', '25'], env)).status, 0);
+  assert.deepEqual(calls.at(-1), {
+    version: 1,
+    tool: 'dev_1mcp_list_directory',
+    arguments: { path: '/workspace/app/packages/core/src', limit: 25 },
+  });
+
+  assert.equal((await runPythonInput(['read', 'index.mjs', '10', '40', '--outline'], env)).status, 0);
+  assert.deepEqual(calls.at(-1), {
+    version: 1,
+    tool: 'dev_1mcp_read',
+    arguments: { path: '/workspace/app/packages/core/index.mjs', offset: 10, limit: 40, mode: 'outline' },
+  });
+
+  assert.equal((await runPythonInput(['read', '--targets'], env, '[{"path":"a.js","mode":"outline"},{"path":"/abs/b.js","limit":20}]')).status, 0);
+  assert.deepEqual(calls.at(-1), {
+    version: 1,
+    tool: 'dev_1mcp_read',
+    arguments: {
+      targets: [
+        { path: '/workspace/app/packages/core/a.js', mode: 'outline' },
+        { path: '/abs/b.js', limit: 20 },
+      ],
+    },
+  });
+
+  // Home paths must reach the remote provider unchanged, even with a sticky cwd.
+  for (const homePath of ['~', '~/notes.txt']) {
+    assert.equal((await runPythonInput(['read', homePath], env)).status, 0);
+    assert.equal(calls.at(-1).arguments.path, homePath);
+    assert.equal((await runPythonInput(['write', homePath], env, 'home content')).status, 0);
+    assert.equal(calls.at(-1).arguments.path, homePath);
+    assert.equal((await runPythonInput(['edit'], env, JSON.stringify({ path: homePath, oldText: 'a', newText: 'b' }))).status, 0);
+    assert.equal(calls.at(-1).arguments.targets[0].path, homePath);
+  }
+
+  const bareNames = await runPythonInput(['tools', '--names'], env);
+  assert.equal(bareNames.status, 0, bareNames.stderr);
+  assert.equal(bareNames.stdout, 'tool_count: 2\ndev_1mcp_read\ndev_1mcp_search\n');
+
+  assert.equal((await runPythonInput(['rg', 'needle', 'src', '-g', '*.mjs', '-m', '15', '-F', '-s', '--all'], env)).status, 0);
+  assert.deepEqual(calls.at(-1), {
+    version: 1,
+    tool: 'dev_1mcp_search',
+    arguments: {
+      pattern: 'needle',
+      path: '/workspace/app/packages/core/src',
+      globs: ['*.mjs'],
+      max_results: 15,
+      literal: true,
+      case_sensitive: true,
+      include_vendor: true,
+    },
+  });
+
+  assert.equal((await runPythonInput(['edit'], env, JSON.stringify({ path: 'index.mjs', oldText: 'a', newText: 'b', diff: true }))).status, 0);
+  assert.deepEqual(calls.at(-1), {
+    version: 1,
+    tool: 'dev_1mcp_edit',
+    arguments: {
+      diff: true,
+      targets: [{ path: '/workspace/app/packages/core/index.mjs', edits: [{ oldText: 'a', newText: 'b' }] }],
+    },
+  });
+
+  assert.equal((await runPythonInput(['write', 'notes/out.txt', '--overwrite', '--mkdir', '--mode', '644'], env, 'hello world\n')).status, 0);
+  assert.deepEqual(calls.at(-1), {
+    version: 1,
+    tool: 'dev_1mcp_write',
+    arguments: {
+      path: '/workspace/app/packages/core/notes/out.txt',
+      content: 'hello world\n',
+      overwrite: true,
+      mkdir_parents: true,
+      mode: '644',
+    },
+  });
+
+  const rev = await runPythonInput(['review', 'index.mjs'], env);
+  assert.equal(rev.status, 0, rev.stderr);
+  assert.equal(rev.stdout, '1 changed file\n--- patch ---\n+clean\n');
+  assert.equal(rev.stdout.includes('structuredContent'), false);
+
+  const shStdin = await runPythonInput(['sh'], env, 'git status -sb\n');
+  assert.equal(shStdin.status, 0, shStdin.stderr);
+  assert.deepEqual(calls.at(-1), {
+    version: 1,
+    tool: 'dev_1mcp_bash',
+    arguments: { command: 'git status -sb\n', cwd: '/workspace/app/packages/core' },
+  });
+
+  const callsBeforeBatch = calls.length;
+  const batchOut = await runPythonInput(['batch'], env, JSON.stringify([
+    { tool: 'dev_1mcp_read', arguments: { path: 'x.mjs', limit: 10 } },
+    { tool: 'dev_1mcp_search', arguments: { pattern: 'foo' } },
+    { tool: 'dev_1mcp_bash', arguments: { command: 'true' } },
+  ]));
+  assert.equal(batchOut.status, 0, batchOut.stderr);
+  assert.equal(calls.length, callsBeforeBatch, 'batch must use /v1/batch rather than sequential /v1/calls');
+  assert.equal(batches.length, 1);
+  assert.match(batchOut.stdout, /=== \[1\/3\] dev_1mcp_read ===\ndev_1mcp_read:batch-ok[\s\S]*=== \[2\/3\] dev_1mcp_search ===\ndev_1mcp_search:batch-ok[\s\S]*=== \[3\/3\] dev_1mcp_bash ===\ndev_1mcp_bash:batch-ok/);
+  assert.deepEqual(batches[0], {
+    version: 1,
+    calls: [
+      { tool: 'dev_1mcp_read', arguments: { path: '/workspace/app/packages/core/x.mjs', limit: 10 } },
+      { tool: 'dev_1mcp_search', arguments: { pattern: 'foo', path: '/workspace/app/packages/core' } },
+      { tool: 'dev_1mcp_bash', arguments: { command: 'true', cwd: '/workspace/app/packages/core' } },
+    ],
+  });
+
+  const cleared = await runPythonInput(['cd', '--clear'], env);
+  assert.equal(cleared.stdout, 'cwd: (default)\n');
 });

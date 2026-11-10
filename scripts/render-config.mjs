@@ -324,7 +324,7 @@ export async function renderConfig(options) {
   if (!Number.isInteger(devMaxOutputBytes) || devMaxOutputBytes <= 0 || devMaxOutputBytes > 16 * 1024 * 1024) {
     throw new Error('MCP_DEV_MAX_OUTPUT_BYTES must be an integer from 1 to 16777216');
   }
-  const devReadDefaultLinesRaw = deployment.MCP_DEV_READ_DEFAULT_LINES ?? '500';
+  const devReadDefaultLinesRaw = deployment.MCP_DEV_READ_DEFAULT_LINES ?? '160';
   if (!/^\d+$/.test(devReadDefaultLinesRaw) || Number(devReadDefaultLinesRaw) > 100000) {
     throw new Error('MCP_DEV_READ_DEFAULT_LINES must be an integer from 0 to 100000 (0 disables the default)');
   }

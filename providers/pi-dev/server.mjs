@@ -9,6 +9,13 @@ import { fileURLToPath } from 'node:url';
 import { IdleExecutionWorker, serveExecutionWorker } from './idle-worker.mjs';
 import { pruneBashSpools } from './spool-gc.mjs';
 import { DEFAULT_LIST_LIMIT, MAX_LIST_LIMIT, runListDirectory } from './list-directory.mjs';
+import {
+  DEFAULT_SEARCH_MAX_PER_FILE,
+  DEFAULT_SEARCH_MAX_RESULTS,
+  MAX_SEARCH_MAX_PER_FILE,
+  MAX_SEARCH_MAX_RESULTS,
+  runSearch,
+} from './search.mjs';
 
 const executionWorker = process.argv.includes('--dev-execution-worker');
 const { runRead, runEdit, runWrite } = executionWorker ? await import('./files.mjs') : {};
@@ -27,6 +34,7 @@ import {
   renderImportFileText,
   renderListDirectoryText,
   renderReviewChangesText,
+  renderSearchText,
   renderWriteText,
 } from './render.mjs';
 import { WaitEngine } from './wait-engine.mjs';
@@ -40,7 +48,7 @@ const OWNER_CONTEXT_MAX_BYTES = 32 * 1024;
 // Routing rules that must reach every client, independent of any owner context file.
 const FILE_ACCESS_INSTRUCTIONS = [
   'Dev file access policy:',
-  '- Read a known text file with read. Discover names with list_directory, not with exec or bash.',
+  '- Search text with search, discover names with list_directory, and read known files with read (mode="outline" first for unfamiliar large files) instead of exec or bash.',
   '- If exec or bash fails, do not conclude that filesystem access is unavailable. Retry with read or list_directory.',
   '- Messages start with a code. ENOENT: correct or discover the path. ENOTDIR or EISDIR: call list_directory. EACCES: report the restriction.',
   '- A folder the user names may differ from the directory name. List the parent, then use the exact name.',
@@ -131,7 +139,7 @@ if (maxSpoolTotalBytes < maxSpoolBytes) {
 
 // Lines returned by read when the caller gives no limit. Keeps one stray read of a big
 // file from flooding the model's context; 0 restores the tool's own larger bound.
-const readDefaultLinesValue = process.env.MCP_DEV_READ_DEFAULT_LINES ?? '500';
+const readDefaultLinesValue = process.env.MCP_DEV_READ_DEFAULT_LINES ?? '160';
 const readDefaultLinesNumber = Number(readDefaultLinesValue);
 if (!/^\d+$/.test(readDefaultLinesValue) || readDefaultLinesNumber > 100000) {
   console.error('MCP_DEV_READ_DEFAULT_LINES must be an integer from 0 to 100000 (0 disables the default)');
@@ -260,11 +268,18 @@ function renderWaitResult(result) {
 }
 
 registerTool('read', {
-  description: 'Read UTF-8 text in pages of at most 16 KiB. offset is a 1-based line; limit is a line count. Truncated results give the next offset. A directory path is refused with EISDIR; use list_directory instead.' + (readDefaultLines ? ` Without limit, at most ${readDefaultLines} lines.` : ''),
+  description: 'Read UTF-8 text in pages of at most 16 KiB. offset is a 1-based line; limit is a line count. Truncated results give the next offset. mode "outline" returns compact structural landmarks (L<line>: <symbol>) instead of full lines; targets reads up to 20 files in one call. A directory path is refused with EISDIR; use list_directory instead.' + (readDefaultLines ? ` Without limit, at most ${readDefaultLines} lines.` : ''),
   inputSchema: {
-    path: modelPath,
+    path: modelPath.optional(),
     offset: z.number().int().positive().optional(),
-    limit: z.number().int().positive().optional()
+    limit: z.number().int().positive().optional(),
+    mode: z.enum(['lines', 'outline']).optional().describe('lines (default) returns file text; outline returns structural landmarks only'),
+    targets: z.array(z.object({
+      path: modelPath,
+      offset: z.number().int().positive().optional(),
+      limit: z.number().int().positive().optional(),
+      mode: z.enum(['lines', 'outline']).optional(),
+    })).min(1).max(20).optional().describe('Read several files in one call; give either path or targets, not both')
   },
   annotations: {
     readOnlyHint: true,
@@ -277,7 +292,10 @@ registerTool('read', {
     ...pathPolicy,
     path: args.path,
     offset: args.offset,
-    limit: args.limit ?? readDefaultLines
+    limit: args.limit,
+    defaultLines: readDefaultLines,
+    mode: args.mode,
+    targets: args.targets
   }, extra.signal);
   if (result.content.some(block => block.type !== 'text')) {
     throw new Error('dev.read supports text files only');
@@ -304,6 +322,32 @@ registerTool('list_directory', {
     limit: args.limit
   }, extra.signal);
   return { content: [{ type: 'text', text: renderListDirectoryText(result) }] };
+}));
+
+registerTool('search', {
+  description: `Search text across files with ripgrep and return compact path:line:match results without shell quoting. Excludes vendored trees (skill-library/packs, third_party, node_modules, .git) unless include_vendor=true. Defaults to smart-case, ${DEFAULT_SEARCH_MAX_RESULTS} total matches (max ${MAX_SEARCH_MAX_RESULTS}), and ${DEFAULT_SEARCH_MAX_PER_FILE} matches per file (max ${MAX_SEARCH_MAX_PER_FILE}).`,
+  inputSchema: {
+    pattern: z.string().min(1).max(4096).describe('Regex pattern (or exact string when literal=true)'),
+    path: listPath.optional().describe('Optional directory or file to search; omit to search the authority root'),
+    globs: z.array(z.string().min(1).max(256)).max(32).optional().describe('Optional ripgrep file globs, e.g. ["*.mjs", "!test/**"]'),
+    literal: z.boolean().optional().describe('Match pattern literally (-F) instead of as a regex'),
+    case_sensitive: z.boolean().optional().describe('Force case-sensitive (true) or case-insensitive (false); omit for smart-case'),
+    max_results: z.number().int().positive().max(MAX_SEARCH_MAX_RESULTS).optional().describe(`Maximum matches to return; default ${DEFAULT_SEARCH_MAX_RESULTS}`),
+    max_per_file: z.number().int().positive().max(MAX_SEARCH_MAX_PER_FILE).optional().describe(`Maximum matches per file; default ${DEFAULT_SEARCH_MAX_PER_FILE}`),
+    include_vendor: z.boolean().optional().describe('Include vendored directories (skill-library/packs, third_party, node_modules)'),
+  },
+  annotations: {
+    readOnlyHint: true,
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: false,
+  }
+}, async (args, extra) => invoke(async () => {
+  const result = await runSearch({
+    ...pathPolicy,
+    ...args,
+  }, extra.signal);
+  return { content: [{ type: 'text', text: renderSearchText(result) }] };
 }));
 
 registerTool('edit', {

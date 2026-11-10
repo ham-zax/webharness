@@ -72,3 +72,82 @@ test('authenticated WebSession discovery preserves initialization guidance witho
   assert.equal(operation.state, 'completed');
   assert.deepEqual(JSON.parse(operation.result), toolResult);
 });
+
+test('authenticated discovery compacts 1MCP guidance and exposes the capability default cwd', async t => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'websession-compact-'));
+  t.after(() => rm(stateDir, { recursive: true, force: true }));
+  const instructions = [
+    '# 1MCP - Model Context Protocol Proxy',
+    '',
+    'This proxy aggregates MCP servers behind one endpoint.',
+    'Example tool name: filesystem_1mcp_read_file.',
+    '',
+    '<dev>',
+    'Dev tools for the project.',
+    '</dev>',
+    '',
+    '<local>',
+    'Local tools.',
+    '</local>',
+  ].join('\n');
+  const upstream = createServer(async (req, res) => {
+    if (req.method !== 'POST') { res.writeHead(200).end(); return; }
+    let body = '';
+    for await (const chunk of req) body += chunk;
+    const message = JSON.parse(body);
+    if (message.id === undefined) { res.writeHead(202).end(); return; }
+    const result = message.method === 'initialize'
+      ? { protocolVersion: message.params.protocolVersion, capabilities: { tools: {} },
+        serverInfo: { name: 'compact-fixture', version: '1' }, instructions }
+      : { tools: [{ name: 'fixture_read', description: 'Read a file.', inputSchema: { type: 'object' } }] };
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ jsonrpc: '2.0', id: message.id, result }));
+  });
+  upstream.listen(0, '127.0.0.1');
+  await once(upstream, 'listening');
+  t.after(() => { upstream.closeAllConnections(); upstream.close(); });
+  const reservation = createServer();
+  reservation.listen(0, '127.0.0.1');
+  await once(reservation, 'listening');
+  const port = reservation.address().port;
+  await new Promise(resolve => reservation.close(resolve));
+  const store = new AdapterStore(stateDir);
+  const issued = store.issueMainCapability(60, { defaultCwd: '/tmp/web-session-work' });
+  store.close();
+  const child = spawn(process.execPath, [new URL('../server.mjs', import.meta.url).pathname], {
+    env: { ...process.env, WEBSESSION_ADAPTER_STATE_DIR: stateDir,
+      WEBSESSION_ADAPTER_HOST: '127.0.0.1', WEBSESSION_ADAPTER_PORT: String(port),
+      WEBSESSION_ADAPTER_MCP_URL: `http://127.0.0.1:${upstream.address().port}/mcp` },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  t.after(async () => { if (child.exitCode === null) { const ended = once(child, 'exit'); child.kill(); await ended; } });
+  child.stderr.resume();
+  await once(child.stdout, 'data', { signal: AbortSignal.timeout(10000) });
+
+  const base = `http://127.0.0.1:${port}`;
+  const auth = { authorization: `Bearer ${issued.token}` };
+  const toolsText = await (await fetch(`${base}/v1/s/${issued.token}/tools`)).text();
+  const line = toolsText.split('\n').find(value => value.startsWith('instructions_json: '));
+  assert.ok(line, 'tools output includes compacted instructions');
+  const compacted = JSON.parse(line.slice('instructions_json: '.length));
+  assert.ok(!compacted.includes('filesystem_1mcp_read_file'));
+  assert.ok(!compacted.startsWith('# 1MCP'));
+  assert.ok(compacted.startsWith('<dev>'));
+  assert.match(compacted, /<local>\nLocal tools\.\n<\/local>$/);
+
+  const instructionResponse = await fetch(`${base}/v1/instructions`, { headers: auth });
+  assert.equal(instructionResponse.status, 200);
+  assert.equal((await instructionResponse.json()).instructions, compacted);
+
+  const snapshot = await (await fetch(`${base}/v1/tools`, { headers: auth })).json();
+  assert.equal(snapshot.default_cwd, '/tmp/web-session-work');
+  assert.equal(snapshot.instructions, compacted);
+  assert.deepEqual(snapshot.tools, ['fixture_read']);
+
+  const signatures = await (await fetch(`${base}/v1/signatures`, { headers: auth })).json();
+  assert.equal(signatures.default_cwd, '/tmp/web-session-work');
+  assert.equal(signatures.signatures.length, 1);
+
+  const about = await (await fetch(`${base}/v1/about`)).text();
+  assert.match(about, new RegExp(`pair_url: http://127\\.0\\.0\\.1:${port}/v1/pair`));
+});
