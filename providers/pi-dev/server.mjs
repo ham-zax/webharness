@@ -55,8 +55,19 @@ const FILE_ACCESS_INSTRUCTIONS = [
   '- Read only, unless the user asks for a change.',
 ].join('\n');
 
+// Token-cost rules for every client: each tool result stays in context and is re-billed on every later turn.
+const EXECUTION_EFFICIENCY_INSTRUCTIONS = [
+  'Execution efficiency (each result stays in context and is re-billed on every later turn):',
+  '- Batch inspection: read several known files in one read call with targets (up to 20) and locate code with search first; avoid one call per file or per Git check.',
+  '- Quiet output: send builds and test runs to a /tmp log and print only the exit status plus the tail or failing lines (normally 25 lines or fewer); never dump schemas, full diffs, or passing-test output. Call review_changes once after the final related edit instead of repeating Git status or diff.',
+  '- Localized bugs: when the report names a file, line, and reproduction, read that scope and verify with a targeted test before widening the investigation. Do not skip validation.',
+  '- Deployment: after changing a running service, decide whether it needs a restart or reload, then confirm with a harmless readiness check before claiming it is live.',
+  '- Long sessions: around 80k-100k tokens of context, write a short non-secret handoff (state, decisions, remaining work, last commits) and continue in a fresh session when practical.',
+].join('\n');
+
 function serverInstructions(ownerContext) {
-  return ownerContext ? `${FILE_ACCESS_INSTRUCTIONS}\n\n${ownerContext}` : FILE_ACCESS_INSTRUCTIONS;
+  const builtIn = `${FILE_ACCESS_INSTRUCTIONS}\n\n${EXECUTION_EFFICIENCY_INSTRUCTIONS}`;
+  return ownerContext ? `${builtIn}\n\n${ownerContext}` : builtIn;
 }
 
 async function loadOwnerContext(file) {

@@ -217,6 +217,23 @@ test('built-in instructions ship without an owner context file', async () => {
   });
 });
 
+test('built-in instructions ship token-efficiency rules ahead of the owner context', async t => {
+  const { env } = await fixture('unrestricted');
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'pi-dev-eff-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const contextFile = path.join(dir, 'owner.md');
+  await fs.writeFile(contextFile, 'OWNER-SENTINEL\n', { mode: 0o600 });
+  await withClient({ ...env, MCP_OWNER_CONTEXT_FILE: contextFile }, async client => {
+    const published = client.getInstructions();
+    assert.match(published, /read call with targets \(up to 20\)/);
+    assert.match(published, /review_changes once after the final related edit/);
+    assert.match(published, /restart or reload/);
+    assert.match(published, /80k-100k tokens/);
+    assert.ok(published.indexOf('Execution efficiency') < published.indexOf('OWNER-SENTINEL'), 'owner context stays last');
+    assert.ok(published.endsWith('OWNER-SENTINEL'));
+  });
+});
+
 test('list_directory exposes a bounded read-only listing through MCP', async () => {
   const { workspaceRoot, env } = await fixture();
   await fs.mkdir(path.join(workspaceRoot, 'ahmed-hamza-workout'));
