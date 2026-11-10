@@ -86,9 +86,10 @@ test_1mcp_https_callback_csp_compatibility_is_guarded() {
 test_1mcp_clean_tool_namespacing_is_guarded() {
   local helper="$ROOT/scripts/install-bridge-runtime.sh"
   contains "$helper" 'constants/mcp\.js' &&
-  contains "$helper" "process\.env\.ONE_MCP_URI_SEPARATOR \|\| '_'" &&
+  contains "$helper" "process\.env\.WEBHARNESS_MCP_URI_SEPARATOR \|\| '_'" &&
   contains "$helper" "toolPattern: '\{server\}_\{tool\}'" &&
-  contains "$ROOT/providers/local-tools/server.mjs" 'ONE_MCP_URI_SEPARATOR: INNER_TOOL_SEPARATOR'
+  contains "$ROOT/providers/local-tools/server.mjs" 'WEBHARNESS_MCP_URI_SEPARATOR: INNER_TOOL_SEPARATOR' &&
+  ! contains "$ROOT/providers/local-tools/server.mjs" 'ONE_MCP_URI_SEPARATOR'
 }
 
 test_shared_bridge_runtime_installer_is_used() {

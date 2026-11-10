@@ -125,10 +125,14 @@ import fs from 'node:fs';
 const [constantsPath, templateTypesPath, validatorPath] = process.argv.slice(2);
 
 const upstreamSep = "export const MCP_URI_SEPARATOR = '_1mcp_';";
-const patchedSep = "export const MCP_URI_SEPARATOR = process.env.ONE_MCP_URI_SEPARATOR || '_';";
+const legacyPatchedSep = "export const MCP_URI_SEPARATOR = process.env.ONE_MCP_URI_SEPARATOR || '_';";
+const patchedSep = "export const MCP_URI_SEPARATOR = process.env.WEBHARNESS_MCP_URI_SEPARATOR || '_';";
 let constantsSrc = fs.readFileSync(constantsPath, 'utf8');
 if (constantsSrc.includes(upstreamSep)) {
   constantsSrc = constantsSrc.replace(upstreamSep, patchedSep);
+  fs.writeFileSync(constantsPath, constantsSrc);
+} else if (constantsSrc.includes(legacyPatchedSep)) {
+  constantsSrc = constantsSrc.replace(legacyPatchedSep, patchedSep);
   fs.writeFileSync(constantsPath, constantsSrc);
 } else if (!constantsSrc.includes(patchedSep)) {
   throw new Error('pinned 1MCP constants/mcp.js source shape changed; refusing an unsafe separator patch');

@@ -230,7 +230,7 @@ export class InnerDirect1Mcp {
         '--config',
         configPath
       ],
-      env: { ONE_MCP_URI_SEPARATOR: INNER_TOOL_SEPARATOR },
+      env: { WEBHARNESS_MCP_URI_SEPARATOR: INNER_TOOL_SEPARATOR },
       stderr: 'inherit'
     });
     const client = new Client({ name: 'mcp-dev-bridge-local-inner', version: '0.1.0' });
@@ -819,10 +819,10 @@ export function createLocalBrokerServer({ broker } = {}) {
     try {
       if (request.params.name === 'tool_list') return jsonResult(await broker.list(request.params.arguments ?? {}));
       if (request.params.name === 'tool_schema') return jsonResult(await broker.schema(request.params.arguments ?? {}));
-      if (request.params.name === 'tool_call') return broker.call(request.params.arguments ?? {}, extra.signal);
+      if (request.params.name === 'tool_call') return await broker.call(request.params.arguments ?? {}, extra.signal);
       if (request.params.name === 'fallback_dispatch') {
-        if (typeof broker.fallbackDispatch === 'function') return broker.fallbackDispatch(request.params.arguments ?? {}, extra.signal);
-        return broker.call(request.params.arguments ?? {}, extra.signal);
+        if (typeof broker.fallbackDispatch === 'function') return await broker.fallbackDispatch(request.params.arguments ?? {}, extra.signal);
+        return await broker.call(request.params.arguments ?? {}, extra.signal);
       }
       if (request.params.name === 'tool_batch') {
         if (typeof broker.batch !== 'function') throw brokerError('LOCAL_BATCH_UNAVAILABLE', 'local broker does not implement batch dispatch');

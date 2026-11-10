@@ -7,6 +7,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import {
   DEFAULT_INNER_IDLE_MS,
+  InnerDirect1Mcp,
   LazyInner1Mcp,
   LocalToolBroker,
   MAX_LIST_LIMIT,
@@ -706,4 +707,45 @@ test('tool_list shows parameter names with required ones starred, and omits para
   assert.equal(byName.terminal_open.params, 'command, name');
   assert.equal('params' in byName.terminal_list, false);
   assert.equal('params' in byName.terminal_noschema, false);
+});
+
+test('createLocalBrokerServer catches async tool_call and fallback_dispatch rejections as structured errors', async t => {
+  const failErr = Object.assign(new Error('unknown local server: missing'), { code: 'UNKNOWN_SERVER' });
+  const broker = {
+    async list() { return { tools: [], hasMore: false }; },
+    async schema() { throw failErr; },
+    async call() { throw failErr; },
+    async fallbackDispatch() { throw failErr; },
+    async batch() { throw failErr; }
+  };
+  const server = createLocalBrokerServer({ broker });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const client = new Client({ name: 'local-tools-error-test', version: '1.0.0' });
+  t.after(async () => {
+    await client.close();
+    await server.close();
+  });
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+
+  for (const name of ['tool_call', 'fallback_dispatch']) {
+    const res = await client.callTool({ name, arguments: { server: 'missing', tool: 'noop' } });
+    assert.equal(res.isError, true);
+    assert.equal(res.structuredContent?.error?.code, 'UNKNOWN_SERVER');
+  }
+});
+
+test('InnerDirect1Mcp starts installed @1mcp/agent with _1mcp_ separator without yargs env rejection', async t => {
+  const candidate = path.join(os.homedir(), '.local/lib/node_modules/@1mcp/agent/build/index.js');
+  try {
+    await fs.access(candidate);
+  } catch {
+    t.skip('@1mcp/agent is not installed at ~/.local/lib/node_modules');
+    return;
+  }
+  const configPath = await configFile(t, []);
+  const inner = await InnerDirect1Mcp.start({ configPath, oneMcpEntry: candidate });
+  t.after(() => inner.close());
+  const listed = await inner.listTools();
+  assert.ok(listed.tools.some(tool => tool.name === '1mcp_1mcp_mcp_reload'));
 });
