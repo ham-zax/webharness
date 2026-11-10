@@ -8,7 +8,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { OperationCore, renderToolResult } from '../core.mjs';
-import { compactInstructions, decodeToolName, parseRequest, parseUniversalRequest, toolListSnapshot } from '../protocol.mjs';
+import { webSessionInstructions, compactInstructions, decodeToolName, parseRequest, parseUniversalRequest, toolListSnapshot } from '../protocol.mjs';
+import { listMcpTools } from '../mcp-client.mjs';
 import { AdapterStore, requestHash } from '../store.mjs';
 
 function encode(value) {
@@ -372,9 +373,9 @@ test('1MCP preamble is compacted while server blocks and other guidance stay int
 
   const tools = [{ name: 'dev_read' }];
   const base = { protocol: 'WEBSESSION-MCP-BRIDGE/1', state: 'ready', tool_count: 1, tools: ['dev_read'] };
-  assert.deepEqual(toolListSnapshot(tools, owner, '/tmp/project'), { ...base, instructions: owner, default_cwd: '/tmp/project' });
-  assert.deepEqual(toolListSnapshot(tools, owner), { ...base, instructions: owner });
-  assert.deepEqual(toolListSnapshot(tools, instructions, '/tmp/project'), { ...base, instructions: compacted, default_cwd: '/tmp/project' });
+  assert.deepEqual(toolListSnapshot(tools, owner, '/tmp/project'), { ...base, instructions: webSessionInstructions(owner), default_cwd: '/tmp/project' });
+  assert.deepEqual(toolListSnapshot(tools, owner), { ...base, instructions: webSessionInstructions(owner) });
+  assert.deepEqual(toolListSnapshot(tools, instructions, '/tmp/project'), { ...base, instructions: webSessionInstructions(compacted), default_cwd: '/tmp/project' });
 });
 
 async function reservePort() {
@@ -748,4 +749,162 @@ test('batch admission rolls back earlier mutations and turn fences on a later co
     await core.close();
     rmSync(stateDir, { recursive: true, force: true });
   }
+});
+
+test('GET and POST /v1/cwd inspect, validate, canonicalize, and clear server-side default_cwd', async t => {
+  const stateDir = mkdtempSync(join(tmpdir(), 'websession-cwd-endpoint-'));
+  t.after(() => rmSync(stateDir, { recursive: true, force: true }));
+  const calls = [];
+  const tools = [
+    { name: 'dev_list_directory', description: 'List directory.', inputSchema: { type: 'object' }, annotations: { readOnlyHint: true } },
+    { name: 'dev_read', description: 'Read a file.', inputSchema: { type: 'object' }, annotations: { readOnlyHint: true } },
+  ];
+  const { server } = startToolFixture(t, tools, async (name, args) => {
+    calls.push({ name, args });
+    if (name === 'dev_list_directory') {
+      if (args.path.includes('missing')) {
+        return { isError: true, content: [{ type: 'text', text: 'ENOENT: no such directory' }] };
+      }
+      const resolved = args.path.startsWith('~/') ? `/home/tester/${args.path.slice(2)}` : args.path;
+      return { content: [{ type: 'text', text: `dir: ${resolved}\nentries: 2\ndir src\nfile package.json 120B` }] };
+    }
+    return { content: [{ type: 'text', text: `read:${args.path}` }] };
+  });
+  await once(server, 'listening');
+  t.after(() => {
+    server.closeAllConnections();
+    server.close();
+  });
+
+  const store = new AdapterStore(stateDir);
+  const issued = store.issueMainCapability(300);
+  store.close();
+
+  const port = await reservePort();
+  await startAdapterServer(t, stateDir, port, {
+    WEBSESSION_ADAPTER_MCP_URL: `http://127.0.0.1:${server.address().port}/mcp`,
+  });
+  const base = `http://127.0.0.1:${port}`;
+  const auth = { authorization: `Bearer ${issued.token}` };
+
+  const initial = await fetch(`${base}/v1/cwd`, { headers: auth });
+  assert.equal(initial.status, 200);
+  assert.equal((await initial.json()).default_cwd, null);
+
+  const updated = await fetch(`${base}/v1/cwd`, {
+    method: 'POST',
+    headers: { ...auth, 'content-type': 'application/json' },
+    body: JSON.stringify({ cwd: '~/projects/alpha' }),
+  });
+  assert.equal(updated.status, 200);
+  const updatedBody = await updated.json();
+  assert.equal(updatedBody.default_cwd, '/home/tester/projects/alpha');
+  assert.match(updatedBody.listing, /file package\.json 120B/);
+
+  const relativeSub = await fetch(`${base}/v1/cwd`, {
+    method: 'POST',
+    headers: { ...auth, 'content-type': 'application/json' },
+    body: JSON.stringify({ cwd: 'packages/api' }),
+  });
+  assert.equal(relativeSub.status, 200);
+  assert.equal((await relativeSub.json()).default_cwd, '/home/tester/projects/alpha/packages/api');
+
+  const callRead = await fetch(`${base}/v1/calls?wait=5`, {
+    method: 'POST',
+    headers: { ...auth, 'content-type': 'application/json', 'idempotency-key': 'cwd-inherit-read' },
+    body: JSON.stringify({ version: 1, tool: 'dev_read', arguments: { path: 'index.ts' } }),
+  });
+  assert.equal(callRead.status, 200);
+  assert.equal((await callRead.json()).result, 'read:/home/tester/projects/alpha/packages/api/index.ts');
+
+  const badDir = await fetch(`${base}/v1/cwd`, {
+    method: 'POST',
+    headers: { ...auth, 'content-type': 'application/json' },
+    body: JSON.stringify({ cwd: '~/missing' }),
+  });
+  assert.equal(badDir.status, 400);
+  assert.equal((await badDir.json()).code, 'invalid_cwd');
+
+  const cleared = await fetch(`${base}/v1/cwd`, {
+    method: 'POST',
+    headers: { ...auth, 'content-type': 'application/json' },
+    body: JSON.stringify({ cwd: null }),
+  });
+  assert.equal(cleared.status, 200);
+  assert.equal((await cleared.json()).default_cwd, null);
+});
+
+test('pair discovery bundles live signatures and HTTP guidance without dispatching tools', async t => {
+  const stateDir = mkdtempSync(join(tmpdir(), 'websession-pair-discovery-'));
+  t.after(() => rmSync(stateDir, { recursive: true, force: true }));
+  const { server, events } = startToolFixture(t, [
+    { name: 'fixture_read', description: 'Read a file.', inputSchema: { type: 'object' } },
+  ], async () => { events.push('unexpected dispatch'); return {}; });
+  await once(server, 'listening');
+  t.after(() => { server.closeAllConnections(); server.close(); });
+  const store = new AdapterStore(stateDir);
+  const pairing = store.issuePairingCode({ defaultCwd: '/tmp/project' });
+  t.after(() => store.close());
+  const port = await reservePort();
+  await startAdapterServer(t, stateDir, port, { WEBSESSION_ADAPTER_MCP_URL: `http://127.0.0.1:${server.address().port}/mcp` });
+  const base = `http://127.0.0.1:${port}`;
+  const post = query => fetch(`${base}/v1/pair${query}`, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code: pairing.code }),
+  });
+  const invalid = await post('?discover=yes');
+  assert.equal(invalid.status, 400);
+  assert.equal((await invalid.json()).code, 'invalid_discover');
+  assert.equal((await post('?discover=1&discover=0')).status, 400);
+  const response = await post('?discover=1');
+  assert.equal(response.status, 200);
+  const value = await response.json();
+  assert.equal(value.state, 'ready');
+  assert.equal(value.discovery_state, 'ready');
+  assert.equal(value.tool_count, 1);
+  assert.equal(value.default_cwd, '/tmp/project');
+  assert.deepEqual(value.signatures, ['fixture_read()  Read a file.']);
+  assert.match(value.instructions, /POST \/v1\/calls\?wait=2/);
+  assert.match(value.instructions, /Idempotency-Key/);
+  assert.match(value.instructions, /do not probe/);
+  assert.ok(store.resolveCapability(value.capability));
+  const guidance = await (await fetch(`${base}/v1/instructions`, { headers: { authorization: `Bearer ${value.capability}` } })).json();
+  assert.equal(guidance.instructions, value.instructions);
+  assert.deepEqual(events, []);
+  assert.equal((await post('?discover=1')).status, 404);
+});
+
+test('pairing retains access and recovery guidance when optional discovery fails', async t => {
+  const stateDir = mkdtempSync(join(tmpdir(), 'websession-pair-offline-'));
+  t.after(() => rmSync(stateDir, { recursive: true, force: true }));
+  const store = new AdapterStore(stateDir);
+  const pairing = store.issuePairingCode();
+  t.after(() => store.close());
+  const port = await reservePort();
+  await startAdapterServer(t, stateDir, port, { WEBSESSION_ADAPTER_MCP_URL: '' });
+  const response = await fetch(`http://127.0.0.1:${port}/v1/pair?discover=1`, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code: pairing.code }),
+  });
+  assert.equal(response.status, 200);
+  const value = await response.json();
+  assert.equal(value.state, 'ready');
+  assert.equal(value.discovery_state, 'unavailable');
+  assert.equal(value.discovery_error, 'discovery_unavailable');
+  assert.match(value.instructions, /POST \/v1\/calls/);
+  assert.ok(store.resolveCapability(value.capability));
+  assert.equal(store.redeemPairingCode(pairing.code), undefined);
+});
+
+test('discovery cancellation bounds a stalled upstream handshake', async t => {
+  const stateDir = mkdtempSync(join(tmpdir(), 'websession-discovery-abort-'));
+  t.after(() => rmSync(stateDir, { recursive: true, force: true }));
+  const server = createServer((_req, _res) => {});
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  t.after(() => { server.closeAllConnections(); server.close(); });
+  const started = Date.now();
+  await assert.rejects(listMcpTools({
+    mcpUrl: `http://127.0.0.1:${server.address().port}/mcp`, stateDir,
+    callbackUrl: 'http://127.0.0.1:9/callback', signal: AbortSignal.timeout(100),
+  }), /abort|timeout|timed out|closed/i);
+  assert.ok(Date.now() - started < 3000, 'cancellation must not wait for the normal MCP timeout');
 });

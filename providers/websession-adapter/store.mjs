@@ -278,6 +278,14 @@ export class AdapterStore {
     return result.changes === 1;
   }
 
+  updateCapabilityDefaultCwd(id, defaultCwd) {
+    const normalized = defaultCwd === '' ? null : normalizeDefaultCwd(defaultCwd);
+    const result = this.db.prepare(
+      'UPDATE capabilities SET default_cwd = ? WHERE id = ? AND scope = ? AND revoked_ms IS NULL AND expires_ms > ?'
+    ).run(normalized, id, 'main', Date.now());
+    return result.changes === 1 ? normalized : undefined;
+  }
+
   resolveCapability(token) {
     const row = this.db.prepare('SELECT id, scope, expires_ms, revoked_ms, default_cwd FROM capabilities WHERE token_hash = ?').get(sha256(token));
     if (!row || row.scope !== 'main' || row.expires_ms <= Date.now() || row.revoked_ms !== null) return undefined;

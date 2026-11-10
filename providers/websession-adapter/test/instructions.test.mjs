@@ -6,6 +6,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
+import { HTTP_INSTRUCTIONS, compactInstructions, webSessionInstructions } from '../protocol.mjs';
 import { AdapterStore } from '../store.mjs';
 
 test('authenticated WebSession discovery preserves initialization guidance without exposing it anonymously', async t => {
@@ -54,6 +55,8 @@ test('authenticated WebSession discovery preserves initialization guidance witho
   const text = await response.text();
   const line = text.split('\n').find(value => value.startsWith('instructions_json: '));
   assert.equal(JSON.parse(line.slice('instructions_json: '.length)), instructions);
+  assert.ok(!text.includes('POST /v1/calls'));
+  assert.ok(!text.includes('Authorization: Bearer'));
   assert.match(text, /tool_1: fixture_read/);
   const denied = await fetch(`${base}/${'x'.repeat(48)}/tools`);
   assert.equal(denied.status, 404);
@@ -62,6 +65,8 @@ test('authenticated WebSession discovery preserves initialization guidance witho
   const without = await fetch(`${base}/${token}/tools`);
   assert.equal(without.status, 200);
   assert.ok(!(await without.text()).includes('instructions_json:'));
+  const headerInstructions = await (await fetch(`http://127.0.0.1:${port}/v1/instructions`, { headers: { authorization: `Bearer ${token}` } })).json();
+  assert.equal(headerInstructions.instructions, HTTP_INSTRUCTIONS);
   const call = await fetch(`http://127.0.0.1:${port}/v1/calls?wait=1`, {
     method: 'POST',
     headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', 'idempotency-key': 'structured-result' },
@@ -133,15 +138,21 @@ test('authenticated discovery compacts 1MCP guidance and exposes the capability 
   assert.ok(!compacted.includes('filesystem_1mcp_read_file'));
   assert.ok(!compacted.startsWith('# 1MCP'));
   assert.ok(compacted.startsWith('<dev>'));
-  assert.match(compacted, /<local>\nLocal tools\.\n<\/local>$/);
+  assert.match(compacted, /<local>\nLocal tools\.\n<\/local>/);
+  assert.equal(compacted, compactInstructions(instructions));
+  assert.ok(!compacted.includes(HTTP_INSTRUCTIONS));
 
   const instructionResponse = await fetch(`${base}/v1/instructions`, { headers: auth });
   assert.equal(instructionResponse.status, 200);
-  assert.equal((await instructionResponse.json()).instructions, compacted);
+  const httpGuidance = (await instructionResponse.json()).instructions;
+  assert.equal(httpGuidance, webSessionInstructions(compacted));
+  assert.match(httpGuidance, /POST \/v1\/calls\?wait=2/);
+  assert.match(httpGuidance, /Idempotency-Key/);
+  assert.match(httpGuidance, /do not probe endpoint names/);
 
   const snapshot = await (await fetch(`${base}/v1/tools`, { headers: auth })).json();
   assert.equal(snapshot.default_cwd, '/tmp/web-session-work');
-  assert.equal(snapshot.instructions, compacted);
+  assert.equal(snapshot.instructions, httpGuidance);
   assert.deepEqual(snapshot.tools, ['fixture_read']);
 
   const signatures = await (await fetch(`${base}/v1/signatures`, { headers: auth })).json();

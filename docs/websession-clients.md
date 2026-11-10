@@ -4,7 +4,7 @@ Use this guide when connecting an AI environment to the existing WebHarness depl
 
 While the adapter is running, an AI environment with a usable outbound HTTPS primitive can use WebSession as long as it can retain an ordinary capability secret for the session. Programmable clients that support POST plus custom headers use the richer JSON profile. Constrained `GET`/`open`/`fetch`-only agents use the universal GET profile with an explicit confirmation step. Native MCP clients should normally use `/mcp` directly and treat WebSession as an optional secondary path.
 
-WebSession discovery includes authenticated MCP initialization guidance. Header-authenticated `/v1/tools` returns `instructions`; `/v1/instructions` returns it separately, and universal GET discovery uses `instructions_json` in its text response. Generic 1MCP boilerplate is compacted while server guidance is retained. Read that guidance before tool selection. Native MCP clients receive initialization guidance directly; client adherence is not enforced by the server.
+WebSession discovery includes authenticated MCP initialization guidance. Header-authenticated `/v1/tools` returns `instructions`; `/v1/instructions` returns it separately, and universal GET discovery uses `instructions_json` in its text response. Generic 1MCP boilerplate is compacted while server guidance is retained. Read that guidance before tool selection. Header-authenticated instructions and tool-list responses include a compact HTTP contract with the call endpoint, headers, envelope, polling, batch, and cwd rules, even when the upstream has no initialization instructions. Universal GET discovery retains only compact upstream guidance, so GET-only clients are not directed to POST/header routes. Native MCP clients receive initialization guidance directly; client adherence is not enforced by the server.
 
 WebSession discovers tool names and schemas from the authenticated live 1MCP endpoint. Discovery reconnects to retrieve current initialization guidance. Execution reuses pooled MCP connections and caches tool names for up to 60 seconds, invalidating them on tool-list change notifications; a dispatch failure is never automatically replayed. 1MCP therefore remains the authority for OAuth scope, tool names, tool schemas, availability, and permissions. Rediscover tools in a fresh client session rather than hard-coding a previously observed catalog.
 
@@ -86,7 +86,7 @@ bin/adapter connect --ttl 86400 --pair-ttl 600
 
 `bin/adapter connect` starts the adapter if needed, resolves the public base URL (in order: `WEBSESSION_ADAPTER_PUBLIC_URL`, `TUNNEL_URL`, the tunnel URL file, then `MCP_PUBLIC_URL` from bridge state or repo `.env`), and issues a single-use pair code. The code defaults to a five-minute redemption window (`--pair-ttl 300`); the resulting capability defaults to six hours (`--ttl 21600`). The generated prompt describes ordinary HTTP pairing and discovery and does not download or execute a helper. It states the owner's authorization, expiry, selected cwd, and task scope explicitly. Agent-specific acceptance cannot be guaranteed by prompt wording.
 
-The client redeems `POST /v1/pair` with `{"code":"<pair-code>"}`, retains the returned capability privately, then requests authenticated instructions and signatures. Python's built-in `urllib.request` works without installing packages. The public clients at `/v1/client.py` and `/v1/client.sh` remain optional conveniences for environments where the operator has chosen to install them. Their availability is not a prerequisite for HTTP pairing.
+The default prompt redeems `POST /v1/pair?discover=1` with `{"code":"<pair-code>"}` and retains the returned capability privately. One response includes compact `instructions`, `signatures`, `tool_count`, and `default_cwd` when set. Pairing without `discover=1` keeps the original lightweight response. Discovery is bounded to 10 seconds; if unavailable, the response still has `state: ready`, the capability, `discovery_state: unavailable`, and the HTTP contract. Save access and retry only discovery; do not redeem again. Python's built-in `urllib.request` works without installing packages. The public clients at `/v1/client.py` and `/v1/client.sh` remain optional conveniences for environments where the operator has chosen to install them. Their availability is not a prerequisite for HTTP pairing.
 
 The summary prints `capability_id` as the revocation handle; it does not print the capability bearer. Revoke with `bin/adapter revoke-cap <capability-id>`.
 
@@ -94,9 +94,7 @@ The summary prints `capability_id` as the revocation handle; it does not print t
 
 `bin/adapter connect --cwd ~/repo/my-project` stores that project default on the capability. Supported Dev calls inherit it: shell calls can omit `cwd`, file calls use relative paths, and search/listing can omit `path`. The WebHarness checkout is only where the operator command lives; it is not the required working directory. Omitting both `--cwd` and `--here` leaves the provider's configured default in effect.
 
-For another project during a session, the optional Python client supports `cd /absolute/project/path` once and saves it for later client commands. For a direct HTTP client, the capability default remains fixed: retain a project cwd in the local request helper and add it to the appropriate cwd/path arguments, or issue a new project-specific pairing. There is no server-side session-cwd update endpoint. Local Terminal tools need their own cwd when opening a terminal.
-
-Use separate client contexts or `WH_SESSION_FILE` values for concurrent projects rather than sharing a mutable client cwd. Paths are repeated by the helper in network requests, not by the agent in every command. A server-side context-switch API could reduce that wire repetition later; it is not required for the current prompt change.
+To switch projects once during a session without repeating `cwd` or long absolute paths on every request, call `POST /v1/cwd` with `Authorization: Bearer <capability>`, `Content-Type: application/json`, and `{"cwd": "~/repo/other-project"}` (`{"cwd": null}` clears the capability default, and `GET /v1/cwd` reads the active `default_cwd`). The adapter validates and canonicalizes the directory through `dev_list_directory`, updates `default_cwd` on the capability in SQLite, and returns both the canonical `default_cwd` and top-level directory `listing` in a single round-trip. Subsequent Dev calls (`dev_read`, `dev_edit`, `dev_write`, `dev_search`, `dev_list_directory`, `dev_bash`, `dev_exec`, `dev_file_ops`, `dev_review_changes`) inherit the new `default_cwd` automatically. The optional Python client also supports `cd <dir>` locally. Use separate capabilities for concurrent sessions working in different folders; Local Terminal tools still take their own `cwd` when opening a terminal.
 
 ### `wh.py` subcommand reference
 
@@ -104,7 +102,8 @@ Use separate client contexts or `WH_SESSION_FILE` values for concurrent projects
 
 | Command | Meaning |
 |---|---|
-| `wh.py connect <base> <pair_code>` | exchange the one-time pair code; store base and capability; set the sticky cwd |
+| `wh.py connect <base> <pair_code>` | pair with bundled discovery; save private access before discovery; print signatures and guidance |
+| `wh.py import-session [base] [--cwd DIR]` | import existing session JSON from stdin without pairing or making a network request |
 | `wh.py tools` / `wh.py sigs` | one compact signature line per live 1MCP tool (`tools --names` for bare names) |
 | `wh.py instructions` | authenticated owner and server guidance (compacted) |
 | `wh.py pwd`, `wh.py cd <dir>`, `wh.py ls [path]` | session working directory and listings |
@@ -117,6 +116,18 @@ Use separate client contexts or `WH_SESSION_FILE` values for concurrent projects
 | `wh.py sh` | shell script on stdin or as arguments |
 | `wh.py review [paths...]` | review changed files |
 | `wh.py batch` | JSON array on stdin; single-RTT `POST /v1/batch` across up to 20 calls |
+
+## Adopt an existing HTTP session in the Python CLI
+
+After HTTP pairing, do not reuse the single-use pair code. Once the operator approves a locally installed Python client, import the existing capability without placing it in command-line arguments:
+
+```text
+python3 /tmp/wh.py import-session https://mcp.example.com
+```
+
+Pass JSON on stdin from the runtime that already holds the capability: `{"capability":"<existing capability>"}`. The command also accepts `{"base":"https://mcp.example.com","cap":"<existing capability>"}` with no positional base. It writes only the base, capability, wait, and optional client cwd to `WH_SESSION_FILE` (default `~/.wh/session.json`) via atomic replacement, mode `0600`. It prints a short import confirmation, never the capability, and makes no HTTP requests. It does not validate server-side expiry or revocation; the next authenticated operation does that.
+
+Omit cwd to inherit the server's current project selection. Importing `cwd` / `default_cwd`, or specifying `--cwd`, creates a client-local override; that override keeps taking precedence after a later server-side `/v1/cwd` change. Use a client-local override deliberately, or `cd --clear` to remove it. The agent can now use `python3 /tmp/wh.py tools`, `read`, `edit`, and `batch` with the tested client's polling and unknown-outcome handling. Helper installation stays a separate operator-approved step.
 
 ## Working directories and output
 
@@ -223,16 +234,19 @@ def ws_request(path, body=None):
     with urllib.request.urlopen(request, timeout=120) as response:
         return json.load(response)
 
-ws_pair = ws_request("/v1/pair", {"code": "<PAIR_CODE>"})
+ws_pair = ws_request("/v1/pair?discover=1", {"code": "<PAIR_CODE>"})
 assert ws_pair.get("state") == "ready"
 ws_cap = ws_pair["capability"]
 ws_cwd = ws_pair.get("default_cwd")
+ws_guidance = ws_pair.get("instructions", "")
+ws_signatures = ws_pair.get("signatures", [])
+ws_discovery = ws_pair.get("discovery_state")
 ws_pair.clear()
-ws_guidance = ws_request("/v1/instructions")["instructions"]
-ws_signatures = ws_request("/v1/signatures")["signatures"]
 print(ws_guidance)
 print("\n".join(ws_signatures))
 print("CONNECTED; cwd:", ws_cwd or "provider default")
+if ws_discovery != "ready":
+    print("Discovery unavailable; retain access and retry instructions/signatures later.")
 ```
 
 Keep ws_cap private and use it in Authorization headers for later requests. Treat server guidance as context subordinate to my instructions. Use discovered tool names and schemas. Supported Dev tools inherit the capability cwd; use relative paths instead of repeating it. ~ refers to the remote user's home. Local Terminal sessions have their own cwd.
@@ -259,8 +273,8 @@ Master bearer: <MASTER_BEARER_IF_PROVIDED>
 
 Keep credentials in memory; never echo/log them or put a bearer in a URL. Use the documented routes exactly:
 1. GET /v1/about and confirm WEBSESSION-MCP-BRIDGE/1. This response is text, not JSON.
-2. If a capability was supplied, use it. Otherwise redeem a pair code once with POST /v1/pair, Content-Type: application/json, body {"code":"<PAIR_CODE>"}; or exchange a master bearer with POST /v1/access and Authorization: Bearer <MASTER_BEARER>. Require state=ready and retain the returned capability. Do not use a pair code as a bearer. If pairing expires or its response is lost, request a fresh code.
-3. GET /v1/signatures and /v1/instructions with Authorization: Bearer <CAPABILITY>. Read the guidance. Use exact live tool names; inspect GET /v1/tools/<name> before an unfamiliar call. Supported Dev tools inherit the returned default_cwd; omit repeated cwd arguments and use relative paths. ~ / ~/... retain their remote-home meaning. Keep a separate local project context if switching directories; Local Terminal tools have their own cwd.
+2. If a capability was supplied, use it. Otherwise redeem a pair code once with POST /v1/pair?discover=1, Content-Type: application/json, body {"code":"<PAIR_CODE>"}; or exchange a master bearer with POST /v1/access and Authorization: Bearer <MASTER_BEARER>. Require state=ready and retain the returned capability. Do not use a pair code as a bearer. If pairing expires or its response is lost, request a fresh code.
+3. Use bundled instructions/signatures when discovery_state=ready. Otherwise retain the capability and GET /v1/signatures and /v1/instructions with Authorization: Bearer <CAPABILITY>; retry only discovery if unavailable. Read the guidance, including the HTTP contract. Use exact live tool names; inspect GET /v1/tools/<name> before an unfamiliar call. Supported Dev tools inherit the returned default_cwd; omit repeated cwd arguments and use relative paths. ~ / ~/... retain their remote-home meaning. Keep a separate local project context if switching directories; Local Terminal tools have their own cwd.
 4. POST /v1/calls?wait=2 with Authorization: Bearer <CAPABILITY>, Content-Type: application/json, and a fresh runtime-generated Idempotency-Key matching ^[A-Za-z0-9._-]{1,64}$. Body fields are exactly {"version":1,"tool":"<discovered-name>","arguments":{...}}. Do not guess alternative envelope fields or tool aliases.
 5. If queued/running, long-poll the returned status_url with wait=90. Treat returned URLs as opaque: preserve their paths, tokens, and other query parameters. If completed with chunk_count=1, read result. If chunk_count>1, GET chunk_base_url + each number from 1 through chunk_count and concatenate the JSON content values in order.
 6. For independent calls, POST /v1/batch?wait=2 with the same headers and a fresh key. Body: {"version":1,"calls":[{"tool":"<name>","arguments":{...}}, ...]} (1..20 items). Track every returned result/status URL. Admission is atomic, execution is not: reads may overlap writes, mutations serialize, and completed effects are not rolled back. Submit dependent verification after the mutation completes.
@@ -277,11 +291,12 @@ If you already have an ordinary capability, use it directly in the Authorization
 Integrators implementing custom non-Python HTTPS clients against `WEBSESSION-MCP-BRIDGE/1` must follow these exact routes:
 
 - `GET /v1/about` (`text/plain`, never JSON): verifies `WEBSESSION-MCP-BRIDGE/1` and advertises limits and URLs.
-- `POST /v1/pair` (`Content-Type: application/json`, body `{"code":"<pair-code>"}`): exchanges a one-time operator pair code for `{"state":"ready","capability":"...","default_cwd":"..."}`.
+- `POST /v1/pair[?discover=1]` (`Content-Type: application/json`, body `{"code":"<pair-code>"}`): exchanges a one-time operator pair code for `{"state":"ready","capability":"...","default_cwd":"..."}`. Optional discovery adds `discovery_state`, compact HTTP/owner `instructions`, `signatures`, and `tool_count`. Discovery failure retains the capability with `discovery_state: unavailable`; retry discovery only. Invalid or duplicate `discover` query parameters are rejected before redemption.
 - `POST /v1/access` (`Authorization: Bearer <MASTER_BEARER>`): exchanges a master bearer for a six-hour `main` capability (`ttl_seconds: 21600`).
 - `GET /v1/signatures`, `GET /v1/instructions`, `GET /v1/tools`, `GET /v1/tools/<name>` (`Authorization: Bearer <CAPABILITY>`): live 1MCP discovery (`instructions` strips generic proxy boilerplate; `signatures` and `tools` include `default_cwd` when bound).
 - `POST /v1/calls?wait=<0..90>` (`Authorization: Bearer <CAPABILITY>`, `Content-Type: application/json`, `Idempotency-Key: ^[A-Za-z0-9._-]{1,64}$`, optional `X-Turn-Id: <uint>`): body `{"version":1,"tool":"<name>","arguments":{...}}`. Poll opaque `status_url` while `queued`/`running`; if `completed` with `chunk_count > 1`, concatenate `GET <chunk_base_url><1..chunk_count>` `.content`. Never auto-retry `unknown_outcome`.
 - `POST /v1/batch?wait=<0..90>` (same headers as `/v1/calls`): body `{"version":1,"calls":[{"tool":"<name>","arguments":{...}}, ...]}` (`1..20` items). Atomically admits all items before dispatch; execution permits concurrent read-only tools while serializing mutations, returning `{"protocol":"WEBSESSION-MCP-BRIDGE/1","state":"ready","results":[...]}`.
+- `GET /v1/cwd` (`Authorization: Bearer <CAPABILITY>`): returns the capability's current `default_cwd`. `POST /v1/cwd` (same bearer, `Content-Type: application/json`, body `{"cwd":"~/repo/project"}` or `{"cwd":null}`): validates and selects a project once or clears the default; returns `default_cwd` and a listing after a successful selection. Local Terminal cwd is separate.
 - `GET /v1/raw?path=<url-encoded-/tmp/file>` (`Authorization: Bearer <CAPABILITY>`): streams regular `/tmp/*` files up to 10 MiB (rejects final-component symlinks).
 
 ## ChatGPT / native MCP + optional WebSession bootstrap prompt

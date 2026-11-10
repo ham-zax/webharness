@@ -97,7 +97,7 @@ export class OperationCore {
     return closeMcpPools();
   }
 
-  async permittedTools(capabilityToken) {
+  async permittedTools(capabilityToken, { signal } = {}) {
     const principal = this.store.resolveCapability(capabilityToken);
     if (!principal) return undefined;
     if (!this.mcpUrl) throw new Error('adapter MCP URL is unavailable');
@@ -105,11 +105,73 @@ export class OperationCore {
       mcpUrl: this.mcpUrl,
       stateDir: this.store.stateDir,
       callbackUrl: this.callbackUrl,
+      signal,
     });
     for (const tool of listed.tools) {
       if (tool?.annotations?.readOnlyHint === true && typeof tool.name === 'string') this._readOnlyTools.add(tool.name);
     }
     return { principal, tools: listed.tools, instructions: listed.instructions };
+  }
+
+  getDefaultCwd(capabilityToken) {
+    const principal = this.store.resolveCapability(capabilityToken);
+    if (!principal) return { unauthorized: true };
+    return { defaultCwd: principal.defaultCwd };
+  }
+
+  async setDefaultCwd(capabilityToken, requestedCwd) {
+    const principal = this.store.resolveCapability(capabilityToken);
+    if (!principal) return { unauthorized: true };
+    if (requestedCwd === null || requestedCwd === '') {
+      const updated = this.store.updateCapabilityDefaultCwd(principal.id, null);
+      if (updated === undefined) return { unauthorized: true };
+      return { defaultCwd: null };
+    }
+    if (typeof requestedCwd !== 'string' || requestedCwd.includes('\0')) {
+      return { invalidCwd: true, message: 'cwd must be a non-empty string without NUL bytes, or null to clear' };
+    }
+    const candidate = (requestedCwd.startsWith('/') || requestedCwd === '~' || requestedCwd.startsWith('~/'))
+      ? requestedCwd
+      : (principal.defaultCwd ? posix.resolve(principal.defaultCwd, requestedCwd) : requestedCwd);
+    if (!this.mcpUrl) throw new Error('adapter MCP URL is unavailable');
+    const listed = await listMcpTools({
+      mcpUrl: this.mcpUrl,
+      stateDir: this.store.stateDir,
+      callbackUrl: this.callbackUrl,
+    });
+    if (listed.tools.some(tool => tool?.name === 'dev_list_directory')) {
+      let result;
+      try {
+        result = await callMcpTool(
+          { mcpUrl: this.mcpUrl, stateDir: this.store.stateDir, callbackUrl: this.callbackUrl, timeoutMs: this.toolTimeoutMs },
+          'dev_list_directory',
+          { path: candidate, limit: 30 },
+        );
+      } catch (error) {
+        return { invalidCwd: true, message: boundedError(error) };
+      }
+      let listing;
+      try {
+        listing = renderToolResult(result);
+      } catch (error) {
+        return { invalidCwd: true, message: boundedError(error) };
+      }
+      const firstLine = listing.split('\n', 1)[0] || '';
+      const canonical = firstLine.startsWith('dir: ') ? firstLine.slice('dir: '.length).trim() : candidate;
+      if (!canonical || canonical.includes('\0')) {
+        return { invalidCwd: true, message: 'unable to resolve canonical directory path' };
+      }
+      const updated = this.store.updateCapabilityDefaultCwd(principal.id, canonical);
+      if (updated === undefined) return { unauthorized: true };
+      return { defaultCwd: canonical, listing };
+    }
+    if (!candidate.startsWith('/')) {
+      return { invalidCwd: true, message: 'cwd must be an absolute path when dev_list_directory is unavailable' };
+    }
+    const normalized = posix.normalize(candidate);
+    const updated = this.store.updateCapabilityDefaultCwd(principal.id, normalized);
+    if (updated === undefined) return { unauthorized: true };
+    return { defaultCwd: normalized };
   }
 
   submit(capabilityToken, clientNonce, parsedRequest, sourceProfile, turnId = null, { deferSchedule = false } = {}) {

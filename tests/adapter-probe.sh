@@ -103,7 +103,7 @@ test "$REVOKED_HTTP" = 404
 CONNECT_PROMPT="$(adapter connect --cwd "$TMP/home" --ttl 120 --pair-ttl 60)"
 grep -Fq 'WebSession pairing ready' <<<"$CONNECT_PROMPT"
 grep -Fq "POST $BASE/v1/pair" <<<"$CONNECT_PROMPT"
-if grep -Fq '/tmp/wh.py' <<<"$CONNECT_PROMPT"; then
+if grep -Eq 'urlopen|/v1/client\.(py|sh)' <<<"$CONNECT_PROMPT"; then
   echo 'default pairing prompt must not bootstrap a downloaded executable' >&2
   exit 1
 fi
@@ -116,15 +116,14 @@ import json
 import sys
 import urllib.request
 base, code = sys.argv[1:]
-request = urllib.request.Request(base + '/v1/pair', data=json.dumps({'code': code}).encode(), headers={'Content-Type': 'application/json'}, method='POST')
+request = urllib.request.Request(base + '/v1/pair?discover=1', data=json.dumps({'code': code}).encode(), headers={'Content-Type': 'application/json'}, method='POST')
 with urllib.request.urlopen(request, timeout=30) as response:
     paired = json.load(response)
 assert paired['state'] == 'ready'
-request = urllib.request.Request(base + '/v1/signatures', headers={'Authorization': 'Bearer ' + paired['capability']})
-with urllib.request.urlopen(request, timeout=30) as response:
-    discovery = json.load(response)
-assert discovery['state'] == 'ready'
-assert len(discovery['signatures']) == 4
+assert paired['discovery_state'] == 'ready'
+assert len(paired['signatures']) == 4
+assert 'POST /v1/calls?wait=2' in paired['instructions']
+assert 'Idempotency-Key' in paired['instructions']
 print('CONNECTED')
 print('cwd: ' + paired['default_cwd'])
 PYTHON

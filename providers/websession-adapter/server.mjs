@@ -4,7 +4,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { createServer } from 'node:http';
 import { OperationCore } from './core.mjs';
-import { compactInstructions, decodeToolName, parseToolName, toolListSnapshot, enhancedSnapshot, parseWait, prefersPlainText, parseCapabilityToken, parseClientNonce, parseRequest, parseUniversalRequest, renderBridgeError, renderChunk, renderOperation, toolSignature, upstreamUnavailable } from './protocol.mjs';
+import { compactInstructions, webSessionInstructions, decodeToolName, parseToolName, toolListSnapshot, enhancedSnapshot, parseWait, prefersPlainText, parseCapabilityToken, parseClientNonce, parseRequest, parseUniversalRequest, renderBridgeError, renderChunk, renderOperation, toolSignature, upstreamUnavailable } from './protocol.mjs';
 
 const host = process.env.WEBSESSION_ADAPTER_HOST || '127.0.0.1';
 const port = Number.parseInt(process.env.WEBSESSION_ADAPTER_PORT || '3051', 10);
@@ -182,6 +182,7 @@ async function handleUniversalGet(req, res, parts) {
       'long_poll_max_seconds: 90',
       `call_url: ${base}/v1/calls`,
       `batch_url: ${base}/v1/batch`,
+      `cwd_url: ${base}/v1/cwd`,
       'call_body: {"version":1,"tool":"<tool_name>","arguments":{...}}',
       'call_headers: Authorization: Bearer <capability>; Content-Type: application/json; Idempotency-Key: <fresh nonce>',
       'idempotency_key: Generate in your runtime (Python: uuid.uuid4().hex or secrets.token_urlsafe(16)); must match ^[A-Za-z0-9._-]{1,64}$. Do not rely on uuidgen or /proc/sys/kernel/random/uuid in a sandbox. Prefer the served Python client.',
@@ -372,7 +373,7 @@ async function handleHeaderDiscovery(req, res, parts) {
   }
   const text = prefersPlainText(req.headers.accept);
   if (parts[1] === 'instructions') {
-    const instructions = compactInstructions(access.instructions) || '';
+    const instructions = webSessionInstructions(access.instructions) || '';
     if (text) sendPlainBody(res, instructions);
     else sendJson(res, 200, { protocol: 'WEBSESSION-MCP-BRIDGE/1', state: 'ready', instructions });
   } else if (parts[1] === 'signatures') {
@@ -694,7 +695,85 @@ function handleMasterAccess(req, res) {
   });
 }
 
-async function handlePair(req, res) {
+async function handleCwd(req, res) {
+  const authorization = req.headers.authorization || '';
+  if (typeof authorization !== 'string' || !authorization.startsWith('Bearer ')) {
+    sendJson(res, 401, { protocol: 'WEBSESSION-MCP-BRIDGE/1', state: 'rejected', code: 'authorization_required' });
+    return;
+  }
+  const capability = parseCapabilityToken(authorization.slice('Bearer '.length));
+  if (!capability) {
+    sendJson(res, 401, { protocol: 'WEBSESSION-MCP-BRIDGE/1', state: 'rejected', code: 'authorization_required' });
+    return;
+  }
+  if (req.method === 'GET') {
+    const current = operationCore.getDefaultCwd(capability);
+    if (current.unauthorized) {
+      sendJson(res, 401, { protocol: 'WEBSESSION-MCP-BRIDGE/1', state: 'rejected', code: 'authorization_required' });
+      return;
+    }
+    sendJson(res, 200, {
+      protocol: 'WEBSESSION-MCP-BRIDGE/1',
+      state: 'ready',
+      default_cwd: current.defaultCwd,
+    });
+    return;
+  }
+
+  const contentType = String(req.headers['content-type'] || '').split(';', 1)[0].trim().toLowerCase();
+  if (contentType !== 'application/json') {
+    sendJson(res, 415, { protocol: 'WEBSESSION-MCP-BRIDGE/1', state: 'rejected', code: 'content_type_required' });
+    return;
+  }
+  let cwdValue;
+  try {
+    const body = await readBoundedBody(req, 4096);
+    const parsed = JSON.parse(body.toString('utf8'));
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('cwd body must be an object');
+    const keys = Object.keys(parsed);
+    if (keys.length !== 1 || keys[0] !== 'cwd') throw new Error('cwd body must contain only cwd');
+    if (parsed.cwd !== null && typeof parsed.cwd !== 'string') throw new Error('cwd must be a string or null');
+    cwdValue = parsed.cwd;
+  } catch (error) {
+    const tooLarge = error.message.startsWith('body exceeds ');
+    sendJson(res, tooLarge ? 413 : 400, {
+      protocol: 'WEBSESSION-MCP-BRIDGE/1',
+      state: 'rejected',
+      code: tooLarge ? 'body_too_large' : 'invalid_request',
+      ...(tooLarge ? {} : { message: error.message }),
+    });
+    return;
+  }
+
+  const updated = await operationCore.setDefaultCwd(capability, cwdValue);
+  if (updated.unauthorized) {
+    sendJson(res, 401, { protocol: 'WEBSESSION-MCP-BRIDGE/1', state: 'rejected', code: 'authorization_required' });
+    return;
+  }
+  if (updated.invalidCwd) {
+    sendJson(res, 400, {
+      protocol: 'WEBSESSION-MCP-BRIDGE/1',
+      state: 'rejected',
+      code: 'invalid_cwd',
+      message: updated.message,
+    });
+    return;
+  }
+  sendJson(res, 200, {
+    protocol: 'WEBSESSION-MCP-BRIDGE/1',
+    state: 'ready',
+    default_cwd: updated.defaultCwd,
+    ...(updated.listing ? { listing: updated.listing } : {}),
+  });
+}
+
+async function handlePair(req, res, url) {
+  const discoverValues = url.searchParams.getAll('discover');
+  if (discoverValues.length > 1 || (discoverValues.length === 1 && !['0', '1'].includes(discoverValues[0]))) {
+    sendJson(res, 400, { protocol: 'WEBSESSION-MCP-BRIDGE/1', state: 'rejected', code: 'invalid_discover' });
+    return;
+  }
+  const discover = discoverValues[0] === '1';
   const contentType = String(req.headers['content-type'] || '').split(';', 1)[0].trim().toLowerCase();
   if (contentType !== 'application/json') {
     sendJson(res, 415, { protocol: 'WEBSESSION-MCP-BRIDGE/1', state: 'rejected', code: 'content_type_required' });
@@ -726,9 +805,30 @@ async function handlePair(req, res) {
     sendJson(res, 404, { protocol: 'WEBSESSION-MCP-BRIDGE/1', state: 'rejected', code: 'not_found' });
     return;
   }
+  let discovery = {};
+  if (discover) {
+    try {
+      const access = await operationCore.permittedTools(redeemed.token, { signal: AbortSignal.timeout(10_000) });
+      if (!access) throw new Error('capability is no longer active');
+      discovery = {
+        discovery_state: 'ready',
+        instructions: webSessionInstructions(access.instructions),
+        signatures: access.tools.map(toolSignature),
+        tool_count: access.tools.length,
+      };
+    } catch {
+      // Redemption already succeeded. Return access even if MCP discovery is unavailable.
+      discovery = {
+        discovery_state: 'unavailable',
+        discovery_error: 'discovery_unavailable',
+        instructions: webSessionInstructions(),
+      };
+    }
+  }
   sendJson(res, 200, {
     protocol: 'WEBSESSION-MCP-BRIDGE/1',
     state: 'ready',
+    ...discovery,
     capability: redeemed.token,
     scope: redeemed.scope,
     expires_at: new Date(redeemed.expiresMs).toISOString(),
@@ -939,8 +1039,13 @@ const server = createServer((req, res) => {
     return;
   }
 
+  if ((req.method === 'GET' || req.method === 'POST') && url.pathname === '/v1/cwd') {
+    handleCwd(req, res).catch(error => sendFailure(res, error));
+    return;
+  }
+
   if (req.method === 'POST' && url.pathname === '/v1/pair') {
-    handlePair(req, res).catch(error => sendFailure(res, error));
+    handlePair(req, res, url).catch(error => sendFailure(res, error));
     return;
   }
 

@@ -29,10 +29,25 @@ export function compactInstructions(instructions) {
   return '';
 }
 
+export const HTTP_INSTRUCTIONS = [
+  'WebSession HTTP contract:',
+  'Use only documented routes; do not probe endpoint names. Send User-Agent: websession-client/1.0.',
+  'GET /v1/tools/<name> retrieves a schema. Invoke every tool via POST /v1/calls?wait=2 with Authorization: Bearer <capability>, Content-Type: application/json, and Idempotency-Key: <fresh UUID hex>. Body: {"version":1,"tool":"<discovered-name>","arguments":{...}}.',
+  'Poll the returned status_url verbatim while queued/running (optional wait=90). For completed, read result or concatenate chunk_base_url + 1..chunk_count. Never automatically repeat a mutation after a lost submission response or unknown_outcome.',
+  'POST /v1/batch?wait=2 uses the same headers and {"version":1,"calls":[{"tool":"<name>","arguments":{...}}]} (1..20 independent calls). Reads may overlap writes; verify after mutations complete.',
+  'GET /v1/cwd reads project context; POST /v1/cwd with the bearer and JSON {"cwd":"/project"} selects it once ({"cwd":null} clears it). Supported Dev calls inherit it; use relative paths. Local Terminal has its own cwd.',
+].join('\n');
+
+export function webSessionInstructions(instructions) {
+  const compacted = compactInstructions(instructions);
+  return typeof compacted === 'string' && compacted
+    ? `${compacted}\n\n${HTTP_INSTRUCTIONS}`
+    : HTTP_INSTRUCTIONS;
+}
+
 export function toolListSnapshot(tools, instructions = undefined, defaultCwd = undefined) {
   const value = { protocol: 'WEBSESSION-MCP-BRIDGE/1', state: 'ready', tool_count: tools.length, tools: tools.map(tool => tool.name) };
-  const compacted = compactInstructions(instructions);
-  if (compacted) value.instructions = compacted;
+  value.instructions = webSessionInstructions(instructions);
   if (defaultCwd) value.default_cwd = defaultCwd;
   return value;
 }

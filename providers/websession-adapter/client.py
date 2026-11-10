@@ -12,6 +12,7 @@ Environment:
 
 Usage:
   client.py connect BASE PAIR_CODE [--cwd DIR]
+  client.py import-session [BASE] [--cwd DIR]  # session JSON on stdin
   client.py about | tools [--names] | sigs | instructions | schema TOOL
   client.py pwd | cd DIR | cd --clear | ls [PATH] [--limit N]
   client.py read PATH [OFFSET] [LIMIT] [--outline] | read --targets [JSON|@FILE|-]
@@ -48,7 +49,7 @@ OPTIONAL_PATH_CWD_TOOLS = ("dev_list_directory", "dev_search")
 PATH_RESOLVE_TOOLS = ("dev_read", "dev_list_directory", "dev_search", "dev_write")
 USAGE = (
     "usage: client.py connect BASE CODE [--cwd DIR]|about|tools [--names]|sigs|instructions|"
-    "schema TOOL|pwd|cd DIR|ls [PATH]|read PATH [OFFSET] [LIMIT] [--outline]|"
+    "schema TOOL|import-session [BASE]|pwd|cd DIR|ls [PATH]|read PATH [OFFSET] [LIMIT] [--outline]|"
     "rg PATTERN [PATH]|edit [JSON|@FILE|-]|write PATH|review [PATH...]|"
     "batch [JSON|@FILE|-]|call TOOL [JSON|@FILE|-]|sh COMMAND|sh -"
 )
@@ -320,8 +321,8 @@ def signatures_list(base=None, cap=None):
     return request_json(target_base + "/v1/signatures", target_cap)
 
 
-def instructions_text():
-    data = request_json(base_url() + "/v1/instructions", capability())
+def instructions_text(base=None, cap=None):
+    data = request_json((base or base_url()).rstrip("/") + "/v1/instructions", cap or capability())
     value = data.get("instructions", "")
     return value if isinstance(value, str) else ""
 
@@ -441,7 +442,7 @@ def cmd_connect(args):
     if not target_base.startswith("http") or not pair_code:
         fail("usage: client.py connect BASE PAIR_CODE [--cwd DIR]")
     paired = request_json(
-        target_base + "/v1/pair",
+        target_base + "/v1/pair?discover=1",
         cap=None,
         method="POST",
         body={"code": pair_code},
@@ -453,20 +454,86 @@ def cmd_connect(args):
     cwd = explicit_cwd if explicit_cwd is not None else paired.get("default_cwd")
     if cwd is not None and (not isinstance(cwd, str) or not cwd):
         cwd = None
-    sig_data = signatures_list(target_base, cap)
-    sigs = sig_data.get("signatures", []) if isinstance(sig_data, dict) else []
-    if cwd is None and isinstance(sig_data, dict) and isinstance(sig_data.get("default_cwd"), str):
-        cwd = sig_data["default_cwd"] or None
     session = {"base": target_base, "cap": cap, "wait": 2}
     if cwd:
         session["cwd"] = cwd
+    # Persist access before optional discovery: the single-use code is already redeemed.
     save_session(session)
+    sig_data = paired
+    guidance = paired.get("instructions")
+    if "discovery_state" not in paired:
+        sig_data = signatures_list(target_base, cap)
+        guidance = instructions_text(target_base, cap)
+    sigs = sig_data.get("signatures") if isinstance(sig_data, dict) else None
+    if cwd is None and isinstance(sig_data, dict) and isinstance(sig_data.get("default_cwd"), str):
+        cwd = sig_data["default_cwd"] or None
+        if cwd:
+            session["cwd"] = cwd
+            save_session(session)
     print("CONNECTED")
     print("base: %s" % target_base)
     print("cwd: %s" % (cwd if cwd else "(default)"))
-    print("tools: %d" % len(sigs))
-    for line in sigs:
-        print(line)
+    print("tools: %s" % (len(sigs) if isinstance(sigs, list) else "unavailable"))
+    if isinstance(sigs, list):
+        for line in sigs:
+            print(line)
+    if isinstance(guidance, str) and guidance:
+        print(guidance)
+    if paired.get("discovery_state") == "unavailable":
+        print("Session saved; discovery unavailable. Retry tools/instructions later; do not pair again.", file=sys.stderr)
+
+
+def cmd_import_session(args):
+    usage = "usage: client.py import-session [BASE] [--cwd DIR] < session.json"
+    positional = []
+    explicit_cwd = None
+    index = 0
+    while index < len(args):
+        if args[index] == "--cwd":
+            if index + 1 >= len(args):
+                fail(usage)
+            explicit_cwd = args[index + 1]
+            index += 2
+        elif args[index].startswith("-"):
+            fail(usage)
+        else:
+            positional.append(args[index])
+            index += 1
+    if len(positional) > 1:
+        fail(usage)
+    data = load_json_source(None)
+    if not isinstance(data, dict):
+        fail("session input must be a JSON object")
+    base = positional[0] if positional else data.get("base")
+    if not isinstance(base, str):
+        fail("session base must be an HTTP(S) URL")
+    try:
+        parsed = urllib.parse.urlsplit(base)
+        _ = parsed.port  # urlsplit validates malformed ports lazily.
+        valid_base = (parsed.scheme in ("http", "https") and parsed.hostname
+                      and "@" not in parsed.netloc
+                      and not parsed.query and not parsed.fragment
+                      and not any(ord(char) <= 32 for char in base))
+    except ValueError:
+        valid_base = False
+    if not valid_base:
+        fail("session base must be an HTTP(S) URL without credentials, query, or fragment")
+    cap = data.get("cap", data.get("capability"))
+    if not isinstance(cap, str) or re.fullmatch(r"[A-Za-z0-9_-]{43}", cap) is None:
+        fail("session input requires a valid capability in cap or capability")
+    cwd = explicit_cwd if explicit_cwd is not None else data.get("cwd", data.get("default_cwd"))
+    if cwd is not None and (not isinstance(cwd, str) or not cwd or "\0" in cwd):
+        fail("session cwd must be a non-empty string without NUL bytes")
+    wait = data.get("wait", 2)
+    if type(wait) is not int or not 0 <= wait <= MAX_WAIT_SECONDS:
+        fail("session wait must be an integer from 0 to 90")
+    session = {"base": base.rstrip("/"), "cap": cap, "wait": wait}
+    if cwd is not None:
+        session["cwd"] = cwd
+    save_session(session)
+    print("SESSION_IMPORTED")
+    print("base: %s" % session["base"])
+    print("cwd: %s" % (cwd or "(default)"))
 
 
 def cmd_cd(args):
@@ -802,6 +869,8 @@ def main(argv):
             print(text, end="" if text.endswith("\n") else "\n")
     elif command == "schema" and len(rest) == 1:
         print(json.dumps(schema(rest[0]), indent=2))
+    elif command == "import-session":
+        cmd_import_session(rest)
     elif command == "connect":
         cmd_connect(rest)
     elif command == "pwd" and not rest:

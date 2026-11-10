@@ -5,7 +5,7 @@ import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { parseRequest, parseToolName, toolListSnapshot, toolSignature } from '../protocol.mjs';
+import { HTTP_INSTRUCTIONS, webSessionInstructions, parseRequest, parseToolName, toolListSnapshot, toolSignature } from '../protocol.mjs';
 
 const client = new URL('../client.sh', import.meta.url);
 const clientPython = new URL('../client.py', import.meta.url);
@@ -21,9 +21,9 @@ test('discovery tool names share request validation and snapshots expose names a
     assert.throws(() => parseRequest({ version: 1, tool: name, arguments: {} }), /invalid tool name/);
   }
   const tools = [{ name: 'echo', inputSchema: {} }, { name: 'sleep', inputSchema: {} }];
-  const expected = { protocol: 'WEBSESSION-MCP-BRIDGE/1', state: 'ready', tool_count: 2, tools: ['echo', 'sleep'] };
+  const expected = { protocol: 'WEBSESSION-MCP-BRIDGE/1', state: 'ready', tool_count: 2, tools: ['echo', 'sleep'], instructions: HTTP_INSTRUCTIONS };
   assert.deepEqual(toolListSnapshot(tools), expected);
-  assert.deepEqual(toolListSnapshot(tools, 'Use carefully'), { ...expected, instructions: 'Use carefully' });
+  assert.deepEqual(toolListSnapshot(tools, 'Use carefully'), { ...expected, instructions: webSessionInstructions('Use carefully') });
   assert.deepEqual(toolListSnapshot([], ''), { ...expected, tool_count: 0, tools: [] });
 });
 
@@ -653,6 +653,9 @@ test('python client connect exchanges pair code, writes 0600 session file withou
   assert.equal(connected.stdout.includes(issuedSecret), false);
   assert.equal(connected.stderr.includes(issuedSecret), false);
   assert.match(connected.stdout, /^CONNECTED\nbase: http:\/\/127\.0\.0\.1:[0-9]+\ncwd: \/home\/ubuntu\/repo\/webharness\ntools: 2\ndev_read/);
+  assert.match(connected.stdout, /<dev>\nSafe policy\n<\/dev>/, 'legacy discovery includes guidance as well as signatures');
+  const legacyGuidance = requests.find(r => r.path === '/v1/instructions');
+  assert.equal(legacyGuidance.headers.authorization, `Bearer ${issuedSecret}`);
   assert.equal(statSync(sessionFile).mode & 0o777, 0o600);
   const saved = JSON.parse(readFileSync(sessionFile, 'utf8'));
   assert.equal(saved.cap, issuedSecret);
@@ -852,4 +855,72 @@ test('python client harness subcommands resolve sticky cwd, accept stdin payload
 
   const cleared = await runPythonInput(['cd', '--clear'], env);
   assert.equal(cleared.stdout, 'cwd: (default)\n');
+});
+
+test('Python connect uses one bundled request and preserves a session when discovery is unavailable', async t => {
+  const dir = mkdtempSync(join(tmpdir(), 'wh-bundled-session-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const sessionFile = join(dir, 'session.json');
+  const secret = 'b'.repeat(43);
+  const { base, requests } = await pythonFixture(t, entry => {
+    assert.equal(entry.method, 'POST');
+    assert.equal(entry.path, '/v1/pair');
+    assert.equal(entry.query.get('discover'), '1');
+    const unavailable = JSON.parse(entry.body).code === 'offline';
+    return {
+      state: 'ready', capability: secret, default_cwd: '/project',
+      discovery_state: unavailable ? 'unavailable' : 'ready',
+      instructions: 'Use POST /v1/calls; do not probe routes.',
+      ...(unavailable ? { discovery_error: 'discovery_unavailable' } : { signatures: ['dev_read(path: string)'] }),
+    };
+  });
+  const env = { WH_SESSION_FILE: sessionFile, WS_BASE: '', WS_CAP: '' };
+  const connected = await runPythonInput(['connect', base, 'ready'], env);
+  assert.equal(connected.status, 0, connected.stderr);
+  assert.equal(requests.length, 1, 'bundled setup requires just one HTTP request');
+  assert.match(connected.stdout, /CONNECTED[\s\S]*tools: 1[\s\S]*POST \/v1\/calls/);
+  assert.equal(JSON.parse(readFileSync(sessionFile, 'utf8')).cap, secret);
+  const offline = await runPythonInput(['connect', base, 'offline'], env);
+  assert.equal(offline.status, 0, offline.stderr);
+  assert.equal(requests.length, 2, 'failed discovery must not trigger another pairing or lookup');
+  assert.match(offline.stdout, /CONNECTED[\s\S]*tools: unavailable/);
+  assert.match(offline.stderr, /Session saved.*do not pair again/);
+  assert.equal(statSync(sessionFile).mode & 0o777, 0o600);
+  assert.equal(JSON.parse(readFileSync(sessionFile, 'utf8')).cap, secret);
+  for (const result of [connected, offline]) assert.ok(!(result.stdout + result.stderr).includes(secret));
+});
+
+test('Python import-session privately adopts redeemed access without a network request', async t => {
+  const dir = mkdtempSync(join(tmpdir(), 'wh-import-session-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const sessionFile = join(dir, 'session.json');
+  writeFileSync(sessionFile, '{}', { mode: 0o644 });
+  const { base, requests } = await pythonFixture(t, (_entry, fixtureBase) => completed('project-ready', fixtureBase));
+  const env = { WH_SESSION_FILE: sessionFile, WS_BASE: '', WS_CAP: '' };
+  const secret = 'i'.repeat(43);
+  const imported = await runPythonInput(['import-session', base], env, JSON.stringify({ capability: secret, default_cwd: '/project', instructions: 'not session data' }));
+  assert.equal(imported.status, 0, imported.stderr);
+  assert.match(imported.stdout, /SESSION_IMPORTED/);
+  assert.ok(!(imported.stdout + imported.stderr).includes(secret));
+  assert.equal(requests.length, 0);
+  assert.equal(statSync(sessionFile).mode & 0o777, 0o600);
+  assert.deepEqual(JSON.parse(readFileSync(sessionFile, 'utf8')), { base, cap: secret, cwd: '/project', wait: 2 });
+  const called = await runPythonInput(['sh', 'pwd'], env);
+  assert.equal(called.status, 0, called.stderr);
+  assert.equal(called.stdout, 'project-ready\n');
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].headers.authorization, `Bearer ${secret}`);
+  assert.equal(JSON.parse(requests[0].body).arguments.cwd, '/project');
+
+  const inputs = [[], { base, cap: 'invalid' }, { base: 'https://secret@example.com', cap: secret }, { base: 'https://@example.com', cap: secret }, { base: 'https://example.com:bad', cap: secret }, { base: 'https://example.com:99999', cap: secret }, { base, cap: secret, cwd: '' }, { base, cap: secret, wait: true }];
+  for (const input of inputs) {
+    const rejected = await runPythonInput(['import-session'], env, JSON.stringify(input));
+    assert.equal(rejected.status, 1);
+    assert.ok(!(rejected.stdout + rejected.stderr).includes(secret));
+    assert.equal(JSON.parse(readFileSync(sessionFile, 'utf8')).cap, secret);
+  }
+  const overridden = await runPythonInput(['import-session', '--cwd', '/other'], env, JSON.stringify({ base, cap: secret }));
+  assert.equal(overridden.status, 0, overridden.stderr);
+  assert.equal(JSON.parse(readFileSync(sessionFile, 'utf8')).cwd, '/other');
+  assert.equal(requests.length, 1);
 });

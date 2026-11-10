@@ -20,7 +20,7 @@ function makeProvider({ stateDir, callbackUrl }) {
   });
 }
 
-export async function connectMcp({ mcpUrl, stateDir, callbackUrl }) {
+export async function connectMcp({ mcpUrl, stateDir, callbackUrl, signal }) {
   const provider = makeProvider({ stateDir, callbackUrl });
   const transport = new StreamableHTTPClientTransport(new URL(mcpUrl), {
     authProvider: provider,
@@ -32,9 +32,13 @@ export async function connectMcp({ mcpUrl, stateDir, callbackUrl }) {
   });
   const client = new Client({ name: 'websession-adapter', version: '0.1.0' }, { capabilities: {} });
 
+  const onAbort = () => { transport.close().catch(() => {}); };
+  signal?.addEventListener('abort', onAbort, { once: true });
   try {
-    await client.connect(transport);
+    signal?.throwIfAborted();
+    await client.connect(transport, { signal });
   } catch (error) {
+    signal?.removeEventListener('abort', onAbort);
     await transport.close().catch(() => {});
     throw error;
   }
@@ -42,6 +46,7 @@ export async function connectMcp({ mcpUrl, stateDir, callbackUrl }) {
   return {
     client,
     async close() {
+      signal?.removeEventListener('abort', onAbort);
       await client.close().catch(() => transport.close().catch(() => {}));
     },
   };
@@ -50,7 +55,7 @@ export async function connectMcp({ mcpUrl, stateDir, callbackUrl }) {
 export async function listMcpTools(options) {
   const connection = await connectMcp(options);
   try {
-    const listed = await connection.client.listTools(undefined, { timeout: 15_000 });
+    const listed = await connection.client.listTools(undefined, { timeout: 15_000, signal: options.signal });
     const instructions = connection.client.getInstructions();
     return { ...listed, ...(instructions ? { instructions } : {}) };
   } finally {
