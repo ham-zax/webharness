@@ -174,9 +174,19 @@ function errorDetails(error) {
   return { code, message };
 }
 
-function unknownBrokerToolMessage(name) {
+function boundedToolName(name) {
   const text = typeof name === 'string' ? name : String(name);
-  const shown = text.length > MAX_REPORTED_TOOL_NAME_LENGTH ? `${text.slice(0, MAX_REPORTED_TOOL_NAME_LENGTH)}...` : text;
+  return { text, shown: text.length > MAX_REPORTED_TOOL_NAME_LENGTH ? `${text.slice(0, MAX_REPORTED_TOOL_NAME_LENGTH)}...` : text };
+}
+
+// The error goes back only to the caller, so nothing else records which name a client really
+// sent. JSON.stringify keeps even a hostile name on one log line; the length is bounded.
+function logUnknownBrokerTool(name) {
+  process.stderr.write(`local-tools: UNKNOWN_BROKER_TOOL name=${JSON.stringify(boundedToolName(name).shown)}\n`);
+}
+
+function unknownBrokerToolMessage(name) {
+  const { text, shown } = boundedToolName(name);
   const valid = `valid broker tools: ${BROKER_TOOL_NAMES.join(', ')}`;
   // Server names never contain the separator, but downstream tool names may, so split at the first one.
   const at = text.indexOf(INNER_TOOL_SEPARATOR);
@@ -844,6 +854,7 @@ export function createLocalBrokerServer({ broker } = {}) {
         if (typeof broker.batch !== 'function') throw brokerError('LOCAL_BATCH_UNAVAILABLE', 'local broker does not implement batch dispatch');
         return batchResult(await broker.batch(request.params.arguments ?? {}, extra.signal));
       }
+      logUnknownBrokerTool(request.params.name);
       return errorResult(brokerError('UNKNOWN_BROKER_TOOL', unknownBrokerToolMessage(request.params.name)));
     } catch (error) {
       return errorResult(error);

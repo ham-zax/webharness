@@ -152,6 +152,44 @@ test('unknown broker tool errors list the valid tools and translate flat downstr
   assert.doesNotMatch(huge.content[0].text, /"server"/);
 });
 
+test('unknown broker tool names are recorded on stderr as one bounded line; valid tools are not', async t => {
+  const broker = {
+    async list() { return { tools: [], hasMore: false }; },
+    async schema() { return {}; },
+    async call() { return { content: [] }; }
+  };
+  const server = createLocalBrokerServer({ broker });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const client = new Client({ name: 'local-tools-test', version: '1.0.0' });
+  t.after(async () => {
+    await client.close();
+    await server.close();
+  });
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+
+  const lines = [];
+  const original = process.stderr.write;
+  process.stderr.write = function (chunk, ...rest) {
+    const text = String(chunk);
+    if (text.startsWith('local-tools: UNKNOWN_BROKER_TOOL')) { lines.push(text); return true; }
+    return original.call(process.stderr, chunk, ...rest);
+  };
+  try {
+    await client.callTool({ name: 'tool_list', arguments: {} });
+    await client.callTool({ name: 'terminal_1mcp_terminal_open', arguments: {} });
+    await client.callTool({ name: `bad\nname_${'x'.repeat(500)}`, arguments: {} });
+  } finally {
+    process.stderr.write = original;
+  }
+
+  assert.equal(lines.length, 2, 'only the two unknown names are recorded');
+  assert.equal(lines[0], 'local-tools: UNKNOWN_BROKER_TOOL name="terminal_1mcp_terminal_open"\n');
+  assert.equal(lines[1].split('\n').length, 2, 'a name containing a newline stays on a single log line');
+  assert.ok(lines[1].includes('bad\\nname_'), 'control characters are escaped');
+  assert.ok(lines[1].length < 250, 'oversized names are truncated in the log');
+});
+
 test('tool_list without server discovers logical servers and filters only server names', async t => {
   const configPath = await configFile(t, ['browser-devtools', 'repo-search', 'codebase-memory-mcp']);
   const inner = fakeInner({ pages: {
