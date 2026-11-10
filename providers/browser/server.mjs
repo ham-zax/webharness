@@ -50,10 +50,19 @@ const BASE_CHROME_ARGS = [
   '--no-performance-crux'
 ];
 
+// The upstream server answers tools/list from its own catalog and connects over
+// CDP only when a tool runs. This loopback URL has no listener, so a discovery
+// child never attaches to a browser and never starts one.
+const SCHEMA_ONLY_BROWSER_URL = 'http://127.0.0.1:9';
+
 function browserError(code, message, cause) {
   const error = new Error(`${code}: ${message}`, cause ? { cause } : undefined);
   error.code = code;
   return error;
+}
+
+function managedBrowserDown(error) {
+  return error?.code === 'LINUX_BROWSER_NOT_RUNNING';
 }
 
 function linuxBrowserEnv(env = process.env) {
@@ -132,7 +141,7 @@ async function resolveCloakBrowserEndpoint(profileName) {
   if (!endpoint) {
     throw browserError(
       'LINUX_BROWSER_NOT_RUNNING',
-      `managed CloakBrowser profile ${profileName} is not active; initialize it once through browser-fast, then retry browser-devtools with the same backend/profile`
+      `managed CloakBrowser profile ${profileName} is not active; start it once through browser-fast with browser_target "linux", browser_backend "cloakbrowser" and browser_profile "${profileName}", then retry browser-devtools with the same selectors`
     );
   }
   return endpoint;
@@ -349,7 +358,15 @@ export class BrowserRouter {
         // Resolve the same route a default call uses. A bare child would be keyed
         // 'linux' while a default call is keyed 'linux:chrome:default', so the two
         // would stay separate children and the first call would pay a second start.
-        const route = await this.linuxRoute(undefined, undefined);
+        // A browser that is not running must not take the whole surface down, so
+        // discovery falls back to a child that attaches to no browser.
+        let route;
+        try {
+          route = await this.linuxRoute(undefined, undefined);
+        } catch (error) {
+          if (!managedBrowserDown(error)) throw error;
+          return await this.discoverToolsWithoutBrowser();
+        }
         const child = await this.child('linux', route);
         const { tools } = await child.listTools();
         return tools.map(addBrowserTarget);
@@ -359,6 +376,19 @@ export class BrowserRouter {
       });
     }
     return this.toolsPromise;
+  }
+
+  // Schemas come from the upstream catalog, not from a page, so this path needs
+  // no live endpoint. The child is closed after use: it must never serve a call.
+  async discoverToolsWithoutBrowser() {
+    const config = childConfig('linux', this.env, [], { browserUrl: SCHEMA_ONLY_BROWSER_URL });
+    const child = await this.childFactory('linux', config);
+    try {
+      const { tools } = await child.listTools();
+      return tools.map(addBrowserTarget);
+    } finally {
+      await child.close().catch(() => {});
+    }
   }
 
   async call({ tool, arguments: args = {} } = {}) {

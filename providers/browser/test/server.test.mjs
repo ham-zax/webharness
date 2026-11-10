@@ -321,3 +321,72 @@ test('browser router rejects a path form the selected target cannot use before s
 
   await router.shutdown();
 });
+
+test('browser router lists tools from a browser-free child when the managed CloakBrowser is not running', async () => {
+  const created = [];
+  const closed = [];
+  const childFactory = async (target, config) => {
+    const child = {
+      alive: true,
+      target,
+      config,
+      async listTools() {
+        return { tools: [{ name: 'list_pages', inputSchema: { type: 'object', properties: {} } }] };
+      },
+      async callTool() { throw new Error('a discovery child must never serve a call'); },
+      async close() { this.alive = false; closed.push(target); }
+    };
+    created.push(child);
+    return child;
+  };
+  const down = Object.assign(
+    new Error('LINUX_BROWSER_NOT_RUNNING: managed CloakBrowser profile x-main is not active'),
+    { code: 'LINUX_BROWSER_NOT_RUNNING' }
+  );
+  const router = new BrowserRouter({
+    childFactory,
+    env: { DISPLAY: ':0' },
+    defaultTarget: 'windows',
+    linuxBackendResolve: async () => ({ browser: 'cloakbrowser', managed: true, profileName: 'x-main' }),
+    cloakbrowserEndpointResolve: async () => { throw down; }
+  });
+
+  const tools = await router.listTools();
+  assert.equal(tools.length, 1);
+  assert.equal(tools[0].name, 'list_pages');
+  assert.deepEqual(tools[0].inputSchema.properties.browser_target.enum, ['windows', 'linux']);
+  assert.equal(created.length, 1);
+  assert.equal(created[0].target, 'linux');
+  assert.match(created[0].config.args.join(' '), /--browserUrl http:\/\/127\.0\.0\.1:9\b/);
+  assert.deepEqual(closed, ['linux']);
+
+  // Discovery is cached: one cold start per router, never one per call.
+  assert.equal((await router.listTools()).length, 1);
+  assert.equal(created.length, 1);
+
+  // The fallback child is gone, so a Linux call still reports the missing browser.
+  await assert.rejects(
+    router.call({ tool: 'list_pages', arguments: { browser_target: 'linux' } }),
+    /LINUX_BROWSER_NOT_RUNNING/
+  );
+  assert.equal(created.length, 1);
+  await router.shutdown();
+});
+
+test('browser router keeps a broken Linux browser configuration a visible error instead of serving a fallback list', async () => {
+  let factoryCalls = 0;
+  const router = new BrowserRouter({
+    childFactory: async () => { factoryCalls += 1; throw new Error('must not start a child'); },
+    env: { DISPLAY: ':0' },
+    defaultTarget: 'windows',
+    linuxBackendResolve: async () => {
+      throw Object.assign(new Error('BROWSER_FAST_CONFIG_INVALID: browser-fast.json is not valid JSON'), {
+        code: 'BROWSER_FAST_CONFIG_INVALID'
+      });
+    }
+  });
+
+  await assert.rejects(router.listTools(), /BROWSER_FAST_CONFIG_INVALID/);
+  assert.equal(factoryCalls, 0);
+  await router.shutdown();
+});
