@@ -143,19 +143,19 @@ python3 /tmp/wh.py read --targets <<'JSON'
 JSON
 ```
 
-`rg` calls `dev_1mcp_search`, with smart-case matching by default. Use `-F` for literal matching, `-s`/`-i` for explicit case behavior, `-g` for file globs, and `-m` for the total result cap. The provider defaults to 80 matches overall and 20 per file, accepts up to 500 overall and 200 per file, and bounds output at 32 KiB. Vendored trees are excluded by default (`skill-library/packs`, `third_party`, `node_modules`, `.git`); `--all` disables those explicit exclusions but does not override ripgrep's normal hidden/ignored-file rules.
+`rg` calls `dev_search`, with smart-case matching by default. Use `-F` for literal matching, `-s`/`-i` for explicit case behavior, `-g` for file globs, and `-m` for the total result cap. The provider defaults to 80 matches overall and 20 per file, accepts up to 500 overall and 200 per file, and bounds output at 32 KiB. Vendored trees are excluded by default (`skill-library/packs`, `third_party`, `node_modules`, `.git`); `--all` disables those explicit exclusions but does not override ripgrep's normal hidden/ignored-file rules.
 
 Line reads default to 160 lines, capped at 16 KiB per file. Outline mode returns numbered structural landmarks, with a bounded plain-text fallback when none match. Multi-file reads accept up to 20 targets with a combined 32 KiB output budget; request remaining targets separately if the batch is truncated. A missed edit anchor can return a short nearest-match snippet to help construct a corrected edit.
 
 ## Batch admission, ordering, and recovery
 
-Group independent calls into one HTTP request:
+Group independent calls into one HTTP request. Use the exact names returned by `tools`; this example uses the `dev_read` and `dev_search` names:
 
 ```bash
 python3 /tmp/wh.py batch <<'JSON'
 [
-  {"tool":"dev_1mcp_read","arguments":{"path":"README.md","mode":"outline"}},
-  {"tool":"dev_1mcp_search","arguments":{"pattern":"pairing","path":"docs"}}
+  {"tool":"dev_read","arguments":{"path":"README.md","mode":"outline"}},
+  {"tool":"dev_search","arguments":{"pattern":"pairing","path":"docs"}}
 ]
 JSON
 ```
