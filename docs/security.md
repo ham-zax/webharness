@@ -118,10 +118,13 @@ Pinned 1MCP 0.37.0 permits only loopback OAuth callback origins in its consent-p
 
 Local capability authority is a separate outer grant from Dev. Unscoped Local discovery plus ordinary call/batch expose public logical servers such as `terminal`, `host`, `browser-devtools`, and `browser-fast`. Exact read-only inspection may name the hidden Dev recovery server through `tool_list(server="dev")` or `tool_schema(server="dev", tool=...)`; this does not make Dev callable through ordinary Local routes. `fallback_dispatch` is the only Local execution path that bridges into that Dev mirror after `tag:local` authorization.
 
-The WebSession adapter serves `/v1/client.sh` publicly as a static shell client
-containing no credential. Header-authenticated `/v1/tools`, `/v1/tools/<name>`,
+The WebSession adapter serves `/v1/client.sh` and `/v1/client.py` publicly as static clients containing no credentials. Header-authenticated `/v1/tools`, `/v1/tools/<name>`,
 `/v1/signatures` and `/v1/instructions` discovery accepts capabilities in the Authorization
 header, keeping them out of URLs and request-path logs.
+
+`bin/adapter connect` prints a short-lived, single-use pairing code. `POST /v1/pair` redeems it for a finite main capability; successful redemption clears the stored plaintext capability from the pairing row. Pair-code expiry is separate from capability expiry. Revoking the associated capability also prevents redemption. Treat an unredeemed pair code as temporary access, and share it only with the intended client.
+
+The Python pairing client intentionally persists its capability in a private `0600` session file. Explicit `WS_CAP` usage keeps the supplied capability in memory instead. A capability's default cwd is context only; absolute and home-relative paths remain governed by the underlying Dev profile. Batch admission rolls back rejected submissions, but it cannot undo effects of tools that have begun execution. Read-only scheduling annotations are not an additional authorization boundary.
 
 ## Sensitive state
 
@@ -129,7 +132,7 @@ Keep these outside Git:
 
 - `.env` deployment identity;
 - generated 1MCP configuration;
-- OAuth/session state;
+- OAuth/session state, including WebSession adapter state and Python client session files;
 - logs and PID/runtime files;
 - Terminal state;
 - credentials and tunnel secrets.

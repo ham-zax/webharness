@@ -9,11 +9,17 @@ Files, ChatGPT-native file ingress, aggregate Git change review, short-RPC shell
 Personal Workstation surface:
 
 ```text
-read list_directory edit write import_file file_ops review_changes wait exec bash
+read list_directory search edit write import_file file_ops review_changes wait exec bash
 ```
 
 `import_file` and `review_changes` are Personal Workstation tools: the former streams one trusted ChatGPT-native file to a create-only WSL destination, while the latter returns a bounded aggregate view of the current Git working tree without creating checkpoints or refs. `restricted` and `trusted-dev` expose smaller subsets according to their trust policy.
 
+
+`search` provides structured ripgrep queries with bounded output and vendor exclusions. `read` supports structural outlines and up to 20 targets, with a default of 160 lines for line mode. User-mode paths expand `~` against the service user's home. Failed edit anchors can include a bounded nearest-match snippet; long command output preserves its start and end with a retained-output path on the remote host.
+
+## WebSession adapter — `providers/websession-adapter/`
+
+Optional HTTPS access to the live 1MCP catalog for clients without native MCP. `bin/adapter connect --here` issues an expiring, single-use pair code and prints a Python stdlib bootstrap prompt. The Python client stores a private session and supports search, outlines, edits, writes, and up to 20 calls per HTTP batch. Batch admission is transactional; execution is per operation, with concurrent reads and serialized mutations. The adapter has its own manual lifecycle. See [WebSession clients](../docs/websession-clients.md).
 
 ## Terminal logical server — `providers/terminal/`
 

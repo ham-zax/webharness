@@ -5,7 +5,8 @@
 ```text
 bin/                 WebHarness operator, lifecycle, extension, and Terminal entrypoints
 lib/bridge/          lifecycle/process supervision internals
-providers/pi-dev/    Dev read/list_directory/edit/write/import_file/file_ops/review_changes/exec/Bash/wait provider
+providers/pi-dev/    Dev read/list_directory/search/edit/write/import_file/file_ops/review_changes/exec/Bash/wait provider
+providers/websession-adapter/ optional HTTP transport, pairing, Python client, operation store
 providers/terminal/  Terminal MCP, broker, tmux/transcript logic
 providers/browser/   Chrome DevTools facade + resource-local child routing
 providers/browser-fast/ compact observe/execute facade over Agent Browser on Windows + Linux
@@ -28,6 +29,7 @@ Fresh linked worktrees do not inherit ignored `node_modules`. Install pinned dep
 
 ```bash
 npm --prefix providers/pi-dev ci --omit=dev
+if [ -f providers/websession-adapter/package.json ]; then npm --prefix providers/websession-adapter ci --omit=dev; fi
 npm --prefix providers/terminal ci --omit=dev
 npm --prefix providers/browser ci --omit=dev
 npm --prefix providers/browser-fast ci --omit=dev
@@ -50,6 +52,7 @@ bash tests/harness.sh
 bash tests/publication.sh
 bash tests/lifecycle.sh
 (cd providers/pi-dev && npm test)
+if [ -f providers/websession-adapter/package.json ]; then npm --prefix providers/websession-adapter test; fi
 (cd providers/terminal && npm test)
 (cd providers/browser && npm test)
 (cd providers/browser-fast && npm test)
@@ -77,6 +80,19 @@ webharness status
 ```
 
 Then complete the harmless Dev plus Local Terminal/Browser, Terminal-restart-survival, and public OAuth/endpoint checks in [Acceptance](acceptance.md). These are reference-machine qualification steps, not portable CI.
+
+## Dev and WebSession regression checks
+
+When the optional WebSession adapter is present, run these affected provider suites for changes to navigation, path handling, pairing, or batched HTTP calls:
+
+```bash
+node --test providers/pi-dev/test/*.test.mjs
+node --test providers/websession-adapter/test/*.test.mjs
+```
+
+The adapter suite uses local HTTP/MCP fixtures and temporary state. It covers preservation of `~`/`~/...` for read/write/edit, default cwd propagation, full-length idempotency-key separation and exact replay, rollback of earlier batch items and turn fences on a later conflict, and concurrent read dispatch. Atomic admission must not be documented as rollback of already-executed tools. Long runs still use the durable Terminal route described above.
+
+After runtime changes, follow [Deploy Dev and WebSession source updates](operations.md#deploy-dev-and-websession-source-updates) to reload the main bridge and the separately operated adapter.
 
 ## Change boundaries
 

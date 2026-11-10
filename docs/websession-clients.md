@@ -4,12 +4,9 @@ Use this guide when connecting an AI environment to the existing WSL bridge thro
 
 While the adapter is running, an AI environment with a usable outbound HTTPS primitive can use WebSession as long as it can retain an ordinary capability secret for the session. Programmable clients that support POST plus custom headers use the richer JSON profile. Constrained `GET`/`open`/`fetch`-only agents use the universal GET profile with an explicit confirmation step. Native MCP clients should normally use `/mcp` directly and treat WebSession as an optional secondary path.
 
-WebSession discovery includes the authenticated MCP initialization guidance as
-`instructions_json` when present. Read it before tool selection; decoding this
-JSON string restores its original newlines. Native MCP clients receive the same
-guidance during initialization. Client adherence is not enforced by the server.
+WebSession discovery includes authenticated MCP initialization guidance. Header-authenticated `/v1/tools` returns `instructions`; `/v1/instructions` returns it separately, and universal GET discovery uses `instructions_json` in its text response. Generic 1MCP boilerplate is compacted while server guidance is retained. Read that guidance before tool selection. Native MCP clients receive initialization guidance directly; client adherence is not enforced by the server.
 
-WebSession does not maintain a copied tool catalog or per-tool compatibility layer. It asks the authenticated live 1MCP endpoint for current tool names and schemas during discovery and verifies availability again before dispatch. 1MCP therefore remains the authority for OAuth scope, tool names, tool schemas, availability, and permissions. Rediscover tools in a fresh client session rather than hard-coding a previously observed catalog.
+WebSession discovers tool names and schemas from the authenticated live 1MCP endpoint. Discovery reconnects to retrieve current initialization guidance. Execution reuses pooled MCP connections and caches tool names for up to 60 seconds, invalidating them on tool-list change notifications; a dispatch failure is never automatically replayed. 1MCP therefore remains the authority for OAuth scope, tool names, tool schemas, availability, and permissions. Rediscover tools in a fresh client session rather than hard-coding a previously observed catalog.
 
 For master-bearer lifetime, rotation, exchange, and storage rules, see [WebSession master bearer](websession-master-bearer.md).
 
@@ -72,7 +69,7 @@ bin/adapter stop
 For ChatGPT sessions that already have native MCP access to this WSL, prefer the local wrapper instead of constructing bearer-bearing curl commands in the model-visible Bash request:
 
 ```bash
-bin/websession-call dev_1mcp_bash '{"command":"pwd"}'
+bin/websession-call dev_bash '{"command":"pwd"}'
 ```
 
 `bin/websession-call <tool> '<arguments-json>'` creates a temporary ordinary capability in private adapter state, submits the exact tool call through the public WebSession `POST /v1/calls` path, follows status/chunks to a terminal result, and revokes the temporary capability after a known terminal outcome. It never prints the capability. If submission or status transport becomes ambiguous, it does not retry the operation and leaves the temporary capability to expire rather than changing an unresolved operation.
@@ -93,7 +90,7 @@ Why `POST /v1/pair` + `wh.py connect` is the canonical pairing path for cloud sa
 
 - The chat never contains a 43-character capability bearer token in a Bash command, which earlier LLM content-safety filters could block.
 - No capability-bearing URL exists in the conversation, so GET link-prefetchers cannot burn single-use capability codes before the client uses them.
-- The Turn-1 prompt shrinks by roughly ~85%: five short lines of `wh.py` guidance replace the long manual bootstrap prompt.
+- The generated prompt includes the download/connect command and compact guidance for the supplied Python client.
 - The connection keeps a sticky default `cwd` from `--here` or `--cwd`, so commands run in the intended project directory.
 - Native subcommands (`sigs`, `ls`, `rg`, `read --outline`, `edit`, `write`, `sh`, `review`, and `batch` without JSON-escaping errors) replace hand-written JSON envelopes.
 
@@ -107,7 +104,7 @@ Why `POST /v1/pair` + `wh.py connect` is the canonical pairing path for cloud sa
 | `wh.py tools` / `wh.py sigs` | one compact signature line per live 1MCP tool (`tools --names` for bare names) |
 | `wh.py instructions` | authenticated owner and server guidance (compacted) |
 | `wh.py pwd`, `wh.py cd <dir>`, `wh.py ls [path]` | session working directory and listings |
-| `wh.py rg <pattern> [path]` | structured `dev_1mcp_search` ripgrep call (vendor dirs excluded by default) |
+| `wh.py rg <pattern> [path]` | structured `dev_search` ripgrep call (vendor dirs excluded by default) |
 | `wh.py read <path> --outline` | structural symbol outline of a file |
 | `wh.py read <path> <offset> <limit>` | narrow slice read |
 | `wh.py read --targets` | targets JSON on stdin; read several files in one call |
@@ -116,6 +113,58 @@ Why `POST /v1/pair` + `wh.py connect` is the canonical pairing path for cloud sa
 | `wh.py sh` | shell script on stdin or as arguments |
 | `wh.py review [paths...]` | review changed files |
 | `wh.py batch` | JSON array on stdin; single-RTT `POST /v1/batch` across up to 20 calls |
+
+## Working directories and output
+
+`connect` saves the base URL, capability, initial wait, and optional cwd to `~/.wh/session.json` (mode `0600`). Set `WH_SESSION_FILE` to keep separate sessions for different hosts or projects. `pwd` prints the selected session cwd when present; `cd <dir>` changes the client's saved context and `cd --clear` removes that client override. These commands do not change the server process's cwd or validate that a selected directory exists.
+
+Relative file paths resolve against the selected cwd. Absolute paths stay absolute, and `~` / `~/...` are passed to Dev for expansion against the remote service user's home, even when a project cwd is active. A capability issued with `--cwd` also supplies a server-side default for supported Dev tools, so clearing a client cwd does not remove the capability's default. This default selects context, not a new authority boundary.
+
+Client environment overrides:
+
+- `WS_BASE` and `WS_CAP` select an explicit host/capability. With `WS_CAP`, the saved client cwd is ignored unless `WS_CWD` is set.
+- `WS_CWD` overrides the saved cwd; an empty value disables client-side cwd injection.
+- `WS_WAIT` selects the initial POST hold in whole seconds (`0..90`, default `2`). `0` returns the operation recovery URL promptly; later status reads long-poll it.
+- `WS_TURN_ID` enables the existing cooperative turn fence. Assign increasing turn numbers when several requests share a capability.
+- `WS_MAX_OUTPUT` caps displayed UTF-8 payload bytes (default `8192`; `0` prints everything).
+
+A large Python-client result prints its head and tail and saves the complete text in a private temporary file **in the calling sandbox**. Dev command truncation instead names an output file **on the remote host**. Use the printed location to read the right file; do not repeat a mutation just to retrieve omitted output.
+
+## Search, outline, and focused reads
+
+After downloading and connecting the served client, navigate without constructing shell commands:
+
+```bash
+python3 /tmp/wh.py rg 'resolve_remote_path' providers -g '*.py'
+python3 /tmp/wh.py read providers/websession-adapter/client.py --outline
+python3 /tmp/wh.py read providers/websession-adapter/client.py 145 35
+python3 /tmp/wh.py read --targets <<'JSON'
+[{"path":"README.md","mode":"outline"},{"path":"docs/configuration.md","offset":1,"limit":40}]
+JSON
+```
+
+`rg` calls `dev_1mcp_search`, with smart-case matching by default. Use `-F` for literal matching, `-s`/`-i` for explicit case behavior, `-g` for file globs, and `-m` for the total result cap. The provider defaults to 80 matches overall and 20 per file, accepts up to 500 overall and 200 per file, and bounds output at 32 KiB. Vendored trees are excluded by default (`skill-library/packs`, `third_party`, `node_modules`, `.git`); `--all` disables those explicit exclusions but does not override ripgrep's normal hidden/ignored-file rules.
+
+Line reads default to 160 lines, capped at 16 KiB per file. Outline mode returns numbered structural landmarks, with a bounded plain-text fallback when none match. Multi-file reads accept up to 20 targets with a combined 32 KiB output budget; request remaining targets separately if the batch is truncated. A missed edit anchor can return a short nearest-match snippet to help construct a corrected edit.
+
+## Batch admission, ordering, and recovery
+
+Group independent calls into one HTTP request:
+
+```bash
+python3 /tmp/wh.py batch <<'JSON'
+[
+  {"tool":"dev_1mcp_read","arguments":{"path":"README.md","mode":"outline"}},
+  {"tool":"dev_1mcp_search","arguments":{"pattern":"pairing","path":"docs"}}
+]
+JSON
+```
+
+`POST /v1/batch` accepts 1 to 20 calls and returns operation snapshots in input order. The adapter admits all items and turn-fence updates inside one SQLite transaction before scheduling any item. A later nonce conflict or stale turn rejects admission without leaving earlier new items queued. Item identities use the complete idempotency key, hashed with SHA-256, plus the item index. While the capability and turn remain valid, reusing an accepted key with the same calls and turn returns the existing operations.
+
+Admission is atomic; execution is not. Once accepted, tools can succeed or fail independently, and completed effects are not rolled back. Read-only calls may overlap mutations as well as other reads; mutations are serialized. A read listed after a write is therefore not a read-after-write barrier. Submit dependent verification only after the mutation completes.
+
+Each result has its own opaque `status_url` and, for a chunked completion, `chunk_base_url`. If a batch creation response is lost, the client exits with code `2` because submission may have succeeded. Never automatically rerun a mutating batch. The Python client resolves results in input order and stops on a failed item; other accepted items may still be running. Custom clients should retain every returned status URL and inspect each operation's outcome. GET status/chunk failures do not prove that the original operation did not execute.
 
 ## Reusable six-hour bootstrap
 
@@ -170,7 +219,7 @@ Integrators implementing custom non-Python HTTPS clients against `WEBSESSION-MCP
 - `POST /v1/access` (`Authorization: Bearer <MASTER_BEARER>`): exchanges a master bearer for a six-hour `main` capability (`ttl_seconds: 21600`).
 - `GET /v1/signatures`, `GET /v1/instructions`, `GET /v1/tools`, `GET /v1/tools/<name>` (`Authorization: Bearer <CAPABILITY>`): live 1MCP discovery (`instructions` strips generic proxy boilerplate; `signatures` and `tools` include `default_cwd` when bound).
 - `POST /v1/calls?wait=<0..90>` (`Authorization: Bearer <CAPABILITY>`, `Content-Type: application/json`, `Idempotency-Key: ^[A-Za-z0-9._-]{1,64}$`, optional `X-Turn-Id: <uint>`): body `{"version":1,"tool":"<name>","arguments":{...}}`. Poll opaque `status_url` while `queued`/`running`; if `completed` with `chunk_count > 1`, concatenate `GET <chunk_base_url><1..chunk_count>` `.content`. Never auto-retry `unknown_outcome`.
-- `POST /v1/batch?wait=<0..90>` (same headers as `/v1/calls`): body `{"version":1,"calls":[{"tool":"<name>","arguments":{...}}, ...]}` (`1..20` items). Dispatches items concurrently for read-only tools while serializing mutations, returning `{"protocol":"WEBSESSION-MCP-BRIDGE/1","state":"ready","results":[...]}`.
+- `POST /v1/batch?wait=<0..90>` (same headers as `/v1/calls`): body `{"version":1,"calls":[{"tool":"<name>","arguments":{...}}, ...]}` (`1..20` items). Atomically admits all items before dispatch; execution permits concurrent read-only tools while serializing mutations, returning `{"protocol":"WEBSESSION-MCP-BRIDGE/1","state":"ready","results":[...]}`.
 - `GET /v1/raw?path=<url-encoded-/tmp/file>` (`Authorization: Bearer <CAPABILITY>`): streams regular `/tmp/*` files up to 10 MiB (rejects final-component symlinks).
 
 ## ChatGPT / native MCP + optional WebSession bootstrap prompt
@@ -186,7 +235,7 @@ bin/websession-call <exact-native-MCP-tool-name> '<arguments-json>'
 
 Example connection test:
 
-bin/websession-call dev_1mcp_bash '{"command":"pwd"}'
+bin/websession-call dev_bash '{"command":"pwd"}'
 
 The wrapper mints and consumes the temporary capability inside WSL, submits through `POST /v1/calls`, follows status/chunks, prints only the tool result, and revokes the temporary capability after a known terminal outcome. If it reports an unresolved transport outcome, do not retry automatically.
 
@@ -228,8 +277,8 @@ Shell work: pass the script on stdin so it needs no JSON quoting, and put severa
 Other tools: `~/.wh/wh tools` shows each tool's parameters on one line, `~/.wh/wh call <tool> '<json-arguments>'` runs one (`@file` or `-` reads the arguments from a file or stdin), and `~/.wh/wh schema <tool>` gives the full schema when the one-line form is not enough.
 Results print as plain text. One over 8 KB shows its start and end, and the full text is saved to `~/.wh/last`: search that file locally instead of repeating the call.
 One call must finish within 60 seconds. For a build, test run or anything else that may take longer, start it detached, wait in short calls, then read the log:
-  ~/.wh/wh call dev_1mcp_exec '{"argv":["bash","-c","<command>"],"detach":true}'    # prints log and exit paths
-  ~/.wh/wh call dev_1mcp_wait '{"name":"job1","condition":{"kind":"file_exists","path":"<exit path>"},"hold_seconds":45}'
+  ~/.wh/wh call dev_exec '{"argv":["bash","-c","<command>"],"detach":true}'    # prints log and exit paths
+  ~/.wh/wh call dev_wait '{"name":"job1","condition":{"kind":"file_exists","path":"<exit path>"},"hold_seconds":45}'
 Repeat the wait with only `{"name":"job1","hold_seconds":45}` until it prints `matched`; repeating a wait is always safe, even after exit code 2. Then `~/.wh/wh sh 'tail -50 <log path>; cat <exit path>'`.
 After login, never print, echo or log the capability, and never put it in a URL.
 Exit code 2 means the outcome is unknown: do not retry, check whether the effect happened first. Exit code 3 means the client timed out; run `~/.wh/wh status <status_url>` if it printed a status URL. If no status URL was available, do not retry automatically.
@@ -242,7 +291,7 @@ When I say I am finished, remind me to run `bin/adapter revoke-cap <capability-i
 |---|---|---|
 | Commands | `wh login <base-url>`, `wh tools`, `wh instructions`, `wh schema <tool>`, `wh sh [script]`, `wh call <tool> [arguments]`, `wh status <status_url>` | Login reads the capability from stdin. `wh tools` prints one signature line per tool. `wh sh` runs a script given as arguments or on stdin, with no JSON quoting. Call arguments may be inline JSON, `@file`, or `-` (stdin). |
 | `WH_MAX_OUTPUT` | `8192` bytes | Largest result printed in full. A larger one shows its first three quarters and last quarter of that size, and the full result is saved to `$WH_HOME/last`. `0` prints everything. |
-| `WH_SH_TOOL` | `dev_1mcp_bash` | Tool that `wh sh` calls; the script is sent as its `command` argument. |
+| `WH_SH_TOOL` | `dev_bash` | Tool that `wh sh` calls; the script is sent as its `command` argument. |
 | `WH_HOME` | `$HOME/.wh` | Directory for the saved capability and base URL, stored with mode 600. |
 | `WH_WAIT` | `90` seconds (0..90) | Long-poll wait for each request. |
 | `WH_MAX_SECONDS` | `280` seconds | Positive-integer limit for the client run. |
@@ -270,9 +319,9 @@ Keep the capability secret and do not repeat bearer-bearing URLs in your final a
 3. For a call, the JSON fields must be exactly `version`, `tool`, and `arguments`: `{"version":1,"tool":"<exact tool name>","arguments":{...}}`. Do not use `args`, `params`, or a top-level `command` field. Compact-JSON encode it, base64url encode it without `=` padding, and keep the encoded request <=256 chars. Use an actual encoder when one is available; do not manually calculate Base64 character-by-character.
 4. With a fresh nonce, `open` `/v1/s/<CAPABILITY>/call/<nonce>/<request-b64>`. Read `confirmation_base` and `challenge`, concatenate them exactly, and `open` that URL. Follow `status_url` if queued/running; fetch numbered chunks if returned. Never retry `unknown_outcome` automatically.
 
-Connection test: confirm `dev_1mcp_bash` exists, then use this pre-encoded `{"command":"pwd"}` request with a fresh nonce:
+Connection test: confirm `dev_bash` exists, then use this pre-encoded `{"command":"pwd"}` request with a fresh nonce:
 
-https://mcp.example.com/v1/s/<CAPABILITY>/call/<nonce>/eyJ2ZXJzaW9uIjoxLCJ0b29sIjoiZGV2XzFtY3BfYmFzaCIsImFyZ3VtZW50cyI6eyJjb21tYW5kIjoicHdkIn19
+https://mcp.example.com/v1/s/<CAPABILITY>/call/<nonce>/eyJ2ZXJzaW9uIjoxLCJ0b29sIjoiZGV2X2Jhc2giLCJhcmd1bWVudHMiOnsiY29tbWFuZCI6InB3ZCJ9fQ
 
 Complete confirmation/polling, then report only:
 
