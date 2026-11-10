@@ -880,9 +880,20 @@ test('Python connect uses one bundled request and preserves a session when disco
   assert.equal(requests.length, 1, 'bundled setup requires just one HTTP request');
   assert.match(connected.stdout, /CONNECTED[\s\S]*tools: 1[\s\S]*POST \/v1\/calls/);
   assert.equal(JSON.parse(readFileSync(sessionFile, 'utf8')).cap, secret);
+  const compactPair = await runPythonInput(['pair', 'compact', '--base', base, '--cd', '/project/compact'], env);
+  assert.equal(compactPair.status, 0, compactPair.stderr);
+  assert.match(compactPair.stdout, /^CONNECTED\n/);
+  assert.match(compactPair.stdout, /metadata: .*metadata\.json/);
+  assert.doesNotMatch(compactPair.stdout, /dev_read\(path|POST \/v1\/calls/);
+  assert.equal(requests.length, 2, 'compact pairing uses one request without extra discovery');
+  const cached = JSON.parse(readFileSync(join(dir, 'metadata.json'), 'utf8'));
+  assert.deepEqual(cached.signatures, ['dev_read(path: string)']);
+  assert.equal(cached.cwd, '/project/compact');
+  assert.equal(statSync(join(dir, 'metadata.json')).mode & 0o777, 0o600);
+  assert.equal(JSON.parse(readFileSync(sessionFile, 'utf8')).cwd, '/project/compact');
   const offline = await runPythonInput(['connect', base, 'offline'], env);
   assert.equal(offline.status, 0, offline.stderr);
-  assert.equal(requests.length, 2, 'failed discovery must not trigger another pairing or lookup');
+  assert.equal(requests.length, 3, 'failed discovery must not trigger another pairing or lookup');
   assert.match(offline.stdout, /CONNECTED[\s\S]*tools: unavailable/);
   assert.match(offline.stderr, /Session saved.*do not pair again/);
   assert.equal(statSync(sessionFile).mode & 0o777, 0o600);
@@ -1130,4 +1141,32 @@ test('raw Dev calls and sh share session cwd while explicit cwd and environment 
   assert.equal(Object.hasOwn(calls.at(-1).arguments, 'cwd'), false);
   assert.equal((await runPythonInput(['call', 'dev_bash', '{"command":"pwd"}'], { ...env, WS_CAP: capability })).status, 0);
   assert.equal(Object.hasOwn(calls.at(-1).arguments, 'cwd'), false);
+});
+
+
+test('Python batch limits the combined stdout of many successful items, preserving full result privately', async t => {
+  const dir = mkdtempSync(join(tmpdir(), 'wh-aggregate-cap-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const sessionFile = join(dir, 'session.json');
+  const { base } = await pythonFixture(t, (entry, fixtureBase) => {
+    if (entry.method !== 'POST' || entry.path !== '/v1/batch') return undefined;
+    const calls = JSON.parse(entry.body).calls;
+    return {
+      protocol: 'WEBSESSION-MCP-BRIDGE/1', state: 'ready',
+      results: calls.map((_, i) => completed('payload-' + i + ':' + 'z'.repeat(2500), fixtureBase)),
+    };
+  });
+  writeFileSync(sessionFile, JSON.stringify({ base, cap: capability, wait: 2 }), { mode: 0o600 });
+  const env = { WH_SESSION_FILE: sessionFile, WS_BASE: '', WS_CAP: '' };
+  const calls = Array.from({ length: 4 }, () => ({ tool: 'dev_read', arguments: { path: 'a.js' } }));
+  const result = await runPythonInput(['batch'], env, JSON.stringify(calls));
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(Buffer.byteLength(result.stdout) < 5000, 'total stdout must stay close to the default 4 KB cap');
+  const matched = result.stdout.match(/saved in local sandbox: (\/[^;\s]+); WS_MAX_OUTPUT/);
+  assert.ok(matched, 'aggregate overflow must save one combined full result');
+  const saved = readFileSync(matched[1], 'utf8');
+  assert.match(saved, /=== \[1\/4\] dev_read ===/);
+  assert.match(saved, /=== \[4\/4\] dev_read ===/);
+  assert.ok(Buffer.byteLength(saved) > 10000);
+  rmSync(matched[1]);
 });

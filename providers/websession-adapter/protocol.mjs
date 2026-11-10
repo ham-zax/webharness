@@ -36,6 +36,11 @@ export const HTTP_INSTRUCTIONS = [
   'Poll the returned status_url verbatim while queued/running (optional wait=90). For completed, read result or concatenate chunk_base_url + 1..chunk_count. Never automatically repeat a mutation after a lost submission response or unknown_outcome.',
   'POST /v1/batch?wait=2 uses the same headers and {"version":1,"calls":[{"tool":"<name>","arguments":{...}}],"sequential"?:true,"stop_on_error"?:true} (1..20 calls). Default batch overlaps reads with serialized writes; set "sequential":true for ordered pipelines (e.g. edit -> test -> review) that stop on failure.',
   'GET /v1/cwd reads project context; POST /v1/cwd with the bearer and JSON {"cwd":"/project"} selects it once ({"cwd":null} clears it). Supported Dev calls inherit it; use relative paths. Local Terminal has its own cwd.',
+  'Execution efficiency: group related independent file reads into one bounded batch (or dev_read targets); use a sequential batch/pipe for ordered edit -> targeted tests -> final review. Avoid a separate model round-trip for every inspection or Git check.',
+  'Quiet output: keep builds and test logs in /tmp files, and print a short status plus failures (normally <=25 lines), not raw schemas, full diffs, or all passing-test output. Use the client output cap and --save when full output is necessary.',
+  'Localized bugs: when the report includes a concrete file, line, and reproduction, inspect that scope and verify the fix with targeted tests before expanding investigation. Do not skip validation.',
+  'Deployment: when changing a running adapter or daemon, determine whether its process must restart or reload, then perform a harmless live readiness check before claiming deployment success.',
+  'Long sessions: around 80k-100k accumulated context, summarize state, decisions, remaining work and last commits in a short non-secret handoff, then continue in a fresh session when practical.',
 ].join('\n');
 
 export function webSessionInstructions(instructions) {

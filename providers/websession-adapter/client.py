@@ -13,6 +13,7 @@ Environment:
 Usage:
   client.py [--save FILE] <command> ...
   client.py connect BASE PAIR_CODE [--cwd DIR]
+  client.py pair CODE --base URL [--cd DIR]  # or set WS_BASE
   client.py import-session [BASE] [--cwd DIR]  # session JSON on stdin
   client.py about | tools [--names] | sigs | instructions | schema TOOL
   client.py pwd | cd DIR | cd --clear | ls [PATH] [--limit N] [--depth 1..4] [--all]
@@ -45,7 +46,7 @@ import uuid
 POLL_SECONDS = 90.0
 MAX_WAIT_SECONDS = 90
 TIMEOUT_SECONDS = 120
-DEFAULT_MAX_OUTPUT = 8192
+DEFAULT_MAX_OUTPUT = 4096
 USER_AGENT = "websession-client/1.0"
 TERMINAL_STATES = ("completed", "tool_failed", "unknown_outcome", "rejected", "expired")
 CWD_INJECT_TOOLS = ("dev_bash", "dev_exec", "dev_review_changes", "dev_file_ops")
@@ -54,7 +55,7 @@ PATH_RESOLVE_TOOLS = ("dev_read", "dev_list_directory", "dev_search", "dev_write
 SAVE_OUTPUT_PATH = None
 SAVE_PREVIEW_BYTES = 512
 USAGE = (
-    "usage: client.py [--save FILE] connect BASE CODE [--cwd DIR]|about|tools [--names]|sigs|instructions|"
+    "usage: client.py [--save FILE] connect BASE CODE [--cwd DIR]|pair CODE --base URL [--cd DIR]|about|tools [--names]|sigs|instructions|"
     "schema TOOL|import-session [BASE]|pwd|cd DIR|ls [PATH] [--depth N]|read PATH [OFFSET] [LIMIT] [--outline]|"
     "rg PATTERN [PATH]|edit [JSON|@FILE|-]|write PATH|review [PATH...]|"
     "batch [--seq] [JSON|@FILE|-]|pipe [JSON|@FILE|-]|llist [SERVER]|lschema SERVER/TOOL|"
@@ -507,12 +508,12 @@ def parse_positive_int(value, label):
     return int(value)
 
 
-def cmd_connect(args):
+def cmd_connect(args, compact=False):
     explicit_cwd = None
     positional = []
     index = 0
     while index < len(args):
-        if args[index] == "--cwd":
+        if args[index] in ("--cwd", "--cd"):
             if index + 1 >= len(args):
                 fail("usage: client.py connect BASE PAIR_CODE [--cwd DIR]")
             explicit_cwd = args[index + 1]
@@ -555,6 +556,27 @@ def cmd_connect(args):
         if cwd:
             session["cwd"] = cwd
             save_session(session)
+    if compact:
+        metadata_path = os.path.join(os.path.dirname(os.path.abspath(session_file_path())), "metadata.json")
+        metadata = {
+            "base": target_base,
+            "cwd": cwd,
+            "tool_count": len(sigs) if isinstance(sigs, list) else None,
+            "signatures": sigs if isinstance(sigs, list) else [],
+            "instructions": guidance if isinstance(guidance, str) else "",
+        }
+        write_private_bytes(metadata_path, (json.dumps(metadata, ensure_ascii=False) + "\n").encode("utf-8"))
+        print("CONNECTED")
+        print("base: %s" % target_base)
+        print("cwd: %s" % (cwd if cwd else "(default)"))
+        print("tools: %s" % (len(sigs) if isinstance(sigs, list) else "unavailable"))
+        print("metadata: %s (private; full discovery)" % metadata_path)
+        print("use: read --targets for multiple files; batch for independent calls; pipe for ordered steps")
+        print("use: --save /tmp/result.txt to capture full output; stdout capped by WS_MAX_OUTPUT")
+        print("inspect: tools --names | schema TOOL | instructions")
+        if paired.get("discovery_state") == "unavailable":
+            print("Session saved; discovery unavailable. Retry tools/instructions later; do not pair again.", file=sys.stderr)
+        return
     print("CONNECTED")
     print("base: %s" % target_base)
     print("cwd: %s" % (cwd if cwd else "(default)"))
@@ -566,6 +588,40 @@ def cmd_connect(args):
         print(guidance)
     if paired.get("discovery_state") == "unavailable":
         print("Session saved; discovery unavailable. Retry tools/instructions later; do not pair again.", file=sys.stderr)
+
+
+def cmd_pair(args):
+    usage = "usage: client.py pair CODE [--base URL] [--cd DIR] (or set WS_BASE)"
+    explicit_base = None
+    explicit_cwd = None
+    positional = []
+    index = 0
+    while index < len(args):
+        token = args[index]
+        if token in ("--base", "--cd", "--cwd"):
+            if index + 1 >= len(args):
+                fail(usage)
+            if token == "--base":
+                explicit_base = args[index + 1]
+            else:
+                explicit_cwd = args[index + 1]
+            index += 2
+        else:
+            positional.append(token)
+            index += 1
+    if len(positional) == 2 and explicit_base is None:
+        target_base, pair_code = positional
+    elif len(positional) == 1:
+        pair_code = positional[0]
+        target_base = explicit_base or os.environ.get("WS_BASE") or load_session().get("base")
+    else:
+        fail(usage)
+    if not isinstance(target_base, str) or not target_base:
+        fail("pair requires a base URL (--base URL or WS_BASE) on a new machine")
+    connect_args = [target_base, pair_code]
+    if explicit_cwd is not None:
+        connect_args.extend(["--cwd", explicit_cwd])
+    cmd_connect(connect_args, compact=True)
 
 
 def cmd_import_session(args):
@@ -993,7 +1049,6 @@ def cmd_batch(args, default_sequential=False):
         submission_unknown("invalid batch response")
     snaps = [operation_snapshot(raw_snap, submission=True) for raw_snap in results]
     full_outputs = []
-    display_outputs = []
     exit_code = 0
     first_error = None
     for index, ((tool_name, item_args), snap) in enumerate(zip(validated, snaps), start=1):
@@ -1001,8 +1056,6 @@ def cmd_batch(args, default_sequential=False):
         if status == "ok":
             unwrapped = unwrap_mcp_text(payload_text)
             full_outputs.append("=== [%d/%d] %s ===\n%s" % (index, total, tool_name, unwrapped))
-            if SAVE_OUTPUT_PATH is None:
-                display_outputs.append("=== [%d/%d] %s ===\n%s" % (index, total, tool_name, bound_output(unwrapped, limit)))
             if sequential and is_dev_command_call(tool_name, item_args):
                 cmd_footer = command_failure_footer(unwrapped)
                 if cmd_footer is not None:
@@ -1013,23 +1066,19 @@ def cmd_batch(args, default_sequential=False):
         elif status == "skipped":
             skipped_line = "=== [%d/%d] %s [SKIPPED] ===" % (index, total, tool_name)
             full_outputs.append(skipped_line)
-            if SAVE_OUTPUT_PATH is None:
-                display_outputs.append(skipped_line)
             if exit_code == 0:
                 exit_code = 1
         else:
             failed_section = "=== [%d/%d] %s [FAILED] ===\n%s" % (index, total, tool_name, payload_text)
             full_outputs.append(failed_section)
-            if SAVE_OUTPUT_PATH is None:
-                display_outputs.append(failed_section)
             if item_code == 2 or exit_code == 0:
                 exit_code = item_code
             if first_error is None:
                 first_error = "batch[%d] (%s): %s" % (index - 1, tool_name, payload_text)
     if SAVE_OUTPUT_PATH is not None:
         print(render_saved_output("\n".join(full_outputs), limit))
-    elif display_outputs:
-        print("\n".join(display_outputs))
+    elif full_outputs:
+        print(bound_output("\n".join(full_outputs), limit))
     if exit_code != 0:
         fail(first_error or "batch failed", exit_code)
 
@@ -1198,6 +1247,8 @@ def main(argv):
         cmd_import_session(rest)
     elif command == "connect":
         cmd_connect(rest)
+    elif command == "pair":
+        cmd_pair(rest)
     elif command == "pwd" and not rest:
         cwd = sticky_cwd()
         if cwd:
