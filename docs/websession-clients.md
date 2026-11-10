@@ -138,6 +138,8 @@ Omit cwd to inherit the server's current project selection. Importing `cwd` / `d
 
 Relative file paths resolve against the selected cwd. Absolute paths stay absolute, and `~` / `~/...` are passed to Dev for expansion against the remote service user's home, even when a project cwd is active. A capability issued with `--cwd` also supplies a server-side default for supported Dev tools, so clearing a client cwd does not remove the capability's default. This default selects context, not a new authority boundary.
 
+`sh` and generic `call dev_bash` / `call dev_exec` apply the same client cwd default (also used by batches, review, and file operations that accept cwd). An explicit `arguments.cwd` wins. If no client cwd is selected, the adapter can supply the capability's server-side default. This is remote project context: the sandbox process's own current directory is not sent automatically, and a `cd` inside one remote shell call does not persist to the next.
+
 Client environment overrides:
 
 - `WS_BASE` and `WS_CAP` select an explicit host/capability. With `WS_CAP`, the saved client cwd is ignored unless `WS_CWD` is set.

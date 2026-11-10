@@ -1101,3 +1101,33 @@ test('Python client supports pipe/sequential batch, local shortcuts, pull (/v1/r
   assert.match(pipeContinue.stdout, /=== \[3\/3\] dev_review_changes ===\ncontinued after failure/);
 
 });
+
+test('raw Dev calls and sh share session cwd while explicit cwd and environment overrides win', async t => {
+  const dir = mkdtempSync(join(tmpdir(), 'wh-call-cwd-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const sessionFile = join(dir, 'session.json');
+  const calls = [];
+  const { base } = await pythonFixture(t, (entry, fixtureBase) => {
+    calls.push(JSON.parse(entry.body));
+    return completed('ok', fixtureBase);
+  });
+  writeFileSync(sessionFile, JSON.stringify({ base, cap: capability, cwd: '/project' }), { mode: 0o600 });
+  const env = { WH_SESSION_FILE: sessionFile, WS_BASE: '', WS_CAP: '' };
+  for (const command of [
+    ['sh', 'pwd'],
+    ['call', 'dev_bash', '{"command":"pwd"}'],
+    ['call', 'dev_exec', '{"argv":["pwd"]}'],
+  ]) {
+    const run = await runPythonInput(command, env);
+    assert.equal(run.status, 0, run.stderr);
+    assert.equal(calls.at(-1).arguments.cwd, '/project');
+  }
+  assert.equal((await runPythonInput(['call', 'dev_bash', '{"command":"pwd","cwd":"/explicit"}'], env)).status, 0);
+  assert.equal(calls.at(-1).arguments.cwd, '/explicit');
+  assert.equal((await runPythonInput(['call', 'dev_bash', '{"command":"pwd"}'], { ...env, WS_CWD: '/override' })).status, 0);
+  assert.equal(calls.at(-1).arguments.cwd, '/override');
+  assert.equal((await runPythonInput(['call', 'dev_bash', '{"command":"pwd"}'], { ...env, WS_CWD: '' })).status, 0);
+  assert.equal(Object.hasOwn(calls.at(-1).arguments, 'cwd'), false);
+  assert.equal((await runPythonInput(['call', 'dev_bash', '{"command":"pwd"}'], { ...env, WS_CAP: capability })).status, 0);
+  assert.equal(Object.hasOwn(calls.at(-1).arguments, 'cwd'), false);
+});

@@ -458,7 +458,14 @@ def resolve_operation(data, deadline):
     return "".join(parts)
 
 
+def apply_client_cwd(tool, arguments, cwd):
+    if cwd and tool in CWD_INJECT_TOOLS and "cwd" not in arguments:
+        return {**arguments, "cwd": cwd}
+    return arguments
+
+
 def call(tool, arguments, wait_override=None):
+    arguments = apply_client_cwd(tool, arguments, sticky_cwd())
     initial_wait = effective_wait() if wait_override is None else wait_override
     deadline = time.monotonic() + POLL_SECONDS
     data = operation_snapshot(request_json(
@@ -877,10 +884,8 @@ def cmd_review(args):
 
 
 def prepare_batch_arguments(tool_name, raw_args):
-    args = dict(raw_args)
     cwd = sticky_cwd()
-    if cwd and tool_name in CWD_INJECT_TOOLS and "cwd" not in args:
-        args["cwd"] = cwd
+    args = apply_client_cwd(tool_name, dict(raw_args), cwd)
     if cwd and tool_name in OPTIONAL_PATH_CWD_TOOLS and "path" not in args:
         args["path"] = cwd
     elif tool_name in PATH_RESOLVE_TOOLS and isinstance(args.get("path"), str):
@@ -1257,9 +1262,6 @@ def main(argv):
         else:
             script = " ".join(rest)
         payload = {"command": script}
-        cwd = sticky_cwd()
-        if cwd:
-            payload["cwd"] = cwd
         print(render_output(call("dev_bash", payload), limit))
     else:
         fail(USAGE)
