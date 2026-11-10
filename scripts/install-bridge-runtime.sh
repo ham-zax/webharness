@@ -116,6 +116,80 @@ if (source.includes(upstream)) {
 NODE
 echo "  patched supervised restart capability preservation"
 
+echo "== applying pinned 1MCP clean tool namespacing and instructions =="
+MCP_CONSTANTS="$(npm root -g)/@1mcp/agent/build/constants/mcp.js"
+TEMPLATE_TYPES="$(npm root -g)/@1mcp/agent/build/core/instructions/templateTypes.js"
+TEMPLATE_VALIDATOR="$(npm root -g)/@1mcp/agent/build/core/instructions/templateValidator.js"
+node --input-type=module - "$MCP_CONSTANTS" "$TEMPLATE_TYPES" "$TEMPLATE_VALIDATOR" <<'NODE'
+import fs from 'node:fs';
+const [constantsPath, templateTypesPath, validatorPath] = process.argv.slice(2);
+
+const upstreamSep = "export const MCP_URI_SEPARATOR = '_1mcp_';";
+const patchedSep = "export const MCP_URI_SEPARATOR = process.env.ONE_MCP_URI_SEPARATOR || '_';";
+let constantsSrc = fs.readFileSync(constantsPath, 'utf8');
+if (constantsSrc.includes(upstreamSep)) {
+  constantsSrc = constantsSrc.replace(upstreamSep, patchedSep);
+  fs.writeFileSync(constantsPath, constantsSrc);
+} else if (!constantsSrc.includes(patchedSep)) {
+  throw new Error('pinned 1MCP constants/mcp.js source shape changed; refusing an unsafe separator patch');
+}
+
+const patchedTemplateBlock = `export const DEFAULT_TEMPLATE_EXAMPLES = [
+    {
+        name: 'dev_read',
+        description: 'Read files through the dev server',
+    },
+    {
+        name: 'dev_search',
+        description: 'Search text across files through the dev server',
+    },
+    {
+        name: 'local_tool_call',
+        description: 'Invoke a downstream workstation tool through the local broker',
+    },
+];
+/**
+ * Default template configuration values
+ */
+export const DEFAULT_TEMPLATE_CONFIG = {
+    title: 'WebHarness MCP Gateway',
+    toolPattern: '{server}_{tool}',
+    examples: DEFAULT_TEMPLATE_EXAMPLES,
+    templateSizeLimit: 1024 * 1024, // 1MB default
+};
+/**
+ * Default instruction template using Handlebars syntax
+ * This template is used when no custom template is provided
+ */
+export const DEFAULT_INSTRUCTION_TEMPLATE = \`{{#each servers}}{{#if hasInstructions}}<{{name}}>
+{{instructions}}
+</{{name}}>
+
+{{/if}}{{/each}}Tools are namespaced by server as \\\`{server}_{tool}\\\`.\`;`;
+
+let typesSrc = fs.readFileSync(templateTypesPath, 'utf8');
+if (!typesSrc.includes("title: 'WebHarness MCP Gateway'")) {
+  const startMarker = 'export const DEFAULT_TEMPLATE_EXAMPLES = [';
+  const endMarker = '/** Built-in direct CLI variant matching the established `1mcp instructions` layout. */';
+  const startIdx = typesSrc.indexOf(startMarker);
+  const endIdx = typesSrc.indexOf(endMarker);
+  if (startIdx === -1 || endIdx === -1 || endIdx <= startIdx) {
+    throw new Error('pinned 1MCP templateTypes.js source shape changed; refusing an unsafe template patch');
+  }
+  typesSrc = `${typesSrc.slice(0, startIdx)}${patchedTemplateBlock}\n${typesSrc.slice(endIdx)}`;
+  fs.writeFileSync(templateTypesPath, typesSrc);
+}
+
+let validatorSrc = fs.readFileSync(validatorPath, 'utf8');
+if (validatorSrc.includes("toolPattern: '{server}_1mcp_{tool}',")) {
+  validatorSrc = validatorSrc.replace("toolPattern: '{server}_1mcp_{tool}',", "toolPattern: '{server}_{tool}',");
+  fs.writeFileSync(validatorPath, validatorSrc);
+} else if (!validatorSrc.includes("toolPattern: '{server}_{tool}',")) {
+  throw new Error('pinned 1MCP templateValidator.js source shape changed; refusing an unsafe validator patch');
+}
+NODE
+echo "  patched clean {server}_{tool} namespacing and compact server instructions"
+
 echo "== verifying pinned 1MCP native log rotation =="
 LOGGING_CONFIG="$(npm root -g)/@1mcp/agent/build/logger/loggingConfig.js"
 LOGGER_IMPL="$(npm root -g)/@1mcp/agent/build/logger/logger.js"

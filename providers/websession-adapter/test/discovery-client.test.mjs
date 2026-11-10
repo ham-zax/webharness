@@ -12,7 +12,7 @@ const clientPython = new URL('../client.py', import.meta.url);
 const capability = 'c'.repeat(43);
 
 test('discovery tool names share request validation and snapshots expose names and optional instructions', () => {
-  for (const name of ['dev_1mcp_read', 'tool.with-dashes', 'x'.repeat(128)]) {
+  for (const name of ['dev_read', 'tool.with-dashes', 'x'.repeat(128)]) {
     assert.equal(parseToolName(name), name);
     assert.equal(parseRequest({ version: 1, tool: name, arguments: {} }).normalized.tool, name);
   }
@@ -351,7 +351,7 @@ test('python client keeps a bounded completed result when saving the full output
   assert.match(run.stdout, /local sandbox file not saved: fixture disk full; do not rerun the tool/);
   assert.ok(Buffer.byteLength(run.stdout) < 9000);
   assert.equal(requests.length, 1);
-  assert.equal(JSON.parse(requests[0].body).tool, 'dev_1mcp_bash');
+  assert.equal(JSON.parse(requests[0].body).tool, 'dev_bash');
 });
 
 test('python client reports lost creation responses as unknown without resubmitting', async (t) => {
@@ -555,7 +555,7 @@ test('client sh sends a script without JSON quoting and reports errors that lack
     const result = run(args, [response('completed', 'ok')], input);
     assert.equal(result.status, 0, result.stderr);
     assert.deepEqual(JSON.parse(readFileSync(join(directory, 'request'), 'utf8')),
-      { version: 1, tool: 'dev_1mcp_bash', arguments: { command: script } });
+      { version: 1, tool: 'dev_bash', arguments: { command: script } });
   }
   assert.equal(run(['sh', 'echo', 'a b'], [response('completed')], '', { WH_SH_TOOL: 'other' }).status, 0);
   assert.deepEqual(JSON.parse(readFileSync(join(directory, 'request'), 'utf8')),
@@ -631,7 +631,7 @@ test('python client connect exchanges pair code, writes 0600 session file withou
       return {
         protocol: 'WEBSESSION-MCP-BRIDGE/1',
         state: 'ready',
-        signatures: ['dev_1mcp_read(path?: string)  Read UTF-8 text.', 'dev_1mcp_bash(command: string)  Run Bash.'],
+        signatures: ['dev_read(path?: string)  Read UTF-8 text.', 'dev_bash(command: string)  Run Bash.'],
       };
     }
     if (entry.method === 'GET' && entry.path === '/v1/instructions') {
@@ -652,7 +652,7 @@ test('python client connect exchanges pair code, writes 0600 session file withou
   assert.equal(connected.status, 0, connected.stderr);
   assert.equal(connected.stdout.includes(issuedSecret), false);
   assert.equal(connected.stderr.includes(issuedSecret), false);
-  assert.match(connected.stdout, /^CONNECTED\nbase: http:\/\/127\.0\.0\.1:[0-9]+\ncwd: \/home\/ubuntu\/repo\/webharness\ntools: 2\ndev_1mcp_read/);
+  assert.match(connected.stdout, /^CONNECTED\nbase: http:\/\/127\.0\.0\.1:[0-9]+\ncwd: \/home\/ubuntu\/repo\/webharness\ntools: 2\ndev_read/);
   assert.equal(statSync(sessionFile).mode & 0o777, 0o600);
   const saved = JSON.parse(readFileSync(sessionFile, 'utf8'));
   assert.equal(saved.cap, issuedSecret);
@@ -668,7 +668,7 @@ test('python client connect exchanges pair code, writes 0600 session file withou
 
   const sigs = await runPythonInput(['sigs'], env);
   assert.equal(sigs.status, 0, sigs.stderr);
-  assert.match(sigs.stdout, /dev_1mcp_bash\(command: string\)/);
+  assert.match(sigs.stdout, /dev_bash\(command: string\)/);
 
   const toolsCompact = await runPythonInput(['tools'], env);
   assert.equal(toolsCompact.status, 0, toolsCompact.stderr);
@@ -686,7 +686,7 @@ test('python client connect exchanges pair code, writes 0600 session file withou
   assert.equal(callPost.headers.authorization, `Bearer ${issuedSecret}`);
   assert.deepEqual(JSON.parse(callPost.body), {
     version: 1,
-    tool: 'dev_1mcp_bash',
+    tool: 'dev_bash',
     arguments: { command: 'echo hi', cwd: '/home/ubuntu/repo/webharness' },
   });
 });
@@ -699,12 +699,12 @@ test('python client harness subcommands resolve sticky cwd, accept stdin payload
   const batches = [];
   const { base } = await pythonFixture(t, (entry, fixtureBase) => {
     if (entry.method === 'GET' && entry.path === '/v1/tools') {
-      return { protocol: 'WEBSESSION-MCP-BRIDGE/1', state: 'ready', tool_count: 2, tools: ['dev_1mcp_read', 'dev_1mcp_search'] };
+      return { protocol: 'WEBSESSION-MCP-BRIDGE/1', state: 'ready', tool_count: 2, tools: ['dev_read', 'dev_search'] };
     }
     if (entry.method === 'POST' && entry.path === '/v1/calls') {
       const parsed = JSON.parse(entry.body);
       calls.push(parsed);
-      if (parsed.tool === 'dev_1mcp_review_changes') {
+      if (parsed.tool === 'dev_review_changes') {
         return completed(JSON.stringify({
           content: [{ type: 'text', text: '1 changed file\n--- patch ---\n+clean' }],
           structuredContent: { files: 1, patch: '+clean' },
@@ -743,21 +743,21 @@ test('python client harness subcommands resolve sticky cwd, accept stdin payload
   assert.equal((await runPythonInput(['ls', 'src', '--limit', '25'], env)).status, 0);
   assert.deepEqual(calls.at(-1), {
     version: 1,
-    tool: 'dev_1mcp_list_directory',
+    tool: 'dev_list_directory',
     arguments: { path: '/workspace/app/packages/core/src', limit: 25 },
   });
 
   assert.equal((await runPythonInput(['read', 'index.mjs', '10', '40', '--outline'], env)).status, 0);
   assert.deepEqual(calls.at(-1), {
     version: 1,
-    tool: 'dev_1mcp_read',
+    tool: 'dev_read',
     arguments: { path: '/workspace/app/packages/core/index.mjs', offset: 10, limit: 40, mode: 'outline' },
   });
 
   assert.equal((await runPythonInput(['read', '--targets'], env, '[{"path":"a.js","mode":"outline"},{"path":"/abs/b.js","limit":20}]')).status, 0);
   assert.deepEqual(calls.at(-1), {
     version: 1,
-    tool: 'dev_1mcp_read',
+    tool: 'dev_read',
     arguments: {
       targets: [
         { path: '/workspace/app/packages/core/a.js', mode: 'outline' },
@@ -778,12 +778,12 @@ test('python client harness subcommands resolve sticky cwd, accept stdin payload
 
   const bareNames = await runPythonInput(['tools', '--names'], env);
   assert.equal(bareNames.status, 0, bareNames.stderr);
-  assert.equal(bareNames.stdout, 'tool_count: 2\ndev_1mcp_read\ndev_1mcp_search\n');
+  assert.equal(bareNames.stdout, 'tool_count: 2\ndev_read\ndev_search\n');
 
   assert.equal((await runPythonInput(['rg', 'needle', 'src', '-g', '*.mjs', '-m', '15', '-F', '-s', '--all'], env)).status, 0);
   assert.deepEqual(calls.at(-1), {
     version: 1,
-    tool: 'dev_1mcp_search',
+    tool: 'dev_search',
     arguments: {
       pattern: 'needle',
       path: '/workspace/app/packages/core/src',
@@ -798,7 +798,7 @@ test('python client harness subcommands resolve sticky cwd, accept stdin payload
   assert.equal((await runPythonInput(['edit'], env, JSON.stringify({ path: 'index.mjs', oldText: 'a', newText: 'b', diff: true }))).status, 0);
   assert.deepEqual(calls.at(-1), {
     version: 1,
-    tool: 'dev_1mcp_edit',
+    tool: 'dev_edit',
     arguments: {
       diff: true,
       targets: [{ path: '/workspace/app/packages/core/index.mjs', edits: [{ oldText: 'a', newText: 'b' }] }],
@@ -808,7 +808,7 @@ test('python client harness subcommands resolve sticky cwd, accept stdin payload
   assert.equal((await runPythonInput(['write', 'notes/out.txt', '--overwrite', '--mkdir', '--mode', '644'], env, 'hello world\n')).status, 0);
   assert.deepEqual(calls.at(-1), {
     version: 1,
-    tool: 'dev_1mcp_write',
+    tool: 'dev_write',
     arguments: {
       path: '/workspace/app/packages/core/notes/out.txt',
       content: 'hello world\n',
@@ -827,26 +827,26 @@ test('python client harness subcommands resolve sticky cwd, accept stdin payload
   assert.equal(shStdin.status, 0, shStdin.stderr);
   assert.deepEqual(calls.at(-1), {
     version: 1,
-    tool: 'dev_1mcp_bash',
+    tool: 'dev_bash',
     arguments: { command: 'git status -sb\n', cwd: '/workspace/app/packages/core' },
   });
 
   const callsBeforeBatch = calls.length;
   const batchOut = await runPythonInput(['batch'], env, JSON.stringify([
-    { tool: 'dev_1mcp_read', arguments: { path: 'x.mjs', limit: 10 } },
-    { tool: 'dev_1mcp_search', arguments: { pattern: 'foo' } },
-    { tool: 'dev_1mcp_bash', arguments: { command: 'true' } },
+    { tool: 'dev_read', arguments: { path: 'x.mjs', limit: 10 } },
+    { tool: 'dev_search', arguments: { pattern: 'foo' } },
+    { tool: 'dev_bash', arguments: { command: 'true' } },
   ]));
   assert.equal(batchOut.status, 0, batchOut.stderr);
   assert.equal(calls.length, callsBeforeBatch, 'batch must use /v1/batch rather than sequential /v1/calls');
   assert.equal(batches.length, 1);
-  assert.match(batchOut.stdout, /=== \[1\/3\] dev_1mcp_read ===\ndev_1mcp_read:batch-ok[\s\S]*=== \[2\/3\] dev_1mcp_search ===\ndev_1mcp_search:batch-ok[\s\S]*=== \[3\/3\] dev_1mcp_bash ===\ndev_1mcp_bash:batch-ok/);
+  assert.match(batchOut.stdout, /=== \[1\/3\] dev_read ===\ndev_read:batch-ok[\s\S]*=== \[2\/3\] dev_search ===\ndev_search:batch-ok[\s\S]*=== \[3\/3\] dev_bash ===\ndev_bash:batch-ok/);
   assert.deepEqual(batches[0], {
     version: 1,
     calls: [
-      { tool: 'dev_1mcp_read', arguments: { path: '/workspace/app/packages/core/x.mjs', limit: 10 } },
-      { tool: 'dev_1mcp_search', arguments: { pattern: 'foo', path: '/workspace/app/packages/core' } },
-      { tool: 'dev_1mcp_bash', arguments: { command: 'true', cwd: '/workspace/app/packages/core' } },
+      { tool: 'dev_read', arguments: { path: '/workspace/app/packages/core/x.mjs', limit: 10 } },
+      { tool: 'dev_search', arguments: { pattern: 'foo', path: '/workspace/app/packages/core' } },
+      { tool: 'dev_bash', arguments: { command: 'true', cwd: '/workspace/app/packages/core' } },
     ],
   });
 

@@ -43,9 +43,9 @@ TIMEOUT_SECONDS = 120
 DEFAULT_MAX_OUTPUT = 8192
 USER_AGENT = "websession-client/1.0"
 TERMINAL_STATES = ("completed", "tool_failed", "unknown_outcome", "rejected", "expired")
-CWD_INJECT_TOOLS = ("dev_1mcp_bash", "dev_1mcp_exec", "dev_1mcp_review_changes", "dev_1mcp_file_ops")
-OPTIONAL_PATH_CWD_TOOLS = ("dev_1mcp_list_directory", "dev_1mcp_search")
-PATH_RESOLVE_TOOLS = ("dev_1mcp_read", "dev_1mcp_list_directory", "dev_1mcp_search", "dev_1mcp_write")
+CWD_INJECT_TOOLS = ("dev_bash", "dev_exec", "dev_review_changes", "dev_file_ops")
+OPTIONAL_PATH_CWD_TOOLS = ("dev_list_directory", "dev_search")
+PATH_RESOLVE_TOOLS = ("dev_read", "dev_list_directory", "dev_search", "dev_write")
 USAGE = (
     "usage: client.py connect BASE CODE [--cwd DIR]|about|tools [--names]|sigs|instructions|"
     "schema TOOL|pwd|cd DIR|ls [PATH]|read PATH [OFFSET] [LIMIT] [--outline]|"
@@ -485,7 +485,7 @@ def cmd_cd(args):
         print("cwd: (default)")
         return
     if args[0] == "~" or args[0].startswith("~/"):
-        home_lines = unwrap_mcp_text(call("dev_1mcp_bash", {"command": "printf '%s\\n' \"$HOME\""})).splitlines()
+        home_lines = unwrap_mcp_text(call("dev_bash", {"command": "printf '%s\\n' \"$HOME\""})).splitlines()
         remote_home = home_lines[0].strip() if home_lines else ""
         if not remote_home or not remote_home.startswith("/"):
             fail("could not resolve remote HOME for ~")
@@ -520,7 +520,7 @@ def cmd_ls(args):
         payload["path"] = resolved
     if entry_limit is not None:
         payload["limit"] = entry_limit
-    print(render_output(unwrap_mcp_text(call("dev_1mcp_list_directory", payload)), limit))
+    print(render_output(unwrap_mcp_text(call("dev_list_directory", payload)), limit))
 
 
 def cmd_read(args):
@@ -542,7 +542,7 @@ def cmd_read(args):
             normalized_targets.append(copy)
         payload = dict(loaded) if isinstance(loaded, dict) else {}
         payload["targets"] = normalized_targets
-        print(render_output(unwrap_mcp_text(call("dev_1mcp_read", payload)), limit))
+        print(render_output(unwrap_mcp_text(call("dev_read", payload)), limit))
         return
 
     outline = False
@@ -563,7 +563,7 @@ def cmd_read(args):
         payload["limit"] = parse_positive_int(positional[2], "limit")
     if outline:
         payload["mode"] = "outline"
-    print(render_output(unwrap_mcp_text(call("dev_1mcp_read", payload)), limit))
+    print(render_output(unwrap_mcp_text(call("dev_read", payload)), limit))
 
 
 def cmd_rg(args):
@@ -622,7 +622,7 @@ def cmd_rg(args):
         payload["case_sensitive"] = case_sensitive
     if include_all:
         payload["include_vendor"] = True
-    print(render_output(unwrap_mcp_text(call("dev_1mcp_search", payload)), limit))
+    print(render_output(unwrap_mcp_text(call("dev_search", payload)), limit))
 
 
 def cmd_edit(args):
@@ -662,7 +662,7 @@ def cmd_edit(args):
         }]
     else:
         fail("edit requires {\"targets\": [...]} or {\"path\": ..., \"oldText\": ..., \"newText\": ...}")
-    print(render_output(unwrap_mcp_text(call("dev_1mcp_edit", payload)), limit))
+    print(render_output(unwrap_mcp_text(call("dev_edit", payload)), limit))
 
 
 def cmd_write(args):
@@ -700,7 +700,7 @@ def cmd_write(args):
         payload["mkdir_parents"] = True
     if mode_val is not None:
         payload["mode"] = mode_val
-    print(render_output(unwrap_mcp_text(call("dev_1mcp_write", payload)), limit))
+    print(render_output(unwrap_mcp_text(call("dev_write", payload)), limit))
 
 
 def cmd_review(args):
@@ -711,7 +711,7 @@ def cmd_review(args):
         payload["cwd"] = cwd
     if args:
         payload["paths"] = list(args)
-    print(render_output(unwrap_mcp_text(call("dev_1mcp_review_changes", payload)), limit))
+    print(render_output(unwrap_mcp_text(call("dev_review_changes", payload)), limit))
 
 
 def prepare_batch_arguments(tool_name, raw_args):
@@ -723,7 +723,7 @@ def prepare_batch_arguments(tool_name, raw_args):
         args["path"] = cwd
     elif tool_name in PATH_RESOLVE_TOOLS and isinstance(args.get("path"), str):
         args["path"] = resolve_remote_path(args["path"], cwd)
-    if tool_name in ("dev_1mcp_read", "dev_1mcp_edit") and isinstance(args.get("targets"), list):
+    if tool_name in ("dev_read", "dev_edit") and isinstance(args.get("targets"), list):
         resolved_targets = []
         for item in args["targets"]:
             if isinstance(item, dict) and isinstance(item.get("path"), str):
@@ -810,7 +810,7 @@ def main(argv):
             print(cwd)
         else:
             limit = output_limit()
-            print(render_output(unwrap_mcp_text(call("dev_1mcp_bash", {"command": "pwd"})).strip(), limit))
+            print(render_output(unwrap_mcp_text(call("dev_bash", {"command": "pwd"})).strip(), limit))
     elif command == "cd":
         cmd_cd(rest)
     elif command == "ls":
@@ -859,7 +859,7 @@ def main(argv):
         cwd = sticky_cwd()
         if cwd:
             payload["cwd"] = cwd
-        print(render_output(call("dev_1mcp_bash", payload), limit))
+        print(render_output(call("dev_bash", payload), limit))
     else:
         fail(USAGE)
 

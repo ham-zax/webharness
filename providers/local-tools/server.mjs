@@ -230,6 +230,7 @@ export class InnerDirect1Mcp {
         '--config',
         configPath
       ],
+      env: { ONE_MCP_URI_SEPARATOR: INNER_TOOL_SEPARATOR },
       stderr: 'inherit'
     });
     const client = new Client({ name: 'mcp-dev-bridge-local-inner', version: '0.1.0' });

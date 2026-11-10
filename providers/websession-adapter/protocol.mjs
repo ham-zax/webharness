@@ -17,14 +17,15 @@ export function parseToolName(value) {
 }
 
 const ONEMCP_PREAMBLE = '# 1MCP - Model Context Protocol Proxy';
+const ONEMCP_TIPS_FOOTER = /\n+## Tips for Using 1MCP[\s\S]*$/;
 
 export function compactInstructions(instructions) {
   if (typeof instructions !== 'string' || !instructions) return instructions;
-  if (!instructions.startsWith(ONEMCP_PREAMBLE)) return instructions;
+  if (!instructions.startsWith(ONEMCP_PREAMBLE)) return instructions.replace(ONEMCP_TIPS_FOOTER, '').trim();
   const devBlock = instructions.match(/<dev>[\s\S]*/);
-  if (devBlock) return devBlock[0].trim();
+  if (devBlock) return devBlock[0].replace(ONEMCP_TIPS_FOOTER, '').trim();
   const blockStart = instructions.search(/<[a-zA-Z0-9_-]+>\s*\n/);
-  if (blockStart !== -1) return instructions.slice(blockStart).trim();
+  if (blockStart !== -1) return instructions.slice(blockStart).replace(ONEMCP_TIPS_FOOTER, '').trim();
   return '';
 }
 

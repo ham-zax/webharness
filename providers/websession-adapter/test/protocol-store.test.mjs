@@ -16,18 +16,18 @@ function encode(value) {
 }
 
 test('universal decoder preserves exact main tool names and arguments', () => {
-  const value = { version: 1, tool: 'dev_1mcp_read', arguments: { path: '/tmp/example.txt', offset: 2, limit: 5 } };
+  const value = { version: 1, tool: 'dev_read', arguments: { path: '/tmp/example.txt', offset: 2, limit: 5 } };
   const parsed = parseUniversalRequest(encode(value));
   assert.deepEqual(parsed.normalized, value);
 });
 
 test('enhanced JSON and universal GET normalize to the same request', () => {
-  const value = { version: 1, tool: 'code_1mcp_code_search', arguments: { query: 'needle', limit: 7 } };
+  const value = { version: 1, tool: 'code_code_search', arguments: { query: 'needle', limit: 7 } };
   assert.deepEqual(parseRequest(value), parseUniversalRequest(encode(value)));
 });
 
 test('tool-name decoder is canonical and exact', () => {
-  const name = 'terminal_1mcp_terminal_read';
+  const name = 'terminal_terminal_read';
   const encoded = Buffer.from(name).toString('base64url');
   assert.equal(decodeToolName(encoded), name);
   assert.throws(() => decodeToolName(`${encoded}=`), /invalid encoded tool name/);
@@ -35,10 +35,10 @@ test('tool-name decoder is canonical and exact', () => {
 
 test('universal decoder rejects extra fields and non-canonical encoding', () => {
   assert.throws(
-    () => parseUniversalRequest(encode({ version: 1, tool: 'dev_1mcp_read', arguments: { path: '/tmp/x' }, extra: true })),
+    () => parseUniversalRequest(encode({ version: 1, tool: 'dev_read', arguments: { path: '/tmp/x' }, extra: true })),
     /request fields must be exactly/,
   );
-  const canonical = encode({ version: 1, tool: 'dev_1mcp_read', arguments: { path: '/tmp/x' } });
+  const canonical = encode({ version: 1, tool: 'dev_read', arguments: { path: '/tmp/x' } });
   assert.throws(() => parseUniversalRequest(`${canonical}=`), /invalid encoded request/);
 });
 
@@ -51,7 +51,7 @@ test('store hashes main capabilities, deduplicates nonce reuse, and scopes conti
     assert.ok(principal);
     assert.equal(principal.scope, 'main');
 
-    const requestJson = JSON.stringify({ version: 1, tool: 'dev_1mcp_read', arguments: { path: '/tmp/x' } });
+    const requestJson = JSON.stringify({ version: 1, tool: 'dev_read', arguments: { path: '/tmp/x' } });
     const hash = requestHash(requestJson);
     const first = store.submitOperation(principal.id, 'nonce-1', requestJson, hash);
     const second = store.submitOperation(principal.id, 'nonce-1', requestJson, hash);
@@ -77,7 +77,7 @@ test('turn fences persist and reject queued calls from older turns', async () =>
   try {
     const issued = core.store.issueMainCapability(60);
     assert.equal(core.store.advanceTurn(issued.id, 1), true);
-    const requestJson = JSON.stringify({ version: 1, tool: 'dev_1mcp_bash', arguments: { command: 'true' } });
+    const requestJson = JSON.stringify({ version: 1, tool: 'dev_bash', arguments: { command: 'true' } });
     const old = core.store.submitOperation(issued.id, 'old', requestJson, requestHash(requestJson), { turnId: 1 });
     assert.equal(core.store.advanceTurn(issued.id, 2), true);
     assert.equal(core.store.advanceTurn(issued.id, 1), false);
@@ -100,10 +100,10 @@ test('universal confirmation is hashed, revocation-aware, idempotent, and interr
   try {
     const issued = store.issueMainCapability(60);
     const principal = store.resolveCapability(issued.token);
-    const requestJson = JSON.stringify({ version: 1, tool: 'dev_1mcp_write', arguments: { path: '/tmp/new.txt', content: 'hello' } });
+    const requestJson = JSON.stringify({ version: 1, tool: 'dev_write', arguments: { path: '/tmp/new.txt', content: 'hello' } });
     const hash = requestHash(requestJson);
     const prepared = store.submitOperation(principal.id, 'write-nonce', requestJson, hash, {
-      tool: 'dev_1mcp_write',
+      tool: 'dev_write',
       policyClass: 'confirmation_required',
       sourceProfile: 'universal-get-v1',
       state: 'confirmation_required',
@@ -129,7 +129,7 @@ test('universal confirmation is hashed, revocation-aware, idempotent, and interr
     const expiring = store.issueMainCapability(60);
     const expiringPrincipal = store.resolveCapability(expiring.token);
     const expiringPrepared = store.submitOperation(expiringPrincipal.id, 'expired-write', requestJson, hash, {
-      tool: 'dev_1mcp_write',
+      tool: 'dev_write',
       policyClass: 'confirmation_required',
       sourceProfile: 'universal-get-v1',
       state: 'confirmation_required',
@@ -142,7 +142,7 @@ test('universal confirmation is hashed, revocation-aware, idempotent, and interr
     const revoked = store.issueMainCapability(60);
     const revokedPrincipal = store.resolveCapability(revoked.token);
     const revokedPrepared = store.submitOperation(revokedPrincipal.id, 'revoked-write', requestJson, hash, {
-      tool: 'dev_1mcp_write',
+      tool: 'dev_write',
       policyClass: 'confirmation_required',
       sourceProfile: 'universal-get-v1',
       state: 'confirmation_required',
@@ -163,7 +163,7 @@ test('completed results are stored as immutable UTF-8 chunks', () => {
   try {
     const issued = store.issueMainCapability(60);
     const principal = store.resolveCapability(issued.token);
-    const requestJson = JSON.stringify({ version: 1, tool: 'dev_1mcp_read', arguments: { path: '/tmp/large' } });
+    const requestJson = JSON.stringify({ version: 1, tool: 'dev_read', arguments: { path: '/tmp/large' } });
     const submitted = store.submitOperation(principal.id, 'chunk-nonce', requestJson, requestHash(requestJson));
     assert.equal(store.getOperationResult('missing-operation'), undefined);
     assert.equal(store.getOperationResult(submitted.operation.id), undefined);
@@ -198,7 +198,7 @@ test('full-result reads require the operation continuation token', () => {
   const core = new OperationCore({ stateDir });
   try {
     const issued = core.store.issueMainCapability(60);
-    const requestJson = JSON.stringify({ version: 1, tool: 'dev_1mcp_read', arguments: {} });
+    const requestJson = JSON.stringify({ version: 1, tool: 'dev_read', arguments: {} });
     const submitted = core.store.submitOperation(issued.id, 'result-nonce', requestJson, requestHash(requestJson));
     const id = submitted.operation.id;
     const continuation = core.store.continuationToken(id);
@@ -370,8 +370,8 @@ test('1MCP preamble is compacted while server blocks and other guidance stay int
   assert.equal(compactInstructions(null), null);
   assert.equal(compactInstructions(42), 42);
 
-  const tools = [{ name: 'dev_1mcp_read' }];
-  const base = { protocol: 'WEBSESSION-MCP-BRIDGE/1', state: 'ready', tool_count: 1, tools: ['dev_1mcp_read'] };
+  const tools = [{ name: 'dev_read' }];
+  const base = { protocol: 'WEBSESSION-MCP-BRIDGE/1', state: 'ready', tool_count: 1, tools: ['dev_read'] };
   assert.deepEqual(toolListSnapshot(tools, owner, '/tmp/project'), { ...base, instructions: owner, default_cwd: '/tmp/project' });
   assert.deepEqual(toolListSnapshot(tools, owner), { ...base, instructions: owner });
   assert.deepEqual(toolListSnapshot(tools, instructions, '/tmp/project'), { ...base, instructions: compacted, default_cwd: '/tmp/project' });
@@ -560,12 +560,12 @@ test('a capability default cwd resolves missing cwd and relative paths across De
   const stateDir = mkdtempSync(join(tmpdir(), 'websession-default-cwd-'));
   const calls = [];
   const tools = [
-    { name: 'dev_1mcp_bash', description: 'Run a command.', inputSchema: { type: 'object' } },
-    { name: 'dev_1mcp_read', description: 'Read a file.', inputSchema: { type: 'object' }, annotations: { readOnlyHint: true } },
-    { name: 'dev_1mcp_edit', description: 'Edit files.', inputSchema: { type: 'object' } },
-    { name: 'dev_1mcp_write', description: 'Write a file.', inputSchema: { type: 'object' } },
-    { name: 'dev_1mcp_list_directory', description: 'List directory.', inputSchema: { type: 'object' }, annotations: { readOnlyHint: true } },
-    { name: 'dev_1mcp_search', description: 'Search files.', inputSchema: { type: 'object' }, annotations: { readOnlyHint: true } },
+    { name: 'dev_bash', description: 'Run a command.', inputSchema: { type: 'object' } },
+    { name: 'dev_read', description: 'Read a file.', inputSchema: { type: 'object' }, annotations: { readOnlyHint: true } },
+    { name: 'dev_edit', description: 'Edit files.', inputSchema: { type: 'object' } },
+    { name: 'dev_write', description: 'Write a file.', inputSchema: { type: 'object' } },
+    { name: 'dev_list_directory', description: 'List directory.', inputSchema: { type: 'object' }, annotations: { readOnlyHint: true } },
+    { name: 'dev_search', description: 'Search files.', inputSchema: { type: 'object' }, annotations: { readOnlyHint: true } },
   ];
   const { server } = startToolFixture(t, tools, async (name, args) => {
     calls.push({ name, args });
@@ -590,25 +590,25 @@ test('a capability default cwd resolves missing cwd and relative paths across De
       assert.equal(core.store.getOperation(sub.operation.id).state, 'completed');
     };
 
-    await runOne('c-bash-1', 'dev_1mcp_bash', { command: 'pwd' });
+    await runOne('c-bash-1', 'dev_bash', { command: 'pwd' });
     assert.deepEqual(calls.at(-1).args, { command: 'pwd', cwd: '/tmp/default-work' });
 
-    await runOne('c-bash-2', 'dev_1mcp_bash', { command: 'pwd', cwd: '/tmp/explicit' });
+    await runOne('c-bash-2', 'dev_bash', { command: 'pwd', cwd: '/tmp/explicit' });
     assert.deepEqual(calls.at(-1).args, { command: 'pwd', cwd: '/tmp/explicit' });
 
-    await runOne('c-ls-1', 'dev_1mcp_list_directory', {});
+    await runOne('c-ls-1', 'dev_list_directory', {});
     assert.deepEqual(calls.at(-1).args, { path: '/tmp/default-work' });
 
-    await runOne('c-search-1', 'dev_1mcp_search', { pattern: 'foo', path: 'src' });
+    await runOne('c-search-1', 'dev_search', { pattern: 'foo', path: 'src' });
     assert.deepEqual(calls.at(-1).args, { pattern: 'foo', path: '/tmp/default-work/src' });
 
-    await runOne('c-read-1', 'dev_1mcp_read', { targets: [{ path: 'a.mjs' }, { path: '/abs/b.mjs' }] });
+    await runOne('c-read-1', 'dev_read', { targets: [{ path: 'a.mjs' }, { path: '/abs/b.mjs' }] });
     assert.deepEqual(calls.at(-1).args, { targets: [{ path: '/tmp/default-work/a.mjs' }, { path: '/abs/b.mjs' }] });
 
-    await runOne('c-edit-1', 'dev_1mcp_edit', { targets: [{ path: 'sub/x.mjs', edits: [] }] });
+    await runOne('c-edit-1', 'dev_edit', { targets: [{ path: 'sub/x.mjs', edits: [] }] });
     assert.deepEqual(calls.at(-1).args, { targets: [{ path: '/tmp/default-work/sub/x.mjs', edits: [] }] });
 
-    await runOne('c-write-1', 'dev_1mcp_write', { path: 'out.txt', content: 'hi' });
+    await runOne('c-write-1', 'dev_write', { path: 'out.txt', content: 'hi' });
     assert.deepEqual(calls.at(-1).args, { path: '/tmp/default-work/out.txt', content: 'hi' });
   } finally {
     await core.close();
@@ -620,8 +620,8 @@ test('POST /v1/batch executes read-only calls concurrently in one HTTP request a
   const stateDir = mkdtempSync(join(tmpdir(), 'websession-batch-http-'));
   t.after(() => rmSync(stateDir, { recursive: true, force: true }));
   const tools = [
-    { name: 'dev_1mcp_read', description: 'Read file.', inputSchema: { type: 'object' }, annotations: { readOnlyHint: true } },
-    { name: 'dev_1mcp_search', description: 'Search.', inputSchema: { type: 'object' }, annotations: { readOnlyHint: true } },
+    { name: 'dev_read', description: 'Read file.', inputSchema: { type: 'object' }, annotations: { readOnlyHint: true } },
+    { name: 'dev_search', description: 'Search.', inputSchema: { type: 'object' }, annotations: { readOnlyHint: true } },
   ];
   const { events, server } = startToolFixture(t, tools, async (name, args, log) => {
     log.push({ name, args, phase: 'start', at: Date.now() });
@@ -668,8 +668,8 @@ test('POST /v1/batch executes read-only calls concurrently in one HTTP request a
     body: JSON.stringify({
       version: 1,
       calls: [
-        { tool: 'dev_1mcp_read', arguments: { path: 'one.mjs' } },
-        { tool: 'dev_1mcp_search', arguments: { pattern: 'x' } },
+        { tool: 'dev_read', arguments: { path: 'one.mjs' } },
+        { tool: 'dev_search', arguments: { pattern: 'x' } },
       ],
     }),
   });
@@ -679,9 +679,9 @@ test('POST /v1/batch executes read-only calls concurrently in one HTTP request a
   assert.equal(body.state, 'ready');
   assert.equal(body.results.length, 2);
   assert.equal(body.results[0].state, 'completed');
-  assert.equal(body.results[0].result, 'dev_1mcp_read:/workspace/demo/one.mjs');
+  assert.equal(body.results[0].result, 'dev_read:/workspace/demo/one.mjs');
   assert.equal(body.results[1].state, 'completed');
-  assert.equal(body.results[1].result, 'dev_1mcp_search:/workspace/demo');
+  assert.equal(body.results[1].result, 'dev_search:/workspace/demo');
   assert.ok(elapsedMs < 350 || events.filter(e => e.phase === 'start').every(e => e.at < events.find(x => x.phase === 'end').at), 'batch read-only calls overlapped');
 
   const staleTurn = await fetch(batchUrl, {
@@ -692,7 +692,7 @@ test('POST /v1/batch executes read-only calls concurrently in one HTTP request a
       'idempotency-key': 'stale-batch-2',
       'x-turn-id': '3',
     },
-    body: JSON.stringify({ version: 1, calls: [{ tool: 'dev_1mcp_read', arguments: { path: 'one.mjs' } }] }),
+    body: JSON.stringify({ version: 1, calls: [{ tool: 'dev_read', arguments: { path: 'one.mjs' } }] }),
   });
   assert.equal(staleTurn.status, 409);
   assert.equal((await staleTurn.json()).code, 'superseded_by_newer_turn');
@@ -706,7 +706,7 @@ test('POST /v1/batch executes read-only calls concurrently in one HTTP request a
       'idempotency-key': key,
       'x-turn-id': '4',
     },
-    body: JSON.stringify({ version: 1, calls: [{ tool: 'dev_1mcp_read', arguments: { path } }] }),
+    body: JSON.stringify({ version: 1, calls: [{ tool: 'dev_read', arguments: { path } }] }),
   });
   const firstKey = await postBatch(`${longKey}11111111`, 'first.mjs');
   assert.equal(firstKey.status, 200);
@@ -715,7 +715,7 @@ test('POST /v1/batch executes read-only calls concurrently in one HTTP request a
   assert.equal(secondKey.status, 200, 'full-length keys sharing a prefix must remain distinct');
   const secondResult = (await secondKey.json()).results[0];
   assert.notEqual(firstResult.operation_id, secondResult.operation_id);
-  assert.equal(secondResult.result, 'dev_1mcp_read:/workspace/demo/second.mjs');
+  assert.equal(secondResult.result, 'dev_read:/workspace/demo/second.mjs');
   const replay = await postBatch(`${longKey}11111111`, 'first.mjs');
   assert.equal(replay.status, 200);
   assert.equal((await replay.json()).results[0].operation_id, firstResult.operation_id);
@@ -728,7 +728,7 @@ test('batch admission rolls back earlier mutations and turn fences on a later co
   core._schedule = id => scheduled.push(id);
   try {
     const issued = core.store.issueMainCapability(600);
-    const request = command => parseRequest({ version: 1, tool: 'dev_1mcp_bash', arguments: { command } });
+    const request = command => parseRequest({ version: 1, tool: 'dev_bash', arguments: { command } });
     const nonce = 'atomic-batch';
     const hash = createHash('sha256').update(nonce).digest('base64url');
     core.submit(issued.token, `batch.${hash}.1`, request('original'), 'json-post-v1', 4, { deferSchedule: true });

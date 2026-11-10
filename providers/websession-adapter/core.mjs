@@ -4,10 +4,10 @@ import { requestHash, AdapterStore } from './store.mjs';
 import { callMcpTool, closeMcpPools, listMcpTools } from './mcp-client.mjs';
 
 const MAX_RESULT_BYTES = 1024 * 1024;
-const DEFAULT_CWD_TOOLS = new Set(['dev_1mcp_bash', 'dev_1mcp_exec', 'dev_1mcp_review_changes', 'dev_1mcp_file_ops']);
-const OPTIONAL_PATH_CWD_TOOLS = new Set(['dev_1mcp_list_directory', 'dev_1mcp_search']);
-const RELATIVE_PATH_TOOLS = new Set(['dev_1mcp_read', 'dev_1mcp_write', 'dev_1mcp_list_directory', 'dev_1mcp_search']);
-const TARGET_PATH_TOOLS = new Set(['dev_1mcp_read', 'dev_1mcp_edit']);
+const DEFAULT_CWD_TOOLS = new Set(['dev_bash', 'dev_exec', 'dev_review_changes', 'dev_file_ops']);
+const OPTIONAL_PATH_CWD_TOOLS = new Set(['dev_list_directory', 'dev_search']);
+const RELATIVE_PATH_TOOLS = new Set(['dev_read', 'dev_write', 'dev_list_directory', 'dev_search']);
+const TARGET_PATH_TOOLS = new Set(['dev_read', 'dev_edit']);
 
 function resolveAgainstDefaultCwd(rawPath, defaultCwd) {
   if (typeof rawPath !== 'string' || !rawPath) return rawPath;
@@ -78,11 +78,11 @@ export class OperationCore {
     this._active = new Map();
     this._tail = Promise.resolve();
     this._readOnlyTools = new Set([
-      'dev_1mcp_read',
-      'dev_1mcp_list_directory',
-      'dev_1mcp_search',
-      'dev_1mcp_review_changes',
-      'dev_1mcp_wait',
+      'dev_read',
+      'dev_list_directory',
+      'dev_search',
+      'dev_review_changes',
+      'dev_wait',
     ]);
   }
 
