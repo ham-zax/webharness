@@ -6,6 +6,7 @@ import test from 'node:test';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import {
+  BROKER_TOOL_NAMES,
   DEFAULT_INNER_IDLE_MS,
   InnerDirect1Mcp,
   LazyInner1Mcp,
@@ -112,6 +113,43 @@ test('model-facing broker exposes discovery, call, fallback, and batch', async t
 
   const result = await client.callTool({ name: 'tool_call', arguments: { server: 'browser', tool: 'take_screenshot' } });
   assert.deepEqual(result.content, image.content);
+});
+
+test('unknown broker tool errors list the valid tools and translate flat downstream names', async t => {
+  const broker = {
+    async list() { return { tools: [], hasMore: false }; },
+    async schema() { return {}; },
+    async call() { return { content: [] }; }
+  };
+  const server = createLocalBrokerServer({ broker });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const client = new Client({ name: 'local-tools-test', version: '1.0.0' });
+  t.after(async () => {
+    await client.close();
+    await server.close();
+  });
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+
+  const { tools } = await client.listTools();
+  assert.deepEqual([...BROKER_TOOL_NAMES].sort(), tools.map(tool => tool.name).sort(), 'BROKER_TOOL_NAMES must match the advertised tools');
+
+  const flat = await client.callTool({ name: 'terminal_1mcp_terminal_open', arguments: {} });
+  assert.equal(flat.isError, true);
+  assert.equal(flat.structuredContent.error.code, 'UNKNOWN_BROKER_TOOL');
+  assert.match(flat.content[0].text, /call tool_call with \{"server":"terminal","tool":"terminal_open","arguments":\{\.\.\.\}\}/);
+  assert.match(flat.content[0].text, /valid broker tools: tool_list, tool_schema, tool_call, fallback_dispatch, tool_batch/);
+
+  const nested = await client.callTool({ name: 'browser_1mcp_a_1mcp_b', arguments: {} });
+  assert.match(nested.content[0].text, /"server":"browser","tool":"a_1mcp_b"/);
+
+  const plain = await client.callTool({ name: 'bogus', arguments: {} });
+  assert.match(plain.content[0].text, /unknown broker tool: bogus; valid broker tools: /);
+  assert.doesNotMatch(plain.content[0].text, /"server"/);
+
+  const huge = await client.callTool({ name: `a_1mcp_${'x'.repeat(500)}`, arguments: {} });
+  assert.ok(huge.content[0].text.length < 500, 'oversized names are truncated and not echoed as routing hints');
+  assert.doesNotMatch(huge.content[0].text, /"server"/);
 });
 
 test('tool_list without server discovers logical servers and filters only server names', async t => {
