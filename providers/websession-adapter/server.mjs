@@ -183,6 +183,8 @@ async function handleUniversalGet(req, res, parts) {
       `call_url: ${base}/v1/calls`,
       'call_body: {"version":1,"tool":"<tool_name>","arguments":{...}}',
       'call_headers: Authorization: Bearer <capability>; Content-Type: application/json; Idempotency-Key: <fresh nonce>',
+      'idempotency_key: Generate in your runtime (Python: uuid.uuid4().hex or secrets.token_urlsafe(16)); must match ^[A-Za-z0-9._-]{1,64}$. Do not rely on uuidgen or /proc/sys/kernel/random/uuid in a sandbox. Prefer the served Python client.',
+      'operation_results: Poll the returned status_url verbatim (optional wait query only); do not reconstruct tokens or operation IDs. For completed with chunk_count > 1, fetch chunk_base_url + numbers 1 through chunk_count and join content in order. A not_found response does not justify resubmitting the call; never automatically retry unknown_outcome.',
       'batch: Discover local_1mcp_tool_batch in the authenticated tool catalog when available; it batches independent Local calls, not Dev file writes.',
       'multi_file_edit: Discover dev_1mcp_edit in the authenticated tool catalog; it supports edits to multiple existing files in one call.',
       `raw_url: ${base}/v1/raw?path=<absolute-tmp-file-path> (Bearer capability required; maximum 10 MiB)`,

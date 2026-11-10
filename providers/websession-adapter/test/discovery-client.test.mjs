@@ -169,6 +169,40 @@ function completed(result, base) {
 
 const OMISSION = /^([\s\S]*?)\n\[ws: ([0-9]+) of ([0-9]+) bytes shown, middle omitted; full output: (\/\S+); WS_MAX_OUTPUT=0 prints everything\]\n([\s\S]*)\n$/;
 
+test('python client generates a fresh valid runtime idempotency key for each call', async (t) => {
+  const { base, requests } = await pythonFixture(t, () => completed('ok', base));
+  for (let index = 0; index < 2; index += 1) {
+    const run = await runPython(['call', 'echo', '{}'], { WS_BASE: base });
+    assert.equal(run.status, 0, run.stderr);
+    assert.equal(run.stdout, 'ok\n');
+  }
+  assert.equal(requests.length, 2);
+  const keys = requests.map(entry => entry.headers['idempotency-key']);
+  for (const key of keys) {
+    assert.equal(typeof key, 'string');
+    assert.match(key, /^[A-Za-z0-9._-]{1,64}$/);
+  }
+  assert.notEqual(keys[0], keys[1]);
+});
+
+test('python client preserves an opaque status URL and stops on not_found without resubmitting', async (t) => {
+  const statusPath = '/v1/operations/opaque-continuation/opaque-operation';
+  const { base, requests } = await pythonFixture(t, (entry, base, req, res) => {
+    if (entry.method === 'POST') {
+      return { state: 'running', status_url: `${base}${statusPath}?source=original` };
+    }
+    res.writeHead(404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ state: 'rejected', code: 'not_found' }));
+  });
+  const run = await runPython(['call', 'echo', '{}'], { WS_BASE: base });
+  assert.equal(run.status, 1);
+  assert.match(run.stderr, /HTTP 404.*not_found/);
+  assert.deepEqual(requests.map(entry => [entry.method, entry.path]), [
+    ['POST', '/v1/calls'], ['GET', statusPath],
+  ]);
+  assert.equal(requests[1].query.get('source'), 'original');
+});
+
 test('python client bounds multi-byte output and saves the exact result at 0600', async (t) => {
   const full = `HEAD${'🌍✓'.repeat(4000)}TAIL`;
   const { base, requests } = await pythonFixture(t, entry => {
