@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { IdleExecutionWorker, serveExecutionWorker } from './idle-worker.mjs';
 import { pruneBashSpools } from './spool-gc.mjs';
 import { DEFAULT_LIST_LIMIT, MAX_LIST_DEPTH, MAX_LIST_LIMIT, runListDirectory } from './list-directory.mjs';
+import { DEFAULT_MAX_OUTPUT_BYTES } from './output-limits.mjs';
 import {
   DEFAULT_SEARCH_MAX_PER_FILE,
   DEFAULT_SEARCH_MAX_RESULTS,
@@ -114,7 +115,7 @@ if (typeof stateDir !== 'string' || !path.isAbsolute(stateDir)) {
   process.exit(2);
 }
 
-const maxOutputBytes = Number(process.env.MCP_DEV_MAX_OUTPUT_BYTES ?? '65536');
+const maxOutputBytes = Number(process.env.MCP_DEV_MAX_OUTPUT_BYTES ?? String(DEFAULT_MAX_OUTPUT_BYTES));
 if (!Number.isInteger(maxOutputBytes) || maxOutputBytes <= 0 || maxOutputBytes > 16 * 1024 * 1024) {
   console.error('MCP_DEV_MAX_OUTPUT_BYTES must be an integer from 1 to 16777216');
   process.exit(2);

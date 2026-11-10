@@ -15,7 +15,7 @@ Local machine-specific values come from `.env` (or another file passed with `--e
 MCP_WORKSPACE_ROOT=/absolute/path/to/code
 MCP_PUBLIC_URL=https://mcp.example.com
 MCP_TUNNEL_NAME=
-MCP_DEV_MAX_OUTPUT_BYTES=65536
+MCP_DEV_MAX_OUTPUT_BYTES=16384
 MCP_DEV_READ_DEFAULT_LINES=160
 MCP_DEV_IMPORT_MAX_BYTES=104857600
 MCP_DEV_MAX_SPOOL_BYTES=67108864
@@ -32,6 +32,8 @@ MCP_LOCAL_SERVERS_FILE=
 ```
 
 `MCP_PUBLIC_URL` is the externally reachable HTTPS MCP origin. `MCP_ONE_MCP_PORT` selects the loopback 1MCP listener port and defaults to `3050`. Set Cloudflare's origin service to the same port. This is useful when WSL mirrored networking reserves the default port on the Windows host.
+
+`MCP_DEV_MAX_OUTPUT_BYTES` caps the output one `exec` or `bash` result returns to the model and defaults to `16384`. Every result stays in conversation context and is re-billed on each later turn, so a small cap is cheaper. Capped results keep the head and tail, report how many bytes were omitted, and retain the complete output at `full_output_path`; raise the cap only for deployments that need larger inline results.
 
 `MCP_TUNNEL_NAME` controls only the locally-managed Cloudflare startup command. Empty/unset, as on the maintained workstation, runs `cloudflared tunnel run` and relies on the operator-owned default `~/.cloudflared/config.yml` for tunnel identity. A non-empty value runs `cloudflared tunnel run <name>`. That named selector is implemented but is not the maintained workstation path.
 
@@ -162,7 +164,7 @@ Generated provider commands contain the repository root used during rendering. I
 
 `MCP_DEV_READ_DEFAULT_LINES` controls how many lines Dev `read` returns when no `limit` is supplied (default 160, range 0..100000). Set it in the deployment environment or `.env`; the renderer carries it into every Dev provider, including the Personal fallback mirror. `0` disables this default line limit; the reader's 2000-line ceiling and 16 KiB text-content budget still apply. An explicit `limit` overrides the default line count. Truncated reads report total file bytes and the next line offset; complete lines are preserved. An individual line larger than the byte budget returns a diagnostic recommending a focused command extract. Binary and invalid UTF-8 files are rejected.
 
-`MCP_DEV_MAX_OUTPUT_BYTES` is deployment policy, not a model-facing tool argument. It defaults to 65536 bytes: a command result shows the output tail within that budget and, when it truncates, reports the total observed byte count and a retained-output path. Retained output has its own storage ceiling described below. Commands append a compact status/timing footer such as `[exit 0 · 0.3s]`; timeout, cancellation and termination are distinguished from normal exits. Increase the output budget only when the operator deliberately wants larger model-visible results.
+`MCP_DEV_MAX_OUTPUT_BYTES` is deployment policy, not a model-facing tool argument. It defaults to 16384 bytes: a command result shows the output tail within that budget and, when it truncates, reports the total observed byte count and a retained-output path. Retained output has its own storage ceiling described below. Commands append a compact status/timing footer such as `[exit 0 · 0.3s]`; timeout, cancellation and termination are distinguished from normal exits. Increase the output budget only when the operator deliberately wants larger model-visible results.
 
 Local `terminal_read` has a separate model-facing `max_bytes` argument (default 16384, range 1..65536), subject to the broker's configured ceiling. A transcript read advances the persisted model cursor only past the returned bytes; if more remain, the result reports continuation cursors. Repeat the same read to retrieve the next page. A budget too small for the next UTF-8 character reports no progress and asks for a larger budget. `snapshot=true` bounds the screen locally, marks truncation, and never advances the transcript cursor.
 

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { loadPolicy } from '../providers/skill-library/policy.mjs';
+import { DEFAULT_MAX_OUTPUT_BYTES } from '../providers/pi-dev/output-limits.mjs';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { constants as fsConstants } from 'node:fs';
@@ -319,7 +320,7 @@ export async function renderConfig(options) {
     }
   }
 
-  const devMaxOutputBytesRaw = deployment.MCP_DEV_MAX_OUTPUT_BYTES ?? '65536';
+  const devMaxOutputBytesRaw = deployment.MCP_DEV_MAX_OUTPUT_BYTES ?? String(DEFAULT_MAX_OUTPUT_BYTES);
   const devMaxOutputBytes = Number(devMaxOutputBytesRaw);
   if (!Number.isInteger(devMaxOutputBytes) || devMaxOutputBytes <= 0 || devMaxOutputBytes > 16 * 1024 * 1024) {
     throw new Error('MCP_DEV_MAX_OUTPUT_BYTES must be an integer from 1 to 16777216');

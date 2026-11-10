@@ -12,6 +12,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { BrokerClient } from '../../terminal/broker-client.mjs';
 import { makeSandbox, onceExit, startBroker } from '../../terminal/test/helpers.mjs';
+import { DEFAULT_MAX_OUTPUT_BYTES } from '../output-limits.mjs';
 import { runReviewChanges } from '../review-changes.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -1255,7 +1256,7 @@ test('write overwrite works through the MCP boundary and reports what happened',
   });
 });
 
-test('command output defaults to a 64 KiB tail with the full output retained, not a 1 MiB dump', async () => {
+test('command output defaults to the shared 16 KiB cap with the full output retained, not a 1 MiB dump', async () => {
   const { env } = await fixture();
   const withoutExplicitCap = { ...env };
   delete withoutExplicitCap.MCP_DEV_MAX_OUTPUT_BYTES;
@@ -1266,7 +1267,10 @@ test('command output defaults to a 64 KiB tail with the full output retained, no
     });
     const text = textOf(result);
     assert.match(text, /\[truncated · 300003 bytes total · saved on remote host: .+\]\n\[exit 0 · \d+\.\ds\]$/);
-    assert.ok(text.length > 60_000 && text.length < 70_000, `unexpected result size ${text.length}`);
+    assert.ok(
+      text.length > DEFAULT_MAX_OUTPUT_BYTES * 0.9 && text.length < DEFAULT_MAX_OUTPUT_BYTES * 1.2,
+      `unexpected result size ${text.length}`
+    );
     assert.match(text, /aEND\n/);
   });
 });

@@ -4,6 +4,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { pruneBashSpools, runBash, runExec } from '../shell.mjs';
+import { DEFAULT_MAX_OUTPUT_BYTES } from '../output-limits.mjs';
 
 const tempDir = prefix => fs.mkdtemp(path.join(os.tmpdir(), prefix));
 
@@ -574,4 +575,20 @@ test('bounded head plus tail keeps multibyte characters whole at both cut points
   assert.equal(result.output.includes('\uFFFD'), false);
   assert.match(result.output, /\n\[\.\.\. \d+ bytes omitted \.\.\.\]\n/);
   assert.ok(result.output.length > 0);
+});
+
+test('default output cap keeps one result small while the full output stays retrievable', async () => {
+  assert.equal(DEFAULT_MAX_OUTPUT_BYTES, 16 * 1024);
+  const total = 200_000;
+  const result = await runExec({
+    workspaceRoot: await tempDir('pi-exec-default-cap-root-'),
+    argv: [process.execPath, '-e', `process.stdout.write('x'.repeat(${total}))`],
+    maxOutputBytes: DEFAULT_MAX_OUTPUT_BYTES,
+    stateDir: await tempDir('pi-exec-default-cap-state-')
+  });
+  assert.equal(result.truncated, true);
+  assert.equal(result.output_bytes, total);
+  assert.ok(Buffer.byteLength(result.output, 'utf8') <= DEFAULT_MAX_OUTPUT_BYTES);
+  assert.match(result.output, /bytes omitted/);
+  assert.equal((await fs.stat(result.full_output_path)).size, total);
 });
