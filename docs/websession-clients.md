@@ -146,7 +146,7 @@ Client environment overrides:
 - `WS_CWD` overrides the saved cwd; an empty value disables client-side cwd injection.
 - `WS_WAIT` selects the initial POST hold in whole seconds (`0..90`, default `2`). `0` returns the operation recovery URL promptly; later status reads long-poll it.
 - `WS_TURN_ID` enables the existing cooperative turn fence. Assign increasing turn numbers when several requests share a capability.
-- `WS_MAX_OUTPUT` caps displayed UTF-8 payload bytes (default `8192`; `0` prints everything).
+- `WS_MAX_OUTPUT` caps displayed UTF-8 payload bytes (default `4096`; `0` prints everything).
 
 A large Python-client result prints its head and tail and saves the complete text in a private temporary file **in the calling sandbox**. Dev command truncation instead names an output file **on the remote host**. Use the printed location to read the right file; do not repeat a mutation just to retrieve omitted output.
 

@@ -217,7 +217,7 @@ test('python client bounds multi-byte output and saves the exact result at 0600'
   t.after(() => rmSync(path, { force: true }));
   assert.match(path, /\/webharness-result-[^/]+\.txt$/);
   assert.equal(Number(total), Buffer.byteLength(full, 'utf8'));
-  assert.ok(Number(shown) <= 8192);
+  assert.ok(Number(shown) <= 4096, 'default display limit is 4096 bytes, matching DEFAULT_MAX_OUTPUT in client.py');
   assert.equal(Number(shown), Buffer.byteLength(prefix, 'utf8') + Buffer.byteLength(suffix, 'utf8'));
   assert.ok(prefix.length > 0);
   assert.ok(suffix.length > 0);

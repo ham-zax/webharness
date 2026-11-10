@@ -7,7 +7,7 @@ Environment:
   WS_CWD           optional default remote working directory (overrides session file)
   WS_WAIT          initial POST wait=N seconds, 0..90 (default 2)
   WS_TURN_ID       optional monotonically increasing turn number
-  WS_MAX_OUTPUT    display limit in UTF-8 bytes, default 8192 (0 prints everything)
+  WS_MAX_OUTPUT    display limit in UTF-8 bytes, default 4096 (0 prints everything)
   WH_SESSION_FILE  optional session file path, default ~/.wh/session.json (mode 0600)
 
 Usage:
