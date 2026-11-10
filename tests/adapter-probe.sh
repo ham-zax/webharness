@@ -102,16 +102,35 @@ test "$REVOKED_HTTP" = 404
 
 CONNECT_PROMPT="$(adapter connect --cwd "$TMP/home" --ttl 120 --pair-ttl 60)"
 grep -Fq 'WebSession pairing ready' <<<"$CONNECT_PROMPT"
-grep -Fq "$BASE/v1/client.py" <<<"$CONNECT_PROMPT"
+grep -Fq "POST $BASE/v1/pair" <<<"$CONNECT_PROMPT"
+if grep -Fq '/tmp/wh.py' <<<"$CONNECT_PROMPT"; then
+  echo 'default pairing prompt must not bootstrap a downloaded executable' >&2
+  exit 1
+fi
 PAIR_CAP_ID="$(sed -n 's/^  capability_id:   //p' <<<"$CONNECT_PROMPT")"
-PAIR_CODE="$(sed -n "s|.*connect $BASE \([a-z0-9-]*\).*|\1|p" <<<"$CONNECT_PROMPT")"
+PAIR_CODE="$(sed -n 's/^Pair code: //p' <<<"$CONNECT_PROMPT")"
 test -n "$PAIR_CAP_ID"
 test -n "$PAIR_CODE"
-curl -fsS "$BASE/v1/client.py" -o "$TMP/wh.py"
-CONNECT_OUT="$(WH_SESSION_FILE="$TMP/wh-session.json" WS_BASE='' WS_CAP='' python3 "$TMP/wh.py" connect "$BASE" "$PAIR_CODE")"
+CONNECT_OUT="$(python3 - "$BASE" "$PAIR_CODE" <<'PYTHON'
+import json
+import sys
+import urllib.request
+base, code = sys.argv[1:]
+request = urllib.request.Request(base + '/v1/pair', data=json.dumps({'code': code}).encode(), headers={'Content-Type': 'application/json'}, method='POST')
+with urllib.request.urlopen(request, timeout=30) as response:
+    paired = json.load(response)
+assert paired['state'] == 'ready'
+request = urllib.request.Request(base + '/v1/signatures', headers={'Authorization': 'Bearer ' + paired['capability']})
+with urllib.request.urlopen(request, timeout=30) as response:
+    discovery = json.load(response)
+assert discovery['state'] == 'ready'
+assert len(discovery['signatures']) == 4
+print('CONNECTED')
+print('cwd: ' + paired['default_cwd'])
+PYTHON
+)"
 grep -Fq 'CONNECTED' <<<"$CONNECT_OUT"
 grep -Fq "cwd: $TMP/home" <<<"$CONNECT_OUT"
-test "$(WH_SESSION_FILE="$TMP/wh-session.json" WS_BASE='' WS_CAP='' python3 "$TMP/wh.py" pwd)" = "$TMP/home"
 REPLAY_PAIR_HTTP="$(curl -sS -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' --data '{"code":"'$PAIR_CODE'"}' "$BASE/v1/pair")"
 test "$REPLAY_PAIR_HTTP" = 404
 adapter revoke-cap "$PAIR_CAP_ID" >/dev/null

@@ -19,7 +19,7 @@ read list_directory search edit write import_file file_ops review_changes wait e
 
 ## WebSession adapter — `providers/websession-adapter/`
 
-Optional HTTPS access to the live 1MCP catalog for clients without native MCP. `bin/adapter connect --here` issues an expiring, single-use pair code and prints a Python stdlib bootstrap prompt. The Python client stores a private session and supports search, outlines, edits, writes, and up to 20 calls per HTTP batch. Batch admission is transactional; execution is per operation, with concurrent reads and serialized mutations. The adapter has its own manual lifecycle. See [WebSession clients](../docs/websession-clients.md).
+Optional HTTPS access to the live 1MCP catalog for clients without native MCP. `bin/adapter connect --here` issues an expiring, single-use pair code and prints an HTTP pairing prompt usable with Python stdlib or another HTTPS client. The Python client stores a private session and supports search, outlines, edits, writes, and up to 20 calls per HTTP batch. Batch admission is transactional; execution is per operation, with concurrent reads and serialized mutations. The adapter has its own manual lifecycle. See [WebSession clients](../docs/websession-clients.md).
 
 ## Terminal logical server — `providers/terminal/`
 

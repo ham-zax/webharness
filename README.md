@@ -31,7 +31,7 @@ Local     tool_list tool_schema tool_call fallback_dispatch tool_batch
 
 For code navigation, use `search` to locate text, `read(mode="outline")` to inspect an unfamiliar file's structure, and a narrow `read(offset, limit)` for detail. `read(targets=[...])` groups up to 20 files. Default line reads return 160 lines, bounded by 16 KiB per file.
 
-Agents without native MCP can use the optional [WebSession adapter](docs/websession-clients.md). Run `bin/adapter connect --here` on the host and paste its generated Python prompt into the remote sandbox. The adapter starts on demand and remains separate from the WebHarness service.
+Agents without native MCP can use the optional [WebSession adapter](docs/websession-clients.md). Run `bin/adapter connect --here` on the host and paste its generated HTTP prompt into the remote sandbox. The adapter starts on demand and remains separate from the WebHarness service.
 
 ## Architecture
 

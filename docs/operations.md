@@ -66,7 +66,7 @@ After updating the configured live source checkout, restart both runtimes so the
 
 When invoking the restart from an MCP call owned by the bridge, use plain `restart` and reconnect before the adapter steps; `--wait` requires an external shell. Check the rendered source root in status before assuming this checkout is live. A source update does not require restarting tmux.
 
-Copy the exact prompt printed by `connect` to the remote sandbox promptly: its pair code expires after five minutes by default and can be redeemed only once. If it expires or was already used, run `connect` again for a new code. The client downloads the current `/v1/client.py` and saves a private session. Existing capabilities remain subject to their own expiry/revocation; generating a fresh pairing does not revoke older sessions. Use `bin/adapter revoke-cap <capability-id>` when retiring one.
+Copy the exact prompt printed by `connect` to the remote sandbox promptly: its pair code expires after five minutes by default and can be redeemed only once. If it expires or was already used, run `connect` again for a new code. The prompt uses HTTP requests for pairing and discovery; downloading a helper is optional. Existing capabilities remain subject to their own expiry/revocation; generating a fresh pairing does not revoke older sessions. Use `bin/adapter revoke-cap <capability-id>` when retiring one.
 
 The main bridge restart does not reload an already-running adapter. The adapter's stop/start cycle also clears its in-memory MCP connection pool. See [WebSession clients](websession-clients.md) for client cwd and batch behavior.
 
