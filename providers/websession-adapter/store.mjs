@@ -116,6 +116,10 @@ export class AdapterStore {
         error_text TEXT,
         created_ms INTEGER NOT NULL,
         updated_ms INTEGER NOT NULL,
+        turn_id INTEGER,
+        batch_id TEXT,
+        batch_index INTEGER,
+        stop_on_error INTEGER,
         UNIQUE(principal_id, client_nonce),
         FOREIGN KEY(principal_id) REFERENCES capabilities(id)
       );
@@ -157,10 +161,14 @@ export class AdapterStore {
       ['confirmation_used_ms', 'INTEGER'],
       ['dispatch_started_ms', 'INTEGER'],
       ['turn_id', 'INTEGER'],
+      ['batch_id', 'TEXT'],
+      ['batch_index', 'INTEGER'],
+      ['stop_on_error', 'INTEGER'],
     ];
     for (const [name, definition] of migrations) {
       if (!operationColumns.includes(name)) this.db.exec(`ALTER TABLE operations ADD COLUMN ${name} ${definition}`);
     }
+    this.db.exec('CREATE INDEX IF NOT EXISTS idx_operations_batch ON operations(principal_id, batch_id, batch_index)');
   }
 
   close() {
@@ -346,13 +354,15 @@ export class AdapterStore {
     const inserted = this.db.prepare(`
       INSERT INTO operations (
         id, principal_id, client_nonce, request_hash, request_json, tool, policy_class, source_profile,
-        state, confirmation_hash, confirmation_expires_ms, created_ms, updated_ms, turn_id
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        state, confirmation_hash, confirmation_expires_ms, created_ms, updated_ms, turn_id,
+        batch_id, batch_index, stop_on_error
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(principal_id, client_nonce) DO NOTHING
     `).run(
       id, principalId, clientNonce, requestHash, requestJson,
       options.tool || 'read', options.policyClass || 'automatic', options.sourceProfile || 'unknown',
       state, confirmationHash, confirmationExpiresMs, now, now, options.turnId ?? null,
+      options.batchId ?? null, options.batchIndex ?? null, options.stopOnError ?? null,
     );
 
     let row;
@@ -423,6 +433,14 @@ export class AdapterStore {
       .all(id).map(chunk => chunk.content).join('');
   }
 
+  getOperationTailText(id) {
+    const operation = this.db.prepare('SELECT state, result_text FROM operations WHERE id = ?').get(id);
+    if (!operation || operation.state !== 'completed') return undefined;
+    if (typeof operation.result_text === 'string') return operation.result_text;
+    const chunks = this.db.prepare('SELECT content FROM operation_chunks WHERE operation_id = ? ORDER BY chunk_number DESC LIMIT 2').all(id);
+    return chunks.reverse().map(chunk => chunk.content).join('');
+  }
+
   claimQueued(id) {
     const now = Date.now();
     const result = this.db.prepare("UPDATE operations SET state = 'running', updated_ms = ? WHERE id = ? AND state = 'queued'").run(now, id);
@@ -489,7 +507,31 @@ export class AdapterStore {
   }
 
   queuedOperationIds() {
-    return this.db.prepare("SELECT id FROM operations WHERE state = 'queued' ORDER BY created_ms").all().map(row => row.id);
+    return this.db.prepare("SELECT id FROM operations WHERE state = 'queued' ORDER BY created_ms, rowid").all().map(row => row.id);
+  }
+
+  getBatchOperations(principalId, batchId) {
+    return this.db.prepare('SELECT * FROM operations WHERE principal_id = ? AND batch_id = ? ORDER BY batch_index ASC').all(principalId, batchId);
+  }
+
+  recoverableScheduleItems() {
+    const singles = this.db.prepare(
+      "SELECT id, created_ms AS sort_ms, rowid AS sort_rowid FROM operations WHERE state = 'queued' AND batch_id IS NULL"
+    ).all().map(row => ({ kind: 'single', id: row.id, sortMs: row.sort_ms, sortRowid: row.sort_rowid }));
+    const batches = this.db.prepare(`
+      SELECT principal_id, batch_id, MIN(created_ms) AS sort_ms, MIN(rowid) AS sort_rowid
+      FROM operations
+      WHERE batch_id IS NOT NULL
+      GROUP BY principal_id, batch_id
+      HAVING SUM(CASE WHEN state = 'queued' THEN 1 ELSE 0 END) > 0
+    `).all().map(row => ({
+      kind: 'sequential_batch',
+      principalId: row.principal_id,
+      batchId: row.batch_id,
+      sortMs: row.sort_ms,
+      sortRowid: row.sort_rowid,
+    }));
+    return [...singles, ...batches].sort((a, b) => (a.sortMs - b.sortMs) || (a.sortRowid - b.sortRowid));
   }
 }
 

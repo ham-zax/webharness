@@ -11,16 +11,20 @@ Environment:
   WH_SESSION_FILE  optional session file path, default ~/.wh/session.json (mode 0600)
 
 Usage:
+  client.py [--save FILE] <command> ...
   client.py connect BASE PAIR_CODE [--cwd DIR]
   client.py import-session [BASE] [--cwd DIR]  # session JSON on stdin
   client.py about | tools [--names] | sigs | instructions | schema TOOL
-  client.py pwd | cd DIR | cd --clear | ls [PATH] [--limit N]
+  client.py pwd | cd DIR | cd --clear | ls [PATH] [--limit N] [--depth 1..4] [--all]
   client.py read PATH [OFFSET] [LIMIT] [--outline] | read --targets [JSON|@FILE|-]
   client.py rg PATTERN [PATH] [-g GLOB]... [-m MAX] [--all]
   client.py edit [JSON|@FILE|-]
   client.py write PATH [--overwrite] [--mkdir] [--mode OCTAL]
   client.py review [PATH...]
-  client.py batch [JSON|@FILE|-]
+  client.py batch [--seq] [--continue] [JSON|@FILE|-] | pipe [--continue] [JSON|@FILE|-]
+  client.py llist [SERVER] [QUERY] [--limit N] | lschema SERVER[/TOOL] [TOOL]
+  client.py lcall SERVER[/TOOL] [TOOL] [JSON|@FILE|-] | lbatch SERVER[/TOOL] [TOOL] [JSON|@FILE|-] [--concurrency N]
+  client.py pull REMOTE_TMP_PATH [LOCAL_PATH]
   client.py call [--unwrap] TOOL [JSON|@FILE|-]
   client.py sh COMMAND... | sh - | sh < script.sh
 """
@@ -47,11 +51,15 @@ TERMINAL_STATES = ("completed", "tool_failed", "unknown_outcome", "rejected", "e
 CWD_INJECT_TOOLS = ("dev_bash", "dev_exec", "dev_review_changes", "dev_file_ops")
 OPTIONAL_PATH_CWD_TOOLS = ("dev_list_directory", "dev_search")
 PATH_RESOLVE_TOOLS = ("dev_read", "dev_list_directory", "dev_search", "dev_write")
+SAVE_OUTPUT_PATH = None
+SAVE_PREVIEW_BYTES = 512
 USAGE = (
-    "usage: client.py connect BASE CODE [--cwd DIR]|about|tools [--names]|sigs|instructions|"
-    "schema TOOL|import-session [BASE]|pwd|cd DIR|ls [PATH]|read PATH [OFFSET] [LIMIT] [--outline]|"
+    "usage: client.py [--save FILE] connect BASE CODE [--cwd DIR]|about|tools [--names]|sigs|instructions|"
+    "schema TOOL|import-session [BASE]|pwd|cd DIR|ls [PATH] [--depth N]|read PATH [OFFSET] [LIMIT] [--outline]|"
     "rg PATTERN [PATH]|edit [JSON|@FILE|-]|write PATH|review [PATH...]|"
-    "batch [JSON|@FILE|-]|call TOOL [JSON|@FILE|-]|sh COMMAND|sh -"
+    "batch [--seq] [JSON|@FILE|-]|pipe [JSON|@FILE|-]|llist [SERVER]|lschema SERVER/TOOL|"
+    "lcall SERVER/TOOL [JSON|@FILE|-]|lbatch SERVER/TOOL [JSON|@FILE|-]|pull /tmp/REMOTE [LOCAL]|"
+    "call TOOL [JSON|@FILE|-]|sh COMMAND|sh -"
 )
 
 
@@ -150,6 +158,12 @@ def effective_wait():
     return 2
 
 
+def preferred_slow_wait(floor=10):
+    if "WS_WAIT" in os.environ:
+        return effective_wait()
+    return max(effective_wait(), floor)
+
+
 def resolve_remote_path(raw_path, cwd=None):
     if cwd is None:
         cwd = sticky_cwd()
@@ -203,7 +217,34 @@ def save_output(text):
     return path, None
 
 
-def render_output(text, limit):
+def write_private_bytes(target_path, data):
+    abs_target = os.path.abspath(target_path)
+    parent = os.path.dirname(abs_target) or "."
+    tmp_path = None
+    try:
+        os.makedirs(parent, exist_ok=True)
+        with tempfile.NamedTemporaryFile(mode="wb", dir=parent, prefix=".wh-out-", suffix=".tmp", delete=False) as handle:
+            tmp_path = handle.name
+            os.chmod(tmp_path, 0o600)
+            handle.write(data)
+        os.chmod(tmp_path, 0o600)
+        os.replace(tmp_path, abs_target)
+    except OSError as error:
+        if tmp_path is not None:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+        fail("failed to write local file %s: %s" % (abs_target, error))
+    return abs_target
+
+
+DEV_CMD_FAILURE_RE = re.compile(
+    r"^\[(?:exit (?!0(?:\]| · ))-?\d+|timed out after [0-9.]+s|cancelled|terminated)(?: · [0-9.]+s)?\]$"
+)
+
+
+def bound_output(text, limit):
     raw = text.encode("utf-8")
     if limit == 0 or len(raw) <= limit:
         return text
@@ -223,6 +264,43 @@ def render_output(text, limit):
         "WS_MAX_OUTPUT=0 prints everything]\n" % (shown, len(raw), saved)
     )
     return prefix + notice + suffix
+
+
+def render_saved_output(text, limit):
+    raw = text.encode("utf-8")
+    saved_to = write_private_bytes(SAVE_OUTPUT_PATH, raw)
+    line_count = text.count("\n") + (1 if text and not text.endswith("\n") else 0)
+    effective = limit if "WS_MAX_OUTPUT" in os.environ else min(limit, SAVE_PREVIEW_BYTES)
+    header = "[ws: saved %d bytes (%d lines) to %s]" % (len(raw), line_count, saved_to)
+    if effective == 0 or len(raw) <= effective:
+        return (header + "\n" + text) if text else header
+    preview = raw[:effective].decode("utf-8", "ignore").rstrip("\n")
+    return "%s\n%s\n[ws: previewing %d of %d bytes; inspect %s locally]" % (
+        header, preview, len(preview.encode("utf-8")), len(raw), saved_to
+    )
+
+
+def render_output(text, limit):
+    if SAVE_OUTPUT_PATH is not None:
+        return render_saved_output(text, limit)
+    return bound_output(text, limit)
+
+
+def is_dev_command_call(tool_name, item_args):
+    if tool_name in ("dev_exec", "dev_bash"):
+        return True
+    if tool_name == "local_fallback_dispatch" and isinstance(item_args, dict):
+        return item_args.get("server") == "dev" and item_args.get("tool") in ("exec", "bash")
+    return False
+
+
+def command_failure_footer(text):
+    if not text:
+        return None
+    clean = text[:-1] if text.endswith("\n") else text
+    clean = clean[:-1] if clean.endswith("\r") else clean
+    last_line = clean.rsplit("\n", 1)[-1]
+    return last_line if DEV_CMD_FAILURE_RE.match(last_line) else None
 
 
 def unwrap_mcp_text(text):
@@ -256,8 +334,8 @@ def with_wait(url, seconds):
     return urllib.parse.urlunsplit(parts._replace(query=urllib.parse.urlencode(query)))
 
 
-def request(url, cap=None, method="GET", body=None, idempotent_submission=True):
-    headers = {"Accept": "application/json", "User-Agent": USER_AGENT}
+def request(url, cap=None, method="GET", body=None, idempotent_submission=True, accept="application/json"):
+    headers = {"Accept": accept, "User-Agent": USER_AGENT}
     if cap:
         headers["Authorization"] = "Bearer " + cap
     payload = None
@@ -566,27 +644,44 @@ def cmd_cd(args):
 
 
 def cmd_ls(args):
+    ls_usage = "usage: client.py ls [PATH] [--limit N] [--depth 1..4] [--all]"
     limit = output_limit()
     path_arg = None
     entry_limit = None
+    depth_val = None
+    include_all = False
     index = 0
     while index < len(args):
         if args[index] == "--limit":
             if index + 1 >= len(args):
-                fail("usage: client.py ls [PATH] [--limit N]")
+                fail(ls_usage)
             entry_limit = parse_positive_int(args[index + 1], "--limit")
             index += 2
+        elif args[index] == "--depth":
+            if index + 1 >= len(args):
+                fail(ls_usage)
+            depth_val = parse_positive_int(args[index + 1], "--depth")
+            if depth_val > 4:
+                fail("--depth must be an integer from 1 to 4")
+            index += 2
+        elif args[index] == "--all":
+            include_all = True
+            index += 1
         elif path_arg is None and not args[index].startswith("-"):
             path_arg = args[index]
             index += 1
         else:
-            fail("usage: client.py ls [PATH] [--limit N]")
+            fail(ls_usage)
     payload = {}
     resolved = resolve_remote_path(path_arg) if path_arg is not None else sticky_cwd()
     if resolved:
         payload["path"] = resolved
     if entry_limit is not None:
         payload["limit"] = entry_limit
+    if depth_val is not None:
+        payload["depth"] = depth_val
+    if include_all:
+        payload["include_vendor"] = True
     print(render_output(unwrap_mcp_text(call("dev_list_directory", payload)), limit))
 
 
@@ -803,13 +898,66 @@ def prepare_batch_arguments(tool_name, raw_args):
     return args
 
 
-def cmd_batch(args):
+def resolve_batch_item(snap, deadline):
+    data = snap
+    while data.get("state") not in TERMINAL_STATES:
+        if data.get("state") not in ("queued", "running"):
+            return "error", "unsupported operation state %s; do not resubmit the tool" % data.get("state"), 1
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return "error", "operation still %s; poll %s later" % (data.get("state"), data.get("status_url")), 1
+        hold = min(MAX_WAIT_SECONDS, int(remaining))
+        data = operation_snapshot(request_json(with_wait(data["status_url"], hold)))
+        if hold == 0 and data.get("state") not in TERMINAL_STATES:
+            return "error", "operation still %s; poll %s later" % (data.get("state"), data.get("status_url")), 1
+    if data.get("state") != "completed":
+        msg = data.get("error") or data.get("state", "unknown state")
+        if data.get("state") == "unknown_outcome":
+            return "error", "%s; do not retry; check whether the tool ran" % msg, 2
+        if data.get("state") == "rejected" and msg == "skipped_after_prior_failure":
+            return "skipped", msg, 1
+        return "error", "%s; do not retry a mutating tool without checking its effects" % msg, 1
+    count = int(data.get("chunk_count", 1))
+    if count == 1:
+        return "ok", data.get("result", ""), 0
+    parts = []
+    chunk_base = data["chunk_base_url"]
+    for number in range(1, count + 1):
+        chunk = request_json(chunk_base + str(number))
+        if not isinstance(chunk, dict) or not isinstance(chunk.get("content"), str):
+            return "error", "invalid result chunk; do not resubmit the tool", 1
+        parts.append(chunk["content"])
+    return "ok", "".join(parts), 0
+
+
+def cmd_batch(args, default_sequential=False):
+    batch_usage = "usage: client.py batch [--seq] [--continue] [JSON|@FILE|-]"
     limit = output_limit()
-    if len(args) > 1:
-        fail("usage: client.py batch [JSON|@FILE|-]")
-    items = load_json_source(args[0] if args else None)
+    sequential = default_sequential
+    continue_on_error = False
+    spec = None
+    for token in args:
+        if token in ("--seq", "--sequential"):
+            sequential = True
+        elif token in ("--continue", "--continue-on-error"):
+            continue_on_error = True
+        elif spec is None and (token == "-" or not token.startswith("-")):
+            spec = token
+        else:
+            fail(batch_usage)
+    loaded = load_json_source(spec)
+    if isinstance(loaded, dict):
+        if isinstance(loaded.get("sequential"), bool):
+            sequential = loaded["sequential"]
+        if isinstance(loaded.get("stop_on_error"), bool):
+            continue_on_error = not loaded["stop_on_error"]
+        items = loaded.get("calls")
+    else:
+        items = loaded
+    if continue_on_error and not sequential:
+        fail("--continue requires --seq (or pipe)")
     if not isinstance(items, list) or not items or len(items) > 20:
-        fail("batch expects a JSON array of 1 to 20 {\"tool\": ..., \"arguments\": {...}} items")
+        fail("batch expects 1 to 20 {\"tool\": ..., \"arguments\": {...}} items")
     total = len(items)
     validated = []
     for index, item in enumerate(items):
@@ -819,12 +967,16 @@ def cmd_batch(args):
         if not isinstance(item_args, dict):
             fail("batch[%d].arguments must be an object" % index)
         validated.append((item["tool"], prepare_batch_arguments(item["tool"], item_args)))
-    initial_wait = effective_wait()
+    initial_wait = preferred_slow_wait(10) if sequential else effective_wait()
     deadline = time.monotonic() + POLL_SECONDS
     batch_payload = {
         "version": 1,
         "calls": [{"tool": tool_name, "arguments": item_args} for tool_name, item_args in validated],
     }
+    if sequential:
+        batch_payload["sequential"] = True
+        if continue_on_error:
+            batch_payload["stop_on_error"] = False
     response_data = request_json(
         base_url() + ("/v1/batch?wait=%d" % initial_wait),
         capability(),
@@ -834,19 +986,187 @@ def cmd_batch(args):
     results = response_data.get("results") if isinstance(response_data, dict) else None
     if not isinstance(response_data, dict) or response_data.get("state") != "ready" or not isinstance(results, list) or len(results) != total:
         submission_unknown("invalid batch response")
-    outputs = []
-    for index, ((tool_name, _item_args), raw_snap) in enumerate(zip(validated, results), start=1):
-        snap = operation_snapshot(raw_snap, submission=True)
-        result_text = unwrap_mcp_text(resolve_operation(snap, deadline))
-        outputs.append("=== [%d/%d] %s ===\n%s" % (index, total, tool_name, render_output(result_text, limit)))
-    print("\n".join(outputs))
+    snaps = [operation_snapshot(raw_snap, submission=True) for raw_snap in results]
+    full_outputs = []
+    display_outputs = []
+    exit_code = 0
+    first_error = None
+    for index, ((tool_name, item_args), snap) in enumerate(zip(validated, snaps), start=1):
+        status, payload_text, item_code = resolve_batch_item(snap, deadline)
+        if status == "ok":
+            unwrapped = unwrap_mcp_text(payload_text)
+            full_outputs.append("=== [%d/%d] %s ===\n%s" % (index, total, tool_name, unwrapped))
+            if SAVE_OUTPUT_PATH is None:
+                display_outputs.append("=== [%d/%d] %s ===\n%s" % (index, total, tool_name, bound_output(unwrapped, limit)))
+            if sequential and is_dev_command_call(tool_name, item_args):
+                cmd_footer = command_failure_footer(unwrapped)
+                if cmd_footer is not None:
+                    if exit_code == 0:
+                        exit_code = 1
+                    if first_error is None:
+                        first_error = "batch[%d] (%s): %s" % (index - 1, tool_name, cmd_footer)
+        elif status == "skipped":
+            skipped_line = "=== [%d/%d] %s [SKIPPED] ===" % (index, total, tool_name)
+            full_outputs.append(skipped_line)
+            if SAVE_OUTPUT_PATH is None:
+                display_outputs.append(skipped_line)
+            if exit_code == 0:
+                exit_code = 1
+        else:
+            failed_section = "=== [%d/%d] %s [FAILED] ===\n%s" % (index, total, tool_name, payload_text)
+            full_outputs.append(failed_section)
+            if SAVE_OUTPUT_PATH is None:
+                display_outputs.append(failed_section)
+            if item_code == 2 or exit_code == 0:
+                exit_code = item_code
+            if first_error is None:
+                first_error = "batch[%d] (%s): %s" % (index - 1, tool_name, payload_text)
+    if SAVE_OUTPUT_PATH is not None:
+        print(render_saved_output("\n".join(full_outputs), limit))
+    elif display_outputs:
+        print("\n".join(display_outputs))
+    if exit_code != 0:
+        fail(first_error or "batch failed", exit_code)
+
+
+def parse_local_route(args, usage):
+    if not args:
+        fail(usage)
+    first = args[0]
+    if "/" in first:
+        parts = first.split("/", 1)
+        if not parts[0] or not parts[1]:
+            fail(usage)
+        return parts[0], parts[1], args[1:]
+    if len(args) < 2 or args[1].startswith("-"):
+        fail(usage)
+    return first, args[1], args[2:]
+
+
+def cmd_llist(args):
+    usage = "usage: client.py llist [SERVER] [QUERY] [--limit N]"
+    limit = output_limit()
+    entry_limit = None
+    positional = []
+    index = 0
+    while index < len(args):
+        if args[index] == "--limit":
+            if index + 1 >= len(args):
+                fail(usage)
+            entry_limit = parse_positive_int(args[index + 1], "--limit")
+            index += 2
+        elif args[index].startswith("-"):
+            fail(usage)
+        else:
+            positional.append(args[index])
+            index += 1
+    if len(positional) > 2:
+        fail(usage)
+    payload = {}
+    if len(positional) >= 1:
+        payload["server"] = positional[0]
+    if len(positional) == 2:
+        payload["query"] = positional[1]
+    if entry_limit is not None:
+        payload["limit"] = entry_limit
+    print(render_output(unwrap_mcp_text(call("local_tool_list", payload, wait_override=preferred_slow_wait(10))), limit))
+
+
+def cmd_lschema(args):
+    usage = "usage: client.py lschema SERVER/TOOL | lschema SERVER TOOL"
+    limit = output_limit()
+    server_name, tool_name, rem = parse_local_route(args, usage)
+    if rem:
+        fail(usage)
+    raw = call("local_tool_schema", {"server": server_name, "tool": tool_name}, wait_override=preferred_slow_wait(10))
+    print(render_output(unwrap_mcp_text(raw), limit))
+
+
+def cmd_lcall(args):
+    usage = "usage: client.py lcall SERVER/TOOL [JSON|@FILE|-] | lcall SERVER TOOL [JSON|@FILE|-]"
+    limit = output_limit()
+    server_name, tool_name, rem = parse_local_route(args, usage)
+    if len(rem) > 1:
+        fail(usage)
+    spec = rem[0] if len(rem) == 1 else None
+    parsed_args = load_json_source(spec, default_empty_object=True)
+    if not isinstance(parsed_args, dict):
+        fail("lcall arguments must be a JSON object")
+    raw = call(
+        "local_tool_call",
+        {"server": server_name, "tool": tool_name, "arguments": parsed_args},
+        wait_override=preferred_slow_wait(10),
+    )
+    print(render_output(unwrap_mcp_text(raw), limit))
+
+
+def cmd_lbatch(args):
+    usage = "usage: client.py lbatch SERVER/TOOL [JSON|@FILE|-] [--concurrency N]"
+    limit = output_limit()
+    server_name, tool_name, rem = parse_local_route(args, usage)
+    concurrency = None
+    spec = None
+    index = 0
+    while index < len(rem):
+        if rem[index] == "--concurrency":
+            if index + 1 >= len(rem):
+                fail(usage)
+            concurrency = parse_positive_int(rem[index + 1], "--concurrency")
+            index += 2
+        elif spec is None and (rem[index] == "-" or not rem[index].startswith("-")):
+            spec = rem[index]
+            index += 1
+        else:
+            fail(usage)
+    loaded = load_json_source(spec)
+    if not isinstance(loaded, list) or not loaded:
+        fail("lbatch expects a non-empty JSON array of call objects")
+    normalized_calls = []
+    for item in loaded:
+        if not isinstance(item, dict):
+            fail("each lbatch item must be a JSON object")
+        if "arguments" in item and set(item.keys()).issubset({"id", "arguments"}) and isinstance(item["arguments"], dict):
+            normalized_calls.append(item)
+        else:
+            normalized_calls.append({"arguments": item})
+    payload = {"server": server_name, "tool": tool_name, "calls": normalized_calls}
+    if concurrency is not None:
+        payload["concurrency"] = concurrency
+    raw = call("local_tool_batch", payload, wait_override=preferred_slow_wait(10))
+    print(render_output(unwrap_mcp_text(raw), limit))
+
+
+def cmd_pull(args):
+    usage = "usage: client.py pull /tmp/REMOTE_FILE [LOCAL_PATH]"
+    if not args or len(args) > 2:
+        fail(usage)
+    remote_path = args[0]
+    if not remote_path.startswith("/tmp/") or len(remote_path) <= 5 or "\0" in remote_path:
+        fail("pull requires a remote /tmp/... file path")
+    local_path = args[1] if len(args) == 2 else os.path.join("/tmp", posixpath.basename(remote_path.rstrip("/")) or "pulled.bin")
+    url = base_url() + "/v1/raw?" + urllib.parse.urlencode({"path": remote_path})
+    _ctype, raw_bytes = request(url, capability(), "GET", idempotent_submission=False, accept="application/octet-stream")
+    written = write_private_bytes(local_path, raw_bytes)
+    print("PULLED %dB -> %s" % (len(raw_bytes), written))
 
 
 def main(argv):
-    if len(argv) < 2:
+    global SAVE_OUTPUT_PATH
+    args = list(argv[1:])
+    if args and args[0] in ("-h", "--help", "help"):
+        print((__doc__ or USAGE).strip())
+        return
+    if len(args) >= 2 and args[0] == "--save":
+        if not args[1]:
+            fail("--save requires a non-empty file path")
+        SAVE_OUTPUT_PATH = args[1]
+        args = args[2:]
+    elif args and args[0] == "--save":
+        fail("--save requires a file path and command")
+    if not args:
         fail(USAGE)
-    command = argv[1]
-    rest = argv[2:]
+    command = args[0]
+    rest = args[1:]
     if command == "about" and not rest:
         print(about().strip())
     elif command == "tools":
@@ -896,6 +1216,18 @@ def main(argv):
         cmd_review(rest)
     elif command == "batch":
         cmd_batch(rest)
+    elif command == "pipe":
+        cmd_batch(rest, default_sequential=True)
+    elif command == "llist":
+        cmd_llist(rest)
+    elif command == "lschema":
+        cmd_lschema(rest)
+    elif command == "lcall":
+        cmd_lcall(rest)
+    elif command == "lbatch":
+        cmd_lbatch(rest)
+    elif command == "pull":
+        cmd_pull(rest)
     elif command == "call":
         limit = output_limit()
         unwrap = False

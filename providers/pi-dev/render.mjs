@@ -130,14 +130,23 @@ function listEntryLine(entry) {
 }
 
 export function renderListDirectoryText(result) {
-  const lines = [`dir: ${result.path}`, `entries: ${result.total}`];
+  const unknownTotal = result.truncated && result.totalKnown === false;
+  const lines = [
+    `dir: ${result.path}`,
+    `entries: ${unknownTotal ? `${result.entries.length}+` : result.total}`,
+  ];
   if (result.entries.length > 0) lines.push(...result.entries.map(listEntryLine));
   else lines.push('[empty directory]');
   if (result.entries.some(entry => entry.kind === 'link')) {
     lines.push('[symlinks are listed and not followed]');
   }
+  if (result.skippedVendor) {
+    lines.push('[vendor/.git directories not expanded; set include_vendor=true or list directly]');
+  }
   if (result.truncated) {
-    lines.push(`[truncated · ${result.total} entries total · raise limit above ${result.limit} or list a subdirectory]`);
+    lines.push(unknownTotal
+      ? `[truncated · more than ${result.limit} entries · raise limit above ${result.limit} or list a subdirectory]`
+      : `[truncated · ${result.total} entries total · raise limit above ${result.limit} or list a subdirectory]`);
   }
   return lines.join('\n');
 }

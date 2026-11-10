@@ -34,7 +34,7 @@ export const HTTP_INSTRUCTIONS = [
   'Use only documented routes; do not probe endpoint names. Send User-Agent: websession-client/1.0.',
   'GET /v1/tools/<name> retrieves a schema. Invoke every tool via POST /v1/calls?wait=2 with Authorization: Bearer <capability>, Content-Type: application/json, and Idempotency-Key: <fresh UUID hex>. Body: {"version":1,"tool":"<discovered-name>","arguments":{...}}.',
   'Poll the returned status_url verbatim while queued/running (optional wait=90). For completed, read result or concatenate chunk_base_url + 1..chunk_count. Never automatically repeat a mutation after a lost submission response or unknown_outcome.',
-  'POST /v1/batch?wait=2 uses the same headers and {"version":1,"calls":[{"tool":"<name>","arguments":{...}}]} (1..20 independent calls). Reads may overlap writes; verify after mutations complete.',
+  'POST /v1/batch?wait=2 uses the same headers and {"version":1,"calls":[{"tool":"<name>","arguments":{...}}],"sequential"?:true,"stop_on_error"?:true} (1..20 calls). Default batch overlaps reads with serialized writes; set "sequential":true for ordered pipelines (e.g. edit -> test -> review) that stop on failure.',
   'GET /v1/cwd reads project context; POST /v1/cwd with the bearer and JSON {"cwd":"/project"} selects it once ({"cwd":null} clears it). Supported Dev calls inherit it; use relative paths. Local Terminal has its own cwd.',
 ].join('\n');
 

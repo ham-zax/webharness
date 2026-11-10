@@ -908,3 +908,289 @@ test('discovery cancellation bounds a stalled upstream handshake', async t => {
   }), /abort|timeout|timed out|closed/i);
   assert.ok(Date.now() - started < 3000, 'cancellation must not wait for the normal MCP timeout');
 });
+
+test('POST /v1/batch sequential mode enforces read-after-write ordering and fail-fast skipping', async t => {
+  const stateDir = mkdtempSync(join(tmpdir(), 'websession-seq-batch-'));
+  t.after(() => rmSync(stateDir, { recursive: true, force: true }));
+  let fileState = 'v0';
+  const order = [];
+  const tools = [
+    { name: 'dev_edit', description: 'Edit.', inputSchema: { type: 'object' }, annotations: { readOnlyHint: false } },
+    { name: 'dev_read', description: 'Read.', inputSchema: { type: 'object' }, annotations: { readOnlyHint: true } },
+    { name: 'dev_exec', description: 'Exec.', inputSchema: { type: 'object' }, annotations: { readOnlyHint: false } },
+  ];
+  const { server } = startToolFixture(t, tools, async (name, args) => {
+    order.push(`${name}:${args.step}`);
+    if (name === 'dev_edit') {
+      await new Promise(resolve => setTimeout(resolve, 40));
+      fileState = args.next;
+      return { content: [{ type: 'text', text: `edited:${fileState}` }] };
+    }
+    if (name === 'dev_exec' && args.fail) {
+      return { isError: true, content: [{ type: 'text', text: 'tests failed' }] };
+    }
+    return { content: [{ type: 'text', text: `seen:${fileState}` }] };
+  });
+  await once(server, 'listening');
+  t.after(() => { server.closeAllConnections(); server.close(); });
+
+  const store = new AdapterStore(stateDir);
+  const issued = store.issueMainCapability(300);
+  store.close();
+  const port = await reservePort();
+  await startAdapterServer(t, stateDir, port, { WEBSESSION_ADAPTER_MCP_URL: `http://127.0.0.1:${server.address().port}/mcp` });
+  const base = `http://127.0.0.1:${port}`;
+  const postBatch = (key, body) => fetch(`${base}/v1/batch?wait=5`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${issued.token}`, 'content-type': 'application/json', 'idempotency-key': key },
+    body: JSON.stringify(body),
+  });
+
+  // stop_on_error without sequential is rejected.
+  assert.equal((await postBatch('bad-seq', { version: 1, stop_on_error: false, calls: [{ tool: 'dev_read', arguments: { step: 'x' } }] })).status, 400);
+
+  // Ordered edit -> read -> edit -> read pipeline sees every mutation in order.
+  const okRes = await postBatch('seq-ok', {
+    version: 1,
+    sequential: true,
+    calls: [
+      { tool: 'dev_edit', arguments: { step: '1', next: 'v1' } },
+      { tool: 'dev_read', arguments: { step: '2' } },
+      { tool: 'dev_edit', arguments: { step: '3', next: 'v2' } },
+      { tool: 'dev_read', arguments: { step: '4' } },
+    ],
+  });
+  assert.equal(okRes.status, 200);
+  const okBody = await okRes.json();
+  assert.deepEqual(okBody.results.map(r => r.result), ['edited:v1', 'seen:v1', 'edited:v2', 'seen:v2']);
+  assert.deepEqual(order, ['dev_edit:1', 'dev_read:2', 'dev_edit:3', 'dev_read:4']);
+
+  // Reusing the same nonce with sequential:false is a 409 nonce_conflict.
+  const conflict = await postBatch('seq-ok', {
+    version: 1,
+    sequential: false,
+    calls: [
+      { tool: 'dev_edit', arguments: { step: '1', next: 'v1' } },
+      { tool: 'dev_read', arguments: { step: '2' } },
+      { tool: 'dev_edit', arguments: { step: '3', next: 'v2' } },
+      { tool: 'dev_read', arguments: { step: '4' } },
+    ],
+  });
+  assert.equal(conflict.status, 409);
+
+  // Fail-fast stops at the failing test and marks subsequent steps rejected without dispatching them.
+  const failRes = await postBatch('seq-fail', {
+    version: 1,
+    sequential: true,
+    calls: [
+      { tool: 'dev_edit', arguments: { step: '5', next: 'v3' } },
+      { tool: 'dev_exec', arguments: { step: '6', fail: true } },
+      { tool: 'dev_edit', arguments: { step: '7', next: 'v4-never' } },
+    ],
+  });
+  assert.equal(failRes.status, 200);
+  const failBody = await failRes.json();
+  assert.equal(failBody.results[0].state, 'completed');
+  assert.equal(failBody.results[0].result, 'edited:v3');
+  assert.equal(failBody.results[1].state, 'tool_failed');
+  assert.equal(failBody.results[2].state, 'rejected');
+  assert.equal(failBody.results[2].error, 'skipped_after_prior_failure');
+  assert.equal(fileState, 'v3');
+  assert.equal(order.includes('dev_edit:7'), false);
+
+  // stop_on_error: false continues past failures.
+  const contRes = await postBatch('seq-cont', {
+    version: 1,
+    sequential: true,
+    stop_on_error: false,
+    calls: [
+      { tool: 'dev_exec', arguments: { step: '8', fail: true } },
+      { tool: 'dev_read', arguments: { step: '9' } },
+    ],
+  });
+  assert.equal(contRes.status, 200);
+  const contBody = await contRes.json();
+  assert.equal(contBody.results[0].state, 'tool_failed');
+  assert.equal(contBody.results[1].state, 'completed');
+  assert.equal(contBody.results[1].result, 'seen:v3');
+});
+
+test('sequential pipelines persist ordering and stop-on-error across restarts', async t => {
+  const stateDir = mkdtempSync(join(tmpdir(), 'websession-seq-restart-'));
+  t.after(() => rmSync(stateDir, { recursive: true, force: true }));
+  let fileState = 'v0';
+  const order = [];
+  let releaseBarrier;
+  const barrierEntered = new Promise(resolve => { releaseBarrier = resolve; });
+  let holdBarrier = true;
+  const tools = [
+    { name: 'dev_edit', description: 'Edit.', inputSchema: { type: 'object' }, annotations: { readOnlyHint: false } },
+    { name: 'dev_read', description: 'Read.', inputSchema: { type: 'object' }, annotations: { readOnlyHint: true } },
+    { name: 'dev_exec', description: 'Exec.', inputSchema: { type: 'object' }, annotations: { readOnlyHint: false } },
+  ];
+  const { server } = startToolFixture(t, tools, async (name, args) => {
+    if (name === 'dev_exec' && args.barrier && holdBarrier) {
+      releaseBarrier();
+      await new Promise(() => {});
+    }
+    order.push(`${name}:${args.step}`);
+    if (name === 'dev_edit') {
+      await new Promise(resolve => setTimeout(resolve, 50));
+      fileState = args.next;
+      return { content: [{ type: 'text', text: `edited:${fileState}` }] };
+    }
+    return { content: [{ type: 'text', text: `seen:${fileState}` }] };
+  });
+  await once(server, 'listening');
+  t.after(() => { server.closeAllConnections(); server.close(); });
+  const mcpUrl = `http://127.0.0.1:${server.address().port}/mcp`;
+
+  // 1. Persist a queued edit -> read pipeline behind an in-flight barrier, then restart.
+  const core1 = new OperationCore({ stateDir, mcpUrl, callbackUrl: 'http://127.0.0.1:9/cb', toolTimeoutMs: 5000 });
+  const issued = core1.store.issueMainCapability(300);
+  core1.start();
+  const barrierSub = core1.submit(
+    issued.token,
+    'barrier-op',
+    parseRequest({ version: 1, tool: 'dev_exec', arguments: { barrier: true, step: 'barrier' } }),
+    'json-post-v1',
+  );
+  await barrierEntered;
+
+  const batchSub = core1.submitBatch(
+    issued.token,
+    'restart-seq-edit-read',
+    [
+      parseRequest({ version: 1, tool: 'dev_edit', arguments: { step: 'edit-1', next: 'v1' } }),
+      parseRequest({ version: 1, tool: 'dev_read', arguments: { step: 'read-2' } }),
+    ],
+    null,
+    { sequential: true, stopOnError: true },
+  );
+  const [editId, readId] = batchSub.submissions.map(item => item.operation.id);
+  assert.equal(core1.store.getOperation(editId).state, 'queued');
+  assert.equal(core1.store.getOperation(readId).state, 'queued');
+  await core1.close();
+
+  // Also submit a second pipeline whose step 0 was interrupted mid-dispatch before recovery.
+  holdBarrier = false;
+  const prepStore = new AdapterStore(stateDir);
+  const interruptedBatch = [
+    parseRequest({ version: 1, tool: 'dev_edit', arguments: { step: 'int-1', next: 'v-ambiguous' } }),
+    parseRequest({ version: 1, tool: 'dev_edit', arguments: { step: 'int-2', next: 'v-should-skip' } }),
+  ];
+  const s0 = prepStore.submitOperation(issued.id, 'int.0', interruptedBatch[0].requestJson, requestHash(interruptedBatch[0].requestJson), {
+    tool: 'dev_edit', state: 'running', batchId: 'seq.interrupted', batchIndex: 0, stopOnError: 1,
+  });
+  prepStore.markDispatchStarted(s0.operation.id);
+  const s1 = prepStore.submitOperation(issued.id, 'int.1', interruptedBatch[1].requestJson, requestHash(interruptedBatch[1].requestJson), {
+    tool: 'dev_edit', state: 'queued', batchId: 'seq.interrupted', batchIndex: 1, stopOnError: 1,
+  });
+  prepStore.close();
+
+  const core2 = new OperationCore({ stateDir, mcpUrl, callbackUrl: 'http://127.0.0.1:9/cb', toolTimeoutMs: 5000 });
+  t.after(() => core2.close());
+  core2.start();
+
+  assert.equal(core2.store.getOperation(barrierSub.operation.id).state, 'unknown_outcome');
+  const editOp = await core2.waitForOperation(editId, 3000);
+  const readOp = await core2.waitForOperation(readId, 3000);
+  assert.equal(editOp.state, 'completed');
+  assert.equal(readOp.state, 'completed');
+  assert.equal(readOp.result_text, 'seen:v1', 'recovered read must wait for earlier edit in sequential pipeline');
+  assert.deepEqual(order, ['dev_edit:edit-1', 'dev_read:read-2']);
+
+  const skippedAfterCrash = await core2.waitForOperation(s1.operation.id, 3000);
+  assert.equal(core2.store.getOperation(s0.operation.id).state, 'unknown_outcome');
+  assert.equal(skippedAfterCrash.state, 'rejected');
+  assert.equal(skippedAfterCrash.error_text, 'skipped_after_prior_failure');
+  assert.equal(order.includes('dev_edit:int-2'), false);
+});
+
+test('sequential pipelines stop on unsuccessful Dev command exits while preserving command output', async t => {
+  const stateDir = mkdtempSync(join(tmpdir(), 'websession-seq-cmdexit-'));
+  t.after(() => rmSync(stateDir, { recursive: true, force: true }));
+  const executed = [];
+  const tools = [
+    { name: 'dev_edit', description: 'Edit.', inputSchema: { type: 'object' }, annotations: { readOnlyHint: false } },
+    { name: 'dev_exec', description: 'Exec.', inputSchema: { type: 'object' }, annotations: { readOnlyHint: false } },
+    { name: 'dev_bash', description: 'Bash.', inputSchema: { type: 'object' }, annotations: { readOnlyHint: false } },
+  ];
+  const { server } = startToolFixture(t, tools, async (name, args) => {
+    executed.push(`${name}:${args.step}`);
+    if (args.mode === 'exit1') {
+      const { runExec } = await import('../../pi-dev/shell.mjs');
+      const { renderBashText } = await import('../../pi-dev/render.mjs');
+      const execResult = await runExec({
+        pathMode: 'user',
+        defaultCwd: stateDir,
+        argv: [process.execPath, '-e', 'console.error("FAIL test/unit.test.mjs"); process.exit(1);'],
+        maxOutputBytes: 65536,
+        stateDir,
+      });
+      return { content: [{ type: 'text', text: renderBashText(execResult) }] };
+    }
+    if (args.mode === 'big-exit2') {
+      return { content: [{ type: 'text', text: `${'x'.repeat(70_000)}\n[exit 2 · 1.1s]` }] };
+    }
+    if (args.mode === 'timeout') {
+      return { content: [{ type: 'text', text: 'partial log\n[timed out after 5s · 5.0s]' }] };
+    }
+    if (args.mode === 'exit0-with-noise') {
+      return { content: [{ type: 'text', text: '[exit 1]\nall tests green\n[exit 0 · 0.1s]' }] };
+    }
+    return { content: [{ type: 'text', text: `ok:${args.step}` }] };
+  });
+  await once(server, 'listening');
+  t.after(() => { server.closeAllConnections(); server.close(); });
+
+  const store = new AdapterStore(stateDir);
+  const issued = store.issueMainCapability(300);
+  store.close();
+  const port = await reservePort();
+  await startAdapterServer(t, stateDir, port, { WEBSESSION_ADAPTER_MCP_URL: `http://127.0.0.1:${server.address().port}/mcp` });
+  const base = `http://127.0.0.1:${port}`;
+  const postBatch = (key, calls) => fetch(`${base}/v1/batch?wait=5`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${issued.token}`, 'content-type': 'application/json', 'idempotency-key': key },
+    body: JSON.stringify({ version: 1, sequential: true, calls }),
+  });
+
+  // Real dev_exec [exit 1 · 0.2s] stays completed with full stdout, and aborts step 3.
+  const r1 = await (await postBatch('cmd-exit-1', [
+    { tool: 'dev_edit', arguments: { step: '1' } },
+    { tool: 'dev_exec', arguments: { step: '2', mode: 'exit1' } },
+    { tool: 'dev_edit', arguments: { step: '3-never' } },
+  ])).json();
+  assert.equal(r1.results[0].state, 'completed');
+  assert.equal(r1.results[1].state, 'completed');
+  assert.match(r1.results[1].result, /FAIL test\/unit\.test\.mjs/);
+  assert.equal(r1.results[2].state, 'rejected');
+  assert.equal(r1.results[2].error, 'skipped_after_prior_failure');
+  assert.equal(executed.includes('dev_edit:3-never'), false);
+
+  // Multi-chunk (>64 KiB) non-zero exit and command timeout also stop the pipeline.
+  const r2 = await (await postBatch('cmd-big-exit2', [
+    { tool: 'dev_exec', arguments: { step: '4', mode: 'big-exit2' } },
+    { tool: 'dev_edit', arguments: { step: '5-never' } },
+  ])).json();
+  assert.equal(r2.results[0].state, 'completed');
+  assert.ok(r2.results[0].chunk_count >= 2);
+  assert.equal(r2.results[1].state, 'rejected');
+  assert.equal(r2.results[1].error, 'skipped_after_prior_failure');
+
+  const r3 = await (await postBatch('cmd-timeout', [
+    { tool: 'dev_bash', arguments: { step: '6', mode: 'timeout' } },
+    { tool: 'dev_edit', arguments: { step: '7-never' } },
+  ])).json();
+  assert.equal(r3.results[1].state, 'rejected');
+
+  // Earlier stdout containing '[exit 1]' does not false-positive when final footer is '[exit 0 · 0.1s]'.
+  const r4 = await (await postBatch('cmd-exit0', [
+    { tool: 'dev_exec', arguments: { step: '8', mode: 'exit0-with-noise' } },
+    { tool: 'dev_edit', arguments: { step: '9-runs' } },
+  ])).json();
+  assert.equal(r4.results[0].state, 'completed');
+  assert.equal(r4.results[1].state, 'completed');
+  assert.equal(r4.results[1].result, 'ok:9-runs');
+});

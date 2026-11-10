@@ -106,7 +106,7 @@ To switch projects once during a session without repeating `cwd` or long absolut
 | `wh.py import-session [base] [--cwd DIR]` | import existing session JSON from stdin without pairing or making a network request |
 | `wh.py tools` / `wh.py sigs` | one compact signature line per live 1MCP tool (`tools --names` for bare names) |
 | `wh.py instructions` | authenticated owner and server guidance (compacted) |
-| `wh.py pwd`, `wh.py cd <dir>`, `wh.py ls [path]` | session working directory and listings |
+| `wh.py pwd`, `wh.py cd <dir>`, `wh.py ls [path] [--depth 1..4] [--all]` | session working directory, single-level listings, or bounded repo trees |
 | `wh.py rg <pattern> [path]` | structured `dev_search` ripgrep call (vendor dirs excluded by default) |
 | `wh.py read <path> --outline` | structural symbol outline of a file |
 | `wh.py read <path> <offset> <limit>` | narrow slice read |
@@ -115,7 +115,10 @@ To switch projects once during a session without repeating `cwd` or long absolut
 | `wh.py write <path>` | file content on stdin |
 | `wh.py sh` | shell script on stdin or as arguments |
 | `wh.py review [paths...]` | review changed files |
-| `wh.py batch` | JSON array on stdin; single-RTT `POST /v1/batch` across up to 20 calls |
+| `wh.py batch [--seq] [--continue]` / `wh.py pipe` | parallel or sequential (`edit -> test -> review`) single-RTT `POST /v1/batch` across up to 20 calls |
+| `wh.py llist`, `wh.py lschema`, `wh.py lcall`, `wh.py lbatch` | unwrapped shortcuts for `local_tool_list`, `local_tool_schema`, `local_tool_call`, and `local_tool_batch` |
+| `wh.py pull /tmp/<file> [local_path]` | download binary/artifact files (screenshots, PDFs, logs up to 10 MiB) via `GET /v1/raw` |
+| `wh.py --save <file> <cmd> ...` | spool full command output privately (`0600`) in the local sandbox while printing a short preview |
 
 ## Adopt an existing HTTP session in the Python CLI
 
@@ -177,9 +180,9 @@ JSON
 
 `POST /v1/batch` accepts 1 to 20 calls and returns operation snapshots in input order. The adapter admits all items and turn-fence updates inside one SQLite transaction before scheduling any item. A later nonce conflict or stale turn rejects admission without leaving earlier new items queued. Item identities use the complete idempotency key, hashed with SHA-256, plus the item index. While the capability and turn remain valid, reusing an accepted key with the same calls and turn returns the existing operations.
 
-Admission is atomic; execution is not. Once accepted, tools can succeed or fail independently, and completed effects are not rolled back. Read-only calls may overlap mutations as well as other reads; mutations are serialized. A read listed after a write is therefore not a read-after-write barrier. Submit dependent verification only after the mutation completes.
+Admission is atomic; execution is not. Once accepted, completed effects are not rolled back. In default parallel mode, read-only calls may overlap mutations as well as other reads while mutations serialize, so a read listed after a write is not a read-after-write barrier. Set `"sequential": true` (`wh.py pipe` or `wh.py batch --seq`) when steps depend on earlier mutations—for example `dev_edit -> dev_exec -> dev_review_changes`: each step waits for the previous step to complete, and by default (`"stop_on_error": true`) a failed step marks all subsequent items in that batch `rejected` (`skipped_after_prior_failure`) without dispatching them (`"stop_on_error": false` / `--continue` runs remaining steps while preserving a nonzero CLI exit status if any step fails). Pipeline membership, order, and stop-on-error policy are persisted for restart recovery; an interrupted step with unknown outcome stops dependent steps by default.
 
-Each result has its own opaque `status_url` and, for a chunked completion, `chunk_base_url`. If a batch creation response is lost, the client exits with code `2` because submission may have succeeded. Never automatically rerun a mutating batch. The Python client resolves results in input order and stops on a failed item; other accepted items may still be running. Custom clients should retain every returned status URL and inspect each operation's outcome. GET status/chunk failures do not prove that the original operation did not execute.
+Each result has its own opaque `status_url` and, for a chunked completion, `chunk_base_url`. If a batch creation response is lost, the client exits with code `2` because submission may have succeeded. Never automatically rerun a mutating batch. The Python client prints completed step outputs alongside any failed or skipped step before exiting non-zero so earlier mutations remain visible. Custom clients should retain every returned status URL and inspect each operation's outcome. GET status/chunk failures do not prove that the original operation did not execute.
 
 ## Reusable six-hour bootstrap
 
@@ -295,7 +298,7 @@ Integrators implementing custom non-Python HTTPS clients against `WEBSESSION-MCP
 - `POST /v1/access` (`Authorization: Bearer <MASTER_BEARER>`): exchanges a master bearer for a six-hour `main` capability (`ttl_seconds: 21600`).
 - `GET /v1/signatures`, `GET /v1/instructions`, `GET /v1/tools`, `GET /v1/tools/<name>` (`Authorization: Bearer <CAPABILITY>`): live 1MCP discovery (`instructions` strips generic proxy boilerplate; `signatures` and `tools` include `default_cwd` when bound).
 - `POST /v1/calls?wait=<0..90>` (`Authorization: Bearer <CAPABILITY>`, `Content-Type: application/json`, `Idempotency-Key: ^[A-Za-z0-9._-]{1,64}$`, optional `X-Turn-Id: <uint>`): body `{"version":1,"tool":"<name>","arguments":{...}}`. Poll opaque `status_url` while `queued`/`running`; if `completed` with `chunk_count > 1`, concatenate `GET <chunk_base_url><1..chunk_count>` `.content`. Never auto-retry `unknown_outcome`.
-- `POST /v1/batch?wait=<0..90>` (same headers as `/v1/calls`): body `{"version":1,"calls":[{"tool":"<name>","arguments":{...}}, ...]}` (`1..20` items). Atomically admits all items before dispatch; execution permits concurrent read-only tools while serializing mutations, returning `{"protocol":"WEBSESSION-MCP-BRIDGE/1","state":"ready","results":[...]}`.
+- `POST /v1/batch?wait=<0..90>` (same headers as `/v1/calls`): body `{"version":1,"calls":[{"tool":"<name>","arguments":{...}}, ...],"sequential"?:true,"stop_on_error"?:true}` (`1..20` items). Atomically admits all items before dispatch; default mode permits concurrent read-only tools while serializing mutations, whereas `sequential: true` enforces strict step-by-step ordering and fail-fast skipping (`stop_on_error: true` default), returning `{"protocol":"WEBSESSION-MCP-BRIDGE/1","state":"ready","results":[...]}`.
 - `GET /v1/cwd` (`Authorization: Bearer <CAPABILITY>`): returns the capability's current `default_cwd`. `POST /v1/cwd` (same bearer, `Content-Type: application/json`, body `{"cwd":"~/repo/project"}` or `{"cwd":null}`): validates and selects a project once or clears the default; returns `default_cwd` and a listing after a successful selection. Local Terminal cwd is separate.
 - `GET /v1/raw?path=<url-encoded-/tmp/file>` (`Authorization: Bearer <CAPABILITY>`): streams regular `/tmp/*` files up to 10 MiB (rejects final-component symlinks).
 

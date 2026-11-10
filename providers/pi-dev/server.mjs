@@ -8,7 +8,7 @@ import { canonicalDefaultCwd, canonicalWorkspaceRoot } from './boundary.mjs';
 import { fileURLToPath } from 'node:url';
 import { IdleExecutionWorker, serveExecutionWorker } from './idle-worker.mjs';
 import { pruneBashSpools } from './spool-gc.mjs';
-import { DEFAULT_LIST_LIMIT, MAX_LIST_LIMIT, runListDirectory } from './list-directory.mjs';
+import { DEFAULT_LIST_LIMIT, MAX_LIST_DEPTH, MAX_LIST_LIMIT, runListDirectory } from './list-directory.mjs';
 import {
   DEFAULT_SEARCH_MAX_PER_FILE,
   DEFAULT_SEARCH_MAX_RESULTS,
@@ -304,10 +304,12 @@ registerTool('read', {
 }));
 
 registerTool('list_directory', {
-  description: `List one directory as bounded entries: kind (dir, file, link, other) and name, plus bytes for regular files. Sorted by name. Symlinks are listed and never followed. Use this to resolve a name the user gives you before reading, instead of exec or bash. Omit path to list the authority root. limit defaults to ${DEFAULT_LIST_LIMIT} entries, maximum ${MAX_LIST_LIMIT}.`,
+  description: `List one directory (or bounded tree when depth=2..${MAX_LIST_DEPTH}) as entries: kind (dir, file, link, other) and name, plus bytes for regular files. Sorted by name. Symlinks are listed and never followed; depth>1 skips .git, node_modules, third_party, and skill-library/packs unless include_vendor=true. Use this to map a folder or resolve names before reading, instead of exec or bash. Omit path to list the authority root. limit defaults to ${DEFAULT_LIST_LIMIT} entries, maximum ${MAX_LIST_LIMIT}.`,
   inputSchema: {
     path: listPath.optional(),
-    limit: z.number().int().positive().max(MAX_LIST_LIMIT).optional().describe(`Maximum entries to return; default ${DEFAULT_LIST_LIMIT}`)
+    limit: z.number().int().positive().max(MAX_LIST_LIMIT).optional().describe(`Maximum entries to return; default ${DEFAULT_LIST_LIMIT}`),
+    depth: z.number().int().min(1).max(MAX_LIST_DEPTH).optional().describe(`Directory tree depth from 1 to ${MAX_LIST_DEPTH}; default 1`),
+    include_vendor: z.boolean().optional().describe('Expand .git/vendor subdirectories when depth > 1')
   },
   annotations: {
     readOnlyHint: true,
@@ -319,7 +321,9 @@ registerTool('list_directory', {
   const result = await runListDirectory({
     ...pathPolicy,
     path: args.path,
-    limit: args.limit
+    limit: args.limit,
+    depth: args.depth,
+    include_vendor: args.include_vendor,
   }, extra.signal);
   return { content: [{ type: 'text', text: renderListDirectoryText(result) }] };
 }));

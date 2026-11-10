@@ -13,14 +13,14 @@ function expandUserTilde(value) {
 // different filesystem path inside Pi after validation.
 const PI_NORMALIZED_UNICODE_SPACES = /[\u00A0\u2000-\u200A\u202F\u205F\u3000]/u;
 
-function requirePiStablePath(value, label) {
+export function requirePiStablePath(value, label) {
   if (PI_NORMALIZED_UNICODE_SPACES.test(value)) {
     throw new Error(`${label} contains a Unicode space character not supported by the Pi path backend`);
   }
   return value;
 }
 
-function isWithin(root, target) {
+export function isWithin(root, target) {
   const relative = path.relative(root, target);
   return relative === '' || (
     relative !== '..' &&

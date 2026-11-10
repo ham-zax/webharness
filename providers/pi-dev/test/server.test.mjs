@@ -224,7 +224,7 @@ test('list_directory exposes a bounded read-only listing through MCP', async () 
   await withClient(env, async client => {
     const listed = await client.listTools();
     const tool = listed.tools.find(x => x.name === 'list_directory');
-    assert.deepEqual(Object.keys(tool.inputSchema.properties).sort(), ['limit', 'path']);
+    assert.deepEqual(Object.keys(tool.inputSchema.properties).sort(), ['depth', 'include_vendor', 'limit', 'path']);
     assert.equal(tool.annotations.readOnlyHint, true);
     assert.equal(tool.annotations.destructiveHint, false);
 

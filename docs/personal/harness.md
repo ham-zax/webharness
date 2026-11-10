@@ -154,7 +154,7 @@ Use structured ripgrep search for text discovery before reading full files. `pat
 
 ### `list_directory`
 
-Read-only discovery of one directory. Each entry reports its kind and name, and regular files add their size in bytes. Entries sort by name, hidden entries are included, and symbolic links are listed without being followed. `path` is optional and defaults to the authority root; `limit` defaults to 200 entries and cannot exceed 1000. A truncated result reports the observed total, so one call is enough to see whether a subdirectory is the better next step.
+Read-only discovery of one directory, or a bounded tree when `depth` is set (`1..4`, default `1`). Each entry reports its kind and relative name, and regular files add their size in bytes. Entries sort by name, hidden entries are included, and symbolic links are listed without ever being followed. When `depth > 1`, `.git`, `node_modules`, `third_party`, and `skill-library/packs` are listed as directories without expanding their contents unless `include_vendor: true`. `path` is optional and defaults to the authority root; `limit` defaults to 200 entries and cannot exceed 1000. Single-directory listings report an exact observed total; recursive traversal stops at the entry limit and reports a lower bound when truncated. Listings use pinned directory handles through Linux `/proc/self/fd` and fail explicitly if that access is unavailable, rather than falling back to a mutable pathname.
 
 Use it before reading an unknown path, and after an `ENOENT` or `ENOTDIR` error. Do not use `exec` with `ls`, `find`, or `rg --files` for this route; that needs shell or process authority for a read-only question.
 

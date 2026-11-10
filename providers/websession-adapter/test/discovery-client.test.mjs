@@ -924,3 +924,180 @@ test('Python import-session privately adopts redeemed access without a network r
   assert.equal(JSON.parse(readFileSync(sessionFile, 'utf8')).cwd, '/other');
   assert.equal(requests.length, 1);
 });
+
+test('Python client supports pipe/sequential batch, local shortcuts, pull (/v1/raw), ls --depth, and --save spooling', async t => {
+  const dir = mkdtempSync(join(tmpdir(), 'wh-power-features-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const sessionFile = join(dir, 'session.json');
+  const calls = [];
+  const batches = [];
+  const pngBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x01, 0x02]);
+  const { base, requests } = await pythonFixture(t, (entry, fixtureBase, _req, res) => {
+    if (entry.method === 'GET' && entry.path === '/v1/raw') {
+      if (entry.query.get('path') !== '/tmp/shot.png') {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ code: 'file_not_found' }));
+        return undefined;
+      }
+      res.writeHead(200, { 'Content-Type': 'application/octet-stream' });
+      res.end(pngBytes);
+      return undefined;
+    }
+    if (entry.method === 'POST' && entry.path === '/v1/calls') {
+      const parsed = JSON.parse(entry.body);
+      calls.push({ parsed, wait: entry.query.get('wait') });
+      if (parsed.tool === 'local_tool_call') {
+        return completed(JSON.stringify({
+          content: [{ type: 'text', text: `${parsed.arguments.server}.${parsed.arguments.tool}:${JSON.stringify(parsed.arguments.arguments)}` }],
+          structuredContent: { ok: true },
+        }), fixtureBase);
+      }
+      if (parsed.tool === 'dev_search') {
+        return completed(Array.from({ length: 40 }, (_, i) => `src/file-${i}.mjs:${i + 1}:export const line${i} = ${i};`).join('\n'), fixtureBase);
+      }
+      return completed(`${parsed.tool}:${JSON.stringify(parsed.arguments)}`, fixtureBase);
+    }
+    if (entry.method === 'POST' && entry.path === '/v1/batch') {
+      const parsed = JSON.parse(entry.body);
+      batches.push({ parsed, wait: entry.query.get('wait') });
+      if (parsed.calls.some(c => c.arguments?.fail)) {
+        return {
+          protocol: 'WEBSESSION-MCP-BRIDGE/1',
+          state: 'ready',
+          results: [
+            completed('M a.js (+1 -1)', fixtureBase),
+            { protocol: 'WEBSESSION-MCP-BRIDGE/1', state: 'tool_failed', operation_id: 'op-fail', status_url: `${fixtureBase}/v1/operations/t/op-fail`, error: '1 test failed' },
+            { protocol: 'WEBSESSION-MCP-BRIDGE/1', state: 'rejected', operation_id: 'op-skip', status_url: `${fixtureBase}/v1/operations/t/op-skip`, error: 'skipped_after_prior_failure' },
+          ],
+        };
+      }
+      if (parsed.calls.some(c => c.arguments?.exit1)) {
+        return {
+          protocol: 'WEBSESSION-MCP-BRIDGE/1',
+          state: 'ready',
+          results: parsed.calls.map((_call, index) => completed(
+            index === 0 ? 'M a.js (+1 -1)' : index === 1 ? 'assertion failed\n[exit 1 · 0.2s]' : 'continued after failure',
+            fixtureBase,
+          )),
+        };
+      }
+      return {
+        protocol: 'WEBSESSION-MCP-BRIDGE/1',
+        state: 'ready',
+        results: parsed.calls.map((c, idx) => completed(`step-${idx}:${c.tool}`, fixtureBase)),
+      };
+    }
+    return undefined;
+  });
+  writeFileSync(sessionFile, JSON.stringify({ base, cap: capability, cwd: '/workspace/app', wait: 2 }), { mode: 0o600 });
+  const env = { WH_SESSION_FILE: sessionFile, WS_BASE: '', WS_CAP: '' };
+
+  // ls --depth --all forwards tree arguments.
+  const treeOut = await runPythonInput(['ls', 'src', '--depth', '3', '--all'], env);
+  assert.equal(treeOut.status, 0, treeOut.stderr);
+  assert.deepEqual(calls.at(-1).parsed.arguments, { path: '/workspace/app/src', depth: 3, include_vendor: true });
+
+  // lcall auto-unwraps local_tool_call and uses wait=10 floor when WS_WAIT is unset.
+  const lcallOut = await runPythonInput(['lcall', 'browser-fast/observe', '{"scope":"compact"}'], env);
+  assert.equal(lcallOut.status, 0, lcallOut.stderr);
+  assert.equal(lcallOut.stdout, 'browser-fast.observe:{"scope":"compact"}\n');
+  assert.equal(calls.at(-1).wait, '10');
+
+  // lbatch normalizes plain argument objects into {arguments: ...}.
+  const lbatchOut = await runPythonInput(['lbatch', 'browser-fast', 'observe', '[{"tab":"t1"},{"id":"b","arguments":{"tab":"t2"}}]', '--concurrency', '2'], env);
+  assert.equal(lbatchOut.status, 0, lbatchOut.stderr);
+  assert.deepEqual(calls.at(-1).parsed.arguments, {
+    server: 'browser-fast',
+    tool: 'observe',
+    concurrency: 2,
+    calls: [{ arguments: { tab: 't1' } }, { id: 'b', arguments: { tab: 't2' } }],
+  });
+
+  // pipe sets sequential:true with wait=10.
+  const pipeOk = await runPythonInput(['pipe'], env, JSON.stringify([
+    { tool: 'dev_edit', arguments: { targets: [{ path: 'a.js', edits: [{ oldText: 'x', newText: 'y' }] }] } },
+    { tool: 'dev_review_changes', arguments: {} },
+  ]));
+  assert.equal(pipeOk.status, 0, pipeOk.stderr);
+  assert.equal(batches.at(-1).parsed.sequential, true);
+  assert.equal(batches.at(-1).wait, '10');
+
+  // Failed sequential pipeline still prints earlier completed mutations before exiting 1.
+  const pipeFail = await runPythonInput(['pipe'], env, JSON.stringify([
+    { tool: 'dev_edit', arguments: { targets: [] } },
+    { tool: 'dev_exec', arguments: { fail: true } },
+    { tool: 'dev_review_changes', arguments: {} },
+  ]));
+  assert.equal(pipeFail.status, 1);
+  assert.match(pipeFail.stdout, /=== \[1\/3\] dev_edit ===\nM a\.js \(\+1 -1\)/);
+  assert.match(pipeFail.stdout, /=== \[2\/3\] dev_exec \[FAILED\] ===\n1 test failed/);
+  assert.match(pipeFail.stdout, /=== \[3\/3\] dev_review_changes \[SKIPPED\] ===/);
+
+  // pull downloads binary /tmp/... files at 0600.
+  const pulledPath = join(dir, 'shot.png');
+  const pulled = await runPythonInput(['pull', '/tmp/shot.png', pulledPath], env);
+  assert.equal(pulled.status, 0, pulled.stderr);
+  assert.match(pulled.stdout, /PULLED 10B/);
+  assert.deepEqual(readFileSync(pulledPath), pngBytes);
+  assert.equal(statSync(pulledPath).mode & 0o777, 0o600);
+  const rawReq = requests.find(r => r.path === '/v1/raw');
+  assert.equal(rawReq.headers.accept, 'application/octet-stream');
+
+  // --save writes full output privately while keeping stdout preview compact.
+  const savedTxt = join(dir, 'rg-out.txt');
+  const savedRun = await runPythonInput(['--save', savedTxt, 'rg', 'export'], env);
+  assert.equal(savedRun.status, 0, savedRun.stderr);
+  assert.match(savedRun.stdout, /\[ws: saved [0-9]+ bytes \(40 lines\)/);
+  assert.match(savedRun.stdout, /previewing /);
+  assert.equal(readFileSync(savedTxt, 'utf8').split('\n').length, 40);
+  assert.equal(statSync(savedTxt).mode & 0o777, 0o600);
+
+  // --save with multi-item batch preserves every item's output instead of overwriting per item.
+  const savedBatchTxt = join(dir, 'batch-out.txt');
+  const savedBatch = await runPythonInput(['--save', savedBatchTxt, 'batch'], env, JSON.stringify([
+    { tool: 'dev_read', arguments: { path: 'a.js' } },
+    { tool: 'dev_search', arguments: { pattern: 'foo' } },
+  ]));
+  assert.equal(savedBatch.status, 0, savedBatch.stderr);
+  const savedBatchContent = readFileSync(savedBatchTxt, 'utf8');
+  assert.match(savedBatchContent, /=== \[1\/2\] dev_read ===\nstep-0:dev_read/);
+  assert.match(savedBatchContent, /=== \[2\/2\] dev_search ===\nstep-1:dev_search/);
+  assert.equal(statSync(savedBatchTxt).mode & 0o777, 0o600);
+
+  // Argument-free lcall in non-TTY subprocesses defaults to {} without consuming stdin.
+  const lcallNoArgs = await runPythonInput(['lcall', 'terminal/terminal_list'], env, '');
+  assert.equal(lcallNoArgs.status, 0, lcallNoArgs.stderr);
+  assert.equal(lcallNoArgs.stdout, 'terminal.terminal_list:{}\n');
+  assert.deepEqual(calls.at(-1).parsed.arguments, { server: 'terminal', tool: 'terminal_list', arguments: {} });
+
+  const lcallInheritedStdin = await runPythonInput(['lcall', 'terminal/terminal_list'], env, 'echo parent-heredoc-line\n');
+  assert.equal(lcallInheritedStdin.status, 0, lcallInheritedStdin.stderr);
+  assert.deepEqual(calls.at(-1).parsed.arguments, { server: 'terminal', tool: 'terminal_list', arguments: {} });
+
+  // Explicit '-' reads JSON arguments from stdin.
+  const lcallStdin = await runPythonInput(['lcall', 'browser-fast/observe', '-'], env, '{"scope":"compact"}');
+  assert.equal(lcallStdin.status, 0, lcallStdin.stderr);
+  assert.deepEqual(calls.at(-1).parsed.arguments, {
+    server: 'browser-fast',
+    tool: 'observe',
+    arguments: { scope: 'compact' },
+  });
+
+  // Sequential pipe exits 1 when a dev_exec step returns [exit 1 · ...] even as the final step.
+  const pipeCmdExit1 = await runPythonInput(['pipe'], env, JSON.stringify([
+    { tool: 'dev_edit', arguments: { targets: [] } },
+    { tool: 'dev_exec', arguments: { exit1: true } },
+  ]));
+  assert.equal(pipeCmdExit1.status, 1);
+  assert.match(pipeCmdExit1.stdout, /assertion failed\n\[exit 1 · 0\.2s\]/);
+
+  const pipeContinue = await runPythonInput(['pipe', '--continue'], env, JSON.stringify([
+    { tool: 'dev_edit', arguments: { targets: [] } },
+    { tool: 'dev_exec', arguments: { exit1: true } },
+    { tool: 'dev_review_changes', arguments: {} },
+  ]));
+  assert.equal(batches.at(-1).parsed.stop_on_error, false);
+  assert.equal(pipeContinue.status, 1, 'continuing execution must not suppress command failures');
+  assert.match(pipeContinue.stdout, /=== \[3\/3\] dev_review_changes ===\ncontinued after failure/);
+
+});

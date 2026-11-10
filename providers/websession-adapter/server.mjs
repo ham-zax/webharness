@@ -578,14 +578,29 @@ async function handleEnhancedBatch(req, res, url) {
   }
 
   let parsedItems;
+  let sequential = false;
+  let stopOnError = true;
   try {
     const payload = JSON.parse(body.toString('utf8'));
     if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
       throw new Error('batch request must be an object');
     }
-    const payloadKeys = Object.keys(payload).sort().join(',');
-    if (payloadKeys !== 'calls,version' || payload.version !== 1) {
-      throw new Error('batch request fields must be exactly version: 1 and calls');
+    const allowedTop = new Set(['version', 'calls', 'sequential', 'stop_on_error']);
+    if (
+      payload.version !== 1
+      || !Object.hasOwn(payload, 'calls')
+      || Object.keys(payload).some(key => !allowedTop.has(key))
+    ) {
+      throw new Error('batch request fields must be version: 1, calls, and optional sequential / stop_on_error');
+    }
+    if (payload.sequential !== undefined) {
+      if (typeof payload.sequential !== 'boolean') throw new Error('batch sequential must be a boolean');
+      sequential = payload.sequential;
+    }
+    if (payload.stop_on_error !== undefined) {
+      if (typeof payload.stop_on_error !== 'boolean') throw new Error('batch stop_on_error must be a boolean');
+      if (!sequential) throw new Error('batch stop_on_error requires sequential: true');
+      stopOnError = payload.stop_on_error;
     }
     if (!Array.isArray(payload.calls) || payload.calls.length < 1 || payload.calls.length > 20) {
       throw new Error('batch calls must be an array of 1 to 20 items');
@@ -607,7 +622,7 @@ async function handleEnhancedBatch(req, res, url) {
     return;
   }
 
-  const batch = operationCore.submitBatch(capability, nonce, parsedItems, turnId);
+  const batch = operationCore.submitBatch(capability, nonce, parsedItems, turnId, { sequential, stopOnError });
   if (batch.unauthorized) {
     sendJson(res, 401, { protocol: 'WEBSESSION-MCP-BRIDGE/1', state: 'rejected', code: 'authorization_required' });
     return;
