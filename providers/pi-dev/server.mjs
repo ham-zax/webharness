@@ -1,4 +1,5 @@
 import { constants as fsConstants } from 'node:fs';
+import { CALL_ID_META, traceCall, markMutation, diagnosticErrorCode } from './call-diagnostics.mjs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { McpServer } from '@modelcontextprotocol/server';
@@ -220,11 +221,25 @@ const worker = executionWorker ? null : new IdleExecutionWorker({
 const executionHandlers = new Map();
 const toolRegistrations = [];
 const shutdownController = new AbortController();
+const READ_ONLY_TOOLS = new Set(['read', 'list_directory', 'search', 'review_changes', 'wait']);
 function registerTool(name, config, handler) {
-  if (executionWorker) executionHandlers.set(name, handler);
-  else toolRegistrations.push([name, config, name === 'wait'
-    ? (args, ctx) => handler(args, { signal: AbortSignal.any([ctx.mcpReq.signal, shutdownController.signal]) })
-    : (args, ctx) => worker.call(name, args, ctx.mcpReq.signal)]);
+  const mutating = !READ_ONLY_TOOLS.has(name);
+  if (executionWorker) {
+    executionHandlers.set(name, (args, extra) => traceCall({
+      id: extra.callId, layer: 'dev-worker', tool: name, mutating,
+    }, () => {
+      if (mutating && name !== 'write') markMutation('unknown');
+      return handler(args, extra);
+    }));
+  } else {
+    toolRegistrations.push([name, config, (args, ctx) => traceCall({
+      id: ctx.mcpReq._meta?.[CALL_ID_META], layer: 'dev', tool: name, mutating,
+    }, context => {
+      if (name === 'wait') return handler(args, { signal: AbortSignal.any([ctx.mcpReq.signal, shutdownController.signal]) });
+      if (mutating) markMutation('unknown');
+      return worker.call(name, args, ctx.mcpReq.signal, context.id);
+    })]);
+  }
 }
 function createPiDevServer() {
   const server = new McpServer(
@@ -258,7 +273,8 @@ async function invoke(fn) {
         : (error instanceof Error ? error.message : String(error));
     return {
       isError: true,
-      content: [{ type: 'text', text }]
+      content: [{ type: 'text', text }],
+      _meta: { 'webharness/error-code': diagnosticErrorCode(error?.code) }
     };
   }
 }
@@ -399,11 +415,13 @@ registerTool('write', {
     overwrite: z.boolean().optional().describe('Atomically replace an existing regular file'),
     encoding: z.enum(['utf8', 'base64']).optional().describe('Content encoding: utf8 (default) or base64 for binary'),
     mode: z.string().regex(/^0?[0-7]{3}$/).optional().describe('Octal permissions such as "755"; default keeps the replaced file mode or uses the umask'),
-    mkdir_parents: z.boolean().optional().describe('Create missing parent directories')
+    mkdir_parents: z.boolean().optional().describe('Create missing parent directories'),
+    expected_bytes: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional().describe('Expected decoded content size in bytes; checked before mutation'),
+    expected_sha256: z.string().regex(/^(?:sha256:)?[a-f0-9]{64}$/i).optional().describe('Expected decoded content SHA-256; optional sha256: prefix')
   })
 }, async (args, extra) => invoke(async () => {
   const result = await runWrite({ ...pathPolicy, ...args }, extra.signal);
-  return { content: [{ type: 'text', text: renderWriteText(args.path, { replaced: result?.replaced === true }) }] };
+  return { content: [{ type: 'text', text: renderWriteText(args.path, result) }], structuredContent: result };
 }));
 
 if (pathMode === 'user') {

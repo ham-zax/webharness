@@ -5,12 +5,114 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { createHash } from 'node:crypto';
 import { createStrictEditOperations, runRead, runEdit, runWrite } from '../files.mjs';
 import { withMutationPath } from '../mutation-coordinator.mjs';
 
 const execFileAsync = promisify(execFile);
 
 const tempDir = prefix => fs.mkdtemp(path.join(os.tmpdir(), prefix));
+
+test('write receipts verify UTF-8 bytes, binary bytes, and intentional empty files', async t => {
+  const workspaceRoot = await tempDir('pi-write-receipt-');
+  t.after(() => fs.rm(workspaceRoot, { recursive: true, force: true }));
+  for (const [name, bytes, encoding] of [
+    ['unicode', Buffer.from('λ雪😀\n'), 'utf8'],
+    ['binary', Buffer.from([0, 255, 1]), 'base64'],
+    ['empty', Buffer.alloc(0), 'utf8'],
+  ]) {
+    const digest = createHash('sha256').update(bytes).digest('hex');
+    const receipt = await runWrite({ workspaceRoot, path: name, content: bytes.toString(encoding), encoding,
+      expected_bytes: bytes.length, expected_sha256: digest });
+    assert.equal(receipt.bytes_written, bytes.length);
+    assert.equal(receipt.sha256, `sha256:${digest}`);
+    assert.equal(receipt.outcome, 'created');
+    assert.match(receipt.operation_id, /^[a-f0-9-]{36}$/);
+    assert.deepEqual(await fs.readFile(path.join(workspaceRoot, name)), bytes);
+  }
+});
+
+test('write expectation mismatch precedes directory creation and replacement', async t => {
+  const workspaceRoot = await tempDir('pi-write-expectation-');
+  t.after(() => fs.rm(workspaceRoot, { recursive: true, force: true }));
+  await fs.writeFile(path.join(workspaceRoot, 'existing'), 'keep');
+  for (const expectation of [{ expected_bytes: 1 }, { expected_sha256: '0'.repeat(64) }]) {
+    for (const target of ['missing/child', 'existing']) {
+      await assert.rejects(runWrite({ workspaceRoot, path: target, content: 'new', overwrite: true,
+        mkdir_parents: true, ...expectation }), { code: 'WRITE_EXPECTATION_MISMATCH' });
+    }
+  }
+  assert.deepEqual(await fs.readdir(workspaceRoot), ['existing']);
+  assert.equal(await fs.readFile(path.join(workspaceRoot, 'existing'), 'utf8'), 'keep');
+});
+
+test('write refuses a corrupt staged file before create or replace publication', async t => {
+  const workspaceRoot = await tempDir('pi-write-corruption-');
+  t.after(() => fs.rm(workspaceRoot, { recursive: true, force: true }));
+  await fs.writeFile(path.join(workspaceRoot, 'existing'), 'keep');
+  const originalOpen = fs.open.bind(fs);
+  t.mock.method(fs, 'open', async (...args) => {
+    const handle = await originalOpen(...args);
+    if (String(args[0]).endsWith('.tmp')) {
+      const write = handle.writeFile.bind(handle);
+      t.mock.method(handle, 'writeFile', data => write(Buffer.alloc(data.length, '!')));
+    }
+    return handle;
+  });
+  for (const [target, overwrite] of [['new', false], ['existing', true]]) {
+    await assert.rejects(runWrite({ workspaceRoot, path: target, content: 'content', overwrite }),
+      { code: 'WRITE_VERIFICATION_FAILED' });
+  }
+  assert.deepEqual(await fs.readdir(workspaceRoot), ['existing']);
+  assert.equal(await fs.readFile(path.join(workspaceRoot, 'existing'), 'utf8'), 'keep');
+});
+
+test('write cancellation after staging leaves the destination untouched', async t => {
+  const workspaceRoot = await tempDir('pi-write-cancel-');
+  t.after(() => fs.rm(workspaceRoot, { recursive: true, force: true }));
+  const controller = new AbortController();
+  const originalOpen = fs.open.bind(fs);
+  t.mock.method(fs, 'open', async (...args) => {
+    const handle = await originalOpen(...args);
+    if (String(args[0]).endsWith('.tmp')) {
+      const sync = handle.sync.bind(handle);
+      t.mock.method(handle, 'sync', async () => { await sync(); controller.abort(); });
+    }
+    return handle;
+  });
+  await assert.rejects(runWrite({ workspaceRoot, path: 'new', content: 'content' }, controller.signal), /abort/i);
+  assert.deepEqual(await fs.readdir(workspaceRoot), []);
+});
+
+test('exclusive write publication cannot replace a competing creator', async t => {
+  const workspaceRoot = await tempDir('pi-write-publication-race-');
+  t.after(() => fs.rm(workspaceRoot, { recursive: true, force: true }));
+  const link = fs.link.bind(fs);
+  t.mock.method(fs, 'link', async (source, destination) => {
+    await fs.writeFile(destination, 'competing-content', { flag: 'wx' });
+    return link(source, destination);
+  });
+  await assert.rejects(runWrite({ workspaceRoot, path: 'new', content: 'our-content' }), /already exists/);
+  assert.equal(await fs.readFile(path.join(workspaceRoot, 'new'), 'utf8'), 'competing-content');
+  assert.deepEqual(await fs.readdir(workspaceRoot), ['new']);
+});
+
+test('verified staging supports long destination names and rejects zero-byte corruption', async t => {
+  const workspaceRoot = await tempDir('pi-write-staged-size-');
+  t.after(() => fs.rm(workspaceRoot, { recursive: true, force: true }));
+  const name = 'x'.repeat(240);
+  await runWrite({ workspaceRoot, path: name, content: 'keep' });
+  const originalOpen = fs.open.bind(fs);
+  t.mock.method(fs, 'open', async (...args) => {
+    const handle = await originalOpen(...args);
+    if (String(args[0]).endsWith('.tmp')) t.mock.method(handle, 'writeFile', async () => {});
+    return handle;
+  });
+  await assert.rejects(runWrite({ workspaceRoot, path: name, content: 'new', overwrite: true }),
+    { code: 'WRITE_VERIFICATION_FAILED' });
+  assert.equal(await fs.readFile(path.join(workspaceRoot, name), 'utf8'), 'keep');
+  assert.deepEqual(await fs.readdir(workspaceRoot), [name]);
+});
 
 test('read honors Pi offset and limit within workspace', async () => {
   const workspaceRoot = await tempDir('pi-read-');

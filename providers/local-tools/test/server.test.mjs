@@ -893,6 +893,42 @@ async function readPids(pidLog) {
   }
 }
 
+test('Local call and fallback preserve verified Dev receipts and correlation across real worker IPC', async t => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'local-dev-trace-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const cfgPath = path.join(dir, 'mcp.json');
+  await fs.writeFile(cfgPath, JSON.stringify({ version: '1.0.0', mcpServers: {
+    dev: { type: 'stdio', protocolVersion: '2026-07-28', command: process.execPath,
+      args: [path.resolve(import.meta.dirname, '../../pi-dev/server.mjs')], env: {
+        MCP_DEV_PATH_MODE: 'workspace', MCP_DEV_WORKSPACE_ROOT: dir,
+        MCP_DEV_STATE_DIR: path.join(dir, 'state'), MCP_DEV_SHELL_MODE: 'unrestricted',
+      } },
+  } }));
+  const records = [];
+  const logger = { log: (_level, row) => records.push(row), async flush() {} };
+  const pool = new DirectLocalServerPool({ configPath: cfgPath, idleMs: 0, logger });
+  const broker = new LocalToolBroker({ inner: pool, configPath: cfgPath, logger });
+  const server = createLocalBrokerServer({ broker });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const client = new Client({ name: 'local-trace-test', version: '1.0.0' });
+  t.after(async () => { await client.close(); await server.close(); await broker.shutdown(); });
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+  for (const [index, name] of ['tool_call', 'fallback_dispatch'].entries()) {
+    const id = `12345678-1234-1234-1234-123456789ab${index}`;
+    const result = await client.callTool({ name, _meta: { 'webharness/call-id': id }, arguments: {
+      server: 'dev', tool: 'write', arguments: { path: 'written', content: 'private-payload', overwrite: index === 1 },
+    } });
+    assert.equal(result.isError, undefined, JSON.stringify(result));
+    assert.equal(result.structuredContent.operation_id, id);
+    assert.equal(result.structuredContent.bytes_written, 15);
+    assert.equal(result._meta['webharness/call-id'], id);
+    assert.equal(result._meta['webharness/mutation-state'], 'published');
+    assert.ok(records.some(row => row.event === 'call_completed' && row.call_id === id && row.outcome === 'success'));
+  }
+  assert.doesNotMatch(JSON.stringify(records), /private-payload/);
+});
+
 test('DirectLocalServerPool wakes only the addressed server and negotiates both modern 2026-07-28 and legacy stdio servers', async t => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'local-direct-pool-'));
   t.after(() => fs.rm(dir, { recursive: true, force: true }));

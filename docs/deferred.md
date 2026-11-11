@@ -63,14 +63,16 @@ authorized root, bounded by depth and result count. Deferred because one
 the report, and a search tool adds an unbounded traversal surface for a result
 count that `limit` already caps.
 
-**Proposal, part two: gateway diagnostics.** Record tool name, sanitized
-arguments, timestamp, error code, request ID, downstream server, and whether
-the call reached the downstream process. Deferred because the observed wrapper
-(`INVALID_ARGUMENT` / `RuntimeException` / `Error calling MCP tool`) comes from
-the client connector or the 1MCP proxy, not from `pi-dev`. `pi-dev` already
-returns the plain coded message and sanitizes paths. Per-call request identity
-belongs to those layers, so building it in `pi-dev` would duplicate state that
-the proxy already owns.
+**Part two: gateway diagnostics, partially implemented 2026-11-12.** Dev and
+Local now emit per-call start/completion records with correlation IDs. Local
+passes IDs to direct downstream calls, including Dev execution-worker IPC. The
+wake proxy returns an HTTP request ID and logs forwarding attempts and outcomes.
+New diagnostic records exclude invocation arguments and contents. See
+[reliability guidance](reliability.md) for coverage and mutation-state semantics.
+
+External client/1MCP correlation and the legacy inner-1MCP path remain unresolved.
+HTTP request IDs do not automatically correlate with MCP call IDs. Production
+connector incidents still need their client, route, timestamp, and request ID.
 
 **Do it when** a future incident shows a name-search need that repeated bounded
 listings cannot meet, or when a gateway rejection must be attributed to a
@@ -85,3 +87,16 @@ specific layer and `bin/status` plus the 1MCP log no longer suffice.
 **Proposal.** Add one read-only line to `bin/status` when the adapter unit is installed or the adapter port answers: unit state, `MainPID`, and `/health/ready`. Report it as informational, not as a bridge failure, because the adapter stays optional. Do not add adapter recovery to the bridge watchdog: the unit already restarts it.
 
 **Do it when** an operator must check `/v1/*` separately from `/mcp`, or when a second silent adapter stop costs an outage.
+
+
+## Bound the stream-shutdown test before investigating another stall
+
+**Status:** proposal after the 2026-11-12 reliability work. A full run stalled
+in the wake-proxy stream-shutdown test. Baseline and changed isolated suites
+passed, and the bounded runtime rerun passed. No production cause was established.
+
+**Proposal.** Add explicit deadlines and event-driven fixture readiness to this
+test before another stress investigation. Keep a failing deadline visible.
+Do not change production shutdown behavior without a reproducible failure.
+
+**Do it when** the stall recurs or the test is next changed.

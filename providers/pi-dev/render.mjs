@@ -70,8 +70,10 @@ export function renderDetachedText(result) {
   ].join('\n');
 }
 
-export function renderWriteText(relativePath, { replaced = false } = {}) {
-  return `${replaced ? 'Replaced' : 'Created'} ${relativePath}`;
+export function renderWriteText(relativePath, { replaced = false, bytes_written, sha256, operation_id } = {}) {
+  const lines = [`${replaced ? 'Replaced' : 'Created'} ${relativePath}`];
+  if (bytes_written !== undefined) lines.push(`bytes_written: ${bytes_written}`, `sha256: ${sha256}`, `operation_id: ${operation_id}`);
+  return lines.join('\n');
 }
 
 export function renderImportFileText(result) {

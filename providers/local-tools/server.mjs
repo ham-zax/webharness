@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { CALL_ID_META, currentCall, markMutation, traceCall } from '../pi-dev/call-diagnostics.mjs';
 import fsSync from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -775,7 +776,7 @@ export class DirectServerClient {
     const startedAt = Date.now();
     try {
       const result = await this.client.callTool(
-        { name, arguments: args },
+        { name, arguments: args, ...(currentCall() ? { _meta: { [CALL_ID_META]: currentCall().id } } : {}) },
         this._requestOptions(signal)
       );
       if (result?.isError === true) {
@@ -1690,24 +1691,32 @@ export function createLocalBrokerServer({ broker } = {}) {
     }
   ] }));
   server.setRequestHandler('tools/call', async (request, ctx) => {
-    const signal = ctx.mcpReq.signal;
-    try {
-      if (request.params.name === 'tool_list') return jsonResult(await broker.list(request.params.arguments ?? {}));
-      if (request.params.name === 'tool_schema') return jsonResult(await broker.schema(request.params.arguments ?? {}));
-      if (request.params.name === 'tool_call') return await broker.call(request.params.arguments ?? {}, signal);
-      if (request.params.name === 'fallback_dispatch') {
-        if (typeof broker.fallbackDispatch === 'function') return await broker.fallbackDispatch(request.params.arguments ?? {}, signal);
-        return await broker.call(request.params.arguments ?? {}, signal);
+    return traceCall({
+      id: ctx.mcpReq._meta?.[CALL_ID_META] ?? request.params._meta?.[CALL_ID_META],
+      layer: 'local', tool: BROKER_TOOL_NAMES.includes(request.params.name) ? request.params.name : 'unknown',
+      mutating: !['tool_list', 'tool_schema'].includes(request.params.name),
+      log: broker.logger ? record => broker.logger.log('info', record) : undefined,
+    }, async () => {
+      const signal = ctx.mcpReq.signal;
+      if (!['tool_list', 'tool_schema'].includes(request.params.name)) markMutation('unknown');
+      try {
+        if (request.params.name === 'tool_list') return jsonResult(await broker.list(request.params.arguments ?? {}));
+        if (request.params.name === 'tool_schema') return jsonResult(await broker.schema(request.params.arguments ?? {}));
+        if (request.params.name === 'tool_call') return await broker.call(request.params.arguments ?? {}, signal);
+        if (request.params.name === 'fallback_dispatch') {
+          if (typeof broker.fallbackDispatch === 'function') return await broker.fallbackDispatch(request.params.arguments ?? {}, signal);
+          return await broker.call(request.params.arguments ?? {}, signal);
+        }
+        if (request.params.name === 'tool_batch') {
+          if (typeof broker.batch !== 'function') throw brokerError('LOCAL_BATCH_UNAVAILABLE', 'local broker does not implement batch dispatch');
+          return batchResult(await broker.batch(request.params.arguments ?? {}, signal));
+        }
+        logUnknownBrokerTool(request.params.name);
+        return errorResult(brokerError('UNKNOWN_BROKER_TOOL', unknownBrokerToolMessage(request.params.name)));
+      } catch (error) {
+        return errorResult(error);
       }
-      if (request.params.name === 'tool_batch') {
-        if (typeof broker.batch !== 'function') throw brokerError('LOCAL_BATCH_UNAVAILABLE', 'local broker does not implement batch dispatch');
-        return batchResult(await broker.batch(request.params.arguments ?? {}, signal));
-      }
-      logUnknownBrokerTool(request.params.name);
-      return errorResult(brokerError('UNKNOWN_BROKER_TOOL', unknownBrokerToolMessage(request.params.name)));
-    } catch (error) {
-      return errorResult(error);
-    }
+    });
   });
   return server;
 }

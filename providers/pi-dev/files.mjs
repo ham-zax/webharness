@@ -1,8 +1,9 @@
 import fs from 'node:fs/promises';
+import { dirname, join } from 'node:path';
+import { currentCall, markMutation } from './call-diagnostics.mjs';
 import { constants } from 'node:fs';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import {
-  createWriteTool,
   generateDiffString,
   truncateHead
 } from '@earendil-works/pi-coding-agent';
@@ -367,17 +368,7 @@ export function createStrictEditOperations(edits, signal) {
   };
 }
 
-const exclusiveWriteOperations = {
-  mkdir: async dir => {
-    const stat = await fs.stat(dir);
-    if (!stat.isDirectory()) throw new Error('write parent must be a directory');
-  },
-  writeFile: (absolutePath, content) => fs.writeFile(
-    absolutePath,
-    content,
-    { encoding: 'utf8', flag: 'wx' }
-  )
-};
+
 
 async function resolveFilePolicy({ pathMode = 'workspace', workspaceRoot, defaultCwd }) {
   if (pathMode === 'workspace') {
@@ -798,69 +789,96 @@ function parseWriteMode(mode) {
   return Number.parseInt(mode, 8);
 }
 
-export async function runWrite({
-  pathMode = 'workspace', defaultCwd, workspaceRoot, path, content, overwrite = false,
-  encoding, mode, mkdir_parents: mkdirParents = false
-}, signal) {
-  const data = decodeWriteContent(content, encoding);
-  const fileMode = parseWriteMode(mode);
-  const policy = await resolveFilePolicy({ pathMode, workspaceRoot, defaultCwd });
-  if (mkdirParents) await createParents({ pathMode: policy.pathMode, root: policy.root, value: path });
-  const target = policy.pathMode === 'user'
-    ? await resolveUserPath(policy.root, path, { mustExist: false })
-    : await resolveNewWorkspacePath(policy.root, path);
-  if (overwrite) return replaceFile(target, path, data, fileMode, signal);
-  try {
-    if (typeof data === 'string' && fileMode === undefined) {
-      const tool = createWriteTool(policy.root, { operations: exclusiveWriteOperations });
-      await tool.execute(randomUUID(), { path: target, content: data }, signal);
-    } else {
-      await withMutationPath(target, async () => {
-        throwIfAborted(signal);
-        await fs.writeFile(target, data, { flag: 'wx', mode: fileMode ?? 0o666 });
-        // The open mode is filtered by umask; an explicit mode is applied as given.
-        if (fileMode !== undefined) await fs.chmod(target, fileMode);
-      }, { signal });
-    }
-    return { replaced: false };
-  } catch (error) {
-    if (error?.code === 'EEXIST' || /EEXIST/.test(error?.message ?? '')) {
-      throw new Error('file already exists; use edit for existing files, or pass overwrite: true to replace it');
-    }
-    throw modelFacingPathError(error, target, path);
+function writeError(code, message) {
+  return Object.assign(new Error(`${code}: ${message}`), { code });
+}
+
+async function verifyWrittenBytes(handle, expectedBytes, expectedHash) {
+  const stat = await handle.stat();
+  if (!stat.isFile() || stat.size !== expectedBytes) {
+    throw writeError('WRITE_VERIFICATION_FAILED', 'staged file size differs from the received content');
+  }
+  const hash = createHash('sha256');
+  const chunk = Buffer.alloc(64 * 1024);
+  let offset = 0;
+  while (offset < expectedBytes) {
+    const { bytesRead } = await handle.read(chunk, 0, Math.min(chunk.length, expectedBytes - offset), offset);
+    if (bytesRead === 0) throw writeError('WRITE_VERIFICATION_FAILED', 'staged file ended early');
+    hash.update(chunk.subarray(0, bytesRead));
+    offset += bytesRead;
+  }
+  if (hash.digest('hex') !== expectedHash) {
+    throw writeError('WRITE_VERIFICATION_FAILED', 'staged file hash differs from the received content');
   }
 }
 
-// Explicit whole-file replacement: temp file in the same directory, then atomic rename,
-// under the same per-path lease as edit so it cannot interleave with a guarded edit.
-async function replaceFile(target, requestedPath, content, fileMode, signal) {
+export async function runWrite({
+  pathMode = 'workspace', defaultCwd, workspaceRoot, path, content, overwrite = false,
+  encoding, mode, mkdir_parents: mkdirParents = false, expected_bytes: expectedBytes,
+  expected_sha256: expectedHash, operation_id: operationId = currentCall()?.id ?? randomUUID()
+}, signal) {
+  const data = Buffer.from(decodeWriteContent(content, encoding));
+  const fileMode = parseWriteMode(mode);
+  const digest = createHash('sha256').update(data).digest('hex');
+  if (expectedBytes !== undefined && (!Number.isSafeInteger(expectedBytes) || expectedBytes < 0 || expectedBytes !== data.length)) {
+    throw writeError('WRITE_EXPECTATION_MISMATCH', 'expected_bytes does not match decoded content');
+  }
+  if (expectedHash !== undefined && (typeof expectedHash !== 'string'
+    || !/^(?:sha256:)?[a-f0-9]{64}$/i.test(expectedHash)
+    || expectedHash.toLowerCase().replace(/^sha256:/, '') !== digest)) {
+    throw writeError('WRITE_EXPECTATION_MISMATCH', 'expected_sha256 does not match decoded content');
+  }
+  throwIfAborted(signal);
+  const policy = await resolveFilePolicy({ pathMode, workspaceRoot, defaultCwd });
+  if (mkdirParents) {
+    markMutation('started');
+    await createParents({ pathMode: policy.pathMode, root: policy.root, value: path });
+  }
+  const target = policy.pathMode === 'user'
+    ? await resolveUserPath(policy.root, path, { mustExist: false })
+    : await resolveNewWorkspacePath(policy.root, path);
   return withMutationPath(target, async () => {
     throwIfAborted(signal);
     let existing = null;
     try {
       existing = await fs.lstat(target);
     } catch (error) {
-      if (error?.code !== 'ENOENT') throw modelFacingPathError(error, target, requestedPath);
+      if (error?.code !== 'ENOENT') throw modelFacingPathError(error, target, path);
+    }
+    if (existing && !overwrite) {
+      throw new Error('file already exists; use edit for existing files, or pass overwrite: true to replace it');
     }
     if (existing && !existing.isFile()) {
       throw new Error('overwrite target must be a regular file, not a symlink or directory');
     }
-    const temp = `${target}.${randomUUID()}.tmp`;
+    const temp = join(dirname(target), `.webharness-write-${randomUUID()}.tmp`);
     let handle;
     try {
-      handle = await fs.open(temp, 'wx', existing ? 0o600 : 0o666);
-      await handle.writeFile(content, 'utf8');
+      markMutation('started');
+      handle = await fs.open(temp, 'wx+', existing ? 0o600 : 0o666);
+      await handle.writeFile(data);
+      await verifyWrittenBytes(handle, data.length, digest);
       if (fileMode !== undefined) await handle.chmod(fileMode);
       else if (existing) await handle.chmod(existing.mode & 0o7777);
       await handle.sync();
-      await handle.close();
-      handle = null;
-      await fs.rename(temp, target);
+      throwIfAborted(signal);
+      // The open handle verifies the bytes we publish. A hard link preserves
+      // create-only semantics even against writers outside our mutation lease.
+      if (overwrite) await fs.rename(temp, target);
+      else await fs.link(temp, target);
+      markMutation('published');
+      return {
+        path, replaced: existing !== null, outcome: existing ? 'replaced' : 'created',
+        bytes_written: data.length, sha256: `sha256:${digest}`, operation_id: operationId,
+      };
     } catch (error) {
-      if (handle) await handle.close().catch(() => {});
+      if (error?.code === 'EEXIST') {
+        throw new Error('file already exists; use edit for existing files, or pass overwrite: true to replace it');
+      }
+      throw modelFacingPathError(error, target, path);
+    } finally {
+      await handle?.close().catch(() => {});
       await fs.rm(temp, { force: true }).catch(() => {});
-      throw modelFacingPathError(error, target, requestedPath);
     }
-    return { replaced: existing !== null };
   }, { signal });
 }

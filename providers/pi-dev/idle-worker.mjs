@@ -60,7 +60,7 @@ export class IdleExecutionWorker {
     finally { this.starting = null; }
   }
 
-  async call(name, args, signal) {
+  async call(name, args, signal, callId) {
     clearTimeout(this.timer);
     const id = ++this.nextId;
     // Reserve the call before startup so simultaneous calls cannot race eviction.
@@ -80,7 +80,7 @@ export class IdleExecutionWorker {
       child = this.child;
       this.calls.get(id).child = child;
       signal?.addEventListener('abort', abort, { once: true });
-      child.send({ type: 'call', id, name, args }, error => { if (error) rejectResult(error); });
+      child.send({ type: 'call', id, name, args, callId }, error => { if (error) rejectResult(error); });
       return await result;
     } finally {
       signal?.removeEventListener('abort', abort);
@@ -150,7 +150,7 @@ export function serveExecutionWorker(handlers) {
       try {
         const handler = handlers.get(message.name);
         if (!handler) throw new Error(`Unknown Dev tool: ${message.name}`);
-        const result = await handler(message.args, { signal: controller.signal });
+        const result = await handler(message.args, { signal: controller.signal, callId: message.callId });
         if (process.connected) process.send({ type: 'result', id: message.id, result });
       } catch (error) {
         if (process.connected) process.send({ type: 'result', id: message.id, error: error instanceof Error ? error.message : String(error) });

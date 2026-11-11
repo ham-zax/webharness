@@ -1054,15 +1054,37 @@ test('edit v2 keeps all-target preflight failure zero-mutation at the MCP bounda
   });
 });
 
-test('write returns a short acknowledgement', async () => {
+test('write returns a verified receipt', async () => {
   const { workspaceRoot, env } = await fixture();
   await withClient(env, async client => {
     const result = await client.callTool({
       name: 'write',
       arguments: { path: 'new.txt', content: 'new\n' }
     });
-    assert.equal(textOf(result), 'Created new.txt');
+    assert.match(result.content[0].text, /^Created new.txt\nbytes_written: 4\nsha256: sha256:[a-f0-9]{64}\noperation_id: /);
+    assert.equal(result.structuredContent.bytes_written, 4);
+    assert.equal(result.structuredContent.outcome, 'created');
     assert.equal(await fs.readFile(path.join(workspaceRoot, 'new.txt'), 'utf8'), 'new\n');
+  });
+});
+
+test('write retains correlation across worker IPC and reports mismatch before mutation', async () => {
+  const { workspaceRoot, env } = await fixture();
+  await withClient(env, async client => {
+    const id = '12345678-1234-1234-1234-123456789abc';
+    const result = await client.callTool({ name: 'write',
+      _meta: { 'webharness/call-id': id },
+      arguments: { path: 'receipt.txt', content: 'verified', expected_bytes: 8 } });
+    assert.equal(result.structuredContent.operation_id, id);
+    assert.equal(result._meta['webharness/call-id'], id);
+    assert.equal(result._meta['webharness/mutation-state'], 'published');
+    const refused = await client.callTool({ name: 'write', arguments: {
+      path: 'receipt.txt', content: '', overwrite: true, expected_bytes: 8,
+    } });
+    assert.equal(refused.isError, true);
+    assert.match(refused.content[0].text, /^WRITE_EXPECTATION_MISMATCH:/);
+    assert.equal(refused._meta['webharness/mutation-state'], 'not_started');
+    assert.equal(await fs.readFile(path.join(workspaceRoot, 'receipt.txt'), 'utf8'), 'verified');
   });
 });
 
@@ -1242,14 +1264,16 @@ test('write overwrite works through the MCP boundary and reports what happened',
   const { workspaceRoot, env } = await fixture();
   await withClient(env, async client => {
     const created = await client.callTool({ name: 'write', arguments: { path: 'c.txt', content: '1\n' } });
-    assert.equal(textOf(created), 'Created c.txt');
+    assert.match(created.content[0].text, /^Created c.txt\nbytes_written: 2\n/);
+    assert.equal(created.structuredContent.outcome, 'created');
     const refused = await client.callTool({ name: 'write', arguments: { path: 'c.txt', content: '2\n' } });
     assert.equal(refused.isError, true);
     assert.match(textOf(refused), /overwrite: true/);
     const replaced = await client.callTool({
       name: 'write', arguments: { path: 'c.txt', content: '2\n', overwrite: true }
     });
-    assert.equal(textOf(replaced), 'Replaced c.txt');
+    assert.match(replaced.content[0].text, /^Replaced c.txt\nbytes_written: 2\n/);
+    assert.equal(replaced.structuredContent.outcome, 'replaced');
     assert.equal(await fs.readFile(path.join(workspaceRoot, 'c.txt'), 'utf8'), '2\n');
     const missingParent = await client.callTool({ name: 'write', arguments: { path: 'no/such/c.txt', content: '3\n' } });
     assert.equal(missingParent.isError, true);
