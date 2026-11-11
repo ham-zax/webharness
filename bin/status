@@ -162,9 +162,9 @@ if [[ "$INNER_LOG_MAX_SIZE" =~ ^[0-9]+$ ]] && [[ "$INNER_LOG_MAX_FILES" =~ ^[0-9
 else
   INNER_LOG_POLICY_BYTES=0
 fi
-echo "Local inner 1MCP logs: files=$INNER_LOG_FILES bytes=$INNER_LOG_BYTES policy_bytes=$INNER_LOG_POLICY_BYTES oldest_age_seconds=$INNER_LOG_OLDEST_AGE"
+echo "Local broker logs: files=$INNER_LOG_FILES bytes=$INNER_LOG_BYTES policy_bytes=$INNER_LOG_POLICY_BYTES oldest_age_seconds=$INNER_LOG_OLDEST_AGE"
 if [ "$INNER_LOG_POLICY_BYTES" -gt 0 ] && [ "$INNER_LOG_BYTES" -gt "$INNER_LOG_POLICY_BYTES" ]; then
-  warn "Local inner 1MCP logs exceed configured nominal retention: $INNER_LOG_BYTES > $INNER_LOG_POLICY_BYTES bytes"
+  warn "Local broker logs exceed configured nominal retention: $INNER_LOG_BYTES > $INNER_LOG_POLICY_BYTES bytes"
 fi
 
 DEV_SPOOL_BUDGET="$(node - "$BRIDGE_CONFIG_DIR/mcp.json" 2>/dev/null <<'NODE' || true

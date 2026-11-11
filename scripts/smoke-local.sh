@@ -41,6 +41,7 @@ fi
 CONFIG="$BRIDGE_CONFIG_DIR/mcp.json"
 if [ -f "$CONFIG" ]; then
   node - "$CONFIG" "$DIR" "${MCP_BRIDGE_PROFILE:-}" <<'NODE'
+const { execFileSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const [configFile, repoRoot, profile] = process.argv.slice(2);
@@ -48,6 +49,25 @@ const cfg = JSON.parse(fs.readFileSync(configFile, 'utf8'));
 const expectedTemplate = fs.readFileSync(path.join(repoRoot, 'config', 'templates', 'instructions-template.md'), 'utf8');
 if (cfg.activeInstructionTemplate !== 'webharness' || cfg.publishedInstructionTemplates?.webharness?.initialization !== expectedTemplate) {
   throw new Error('1MCP mcp.json is missing the active webharness instruction template (re-render the deployment)');
+}
+let npmRoot = '';
+try {
+  npmRoot = execFileSync('npm', ['root', '-g'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+} catch {
+  npmRoot = '';
+}
+const oneMcpRoot = npmRoot ? path.join(npmRoot, '@1mcp', 'agent') : '';
+if (oneMcpRoot && fs.existsSync(oneMcpRoot)) {
+  const oneMcpPkg = JSON.parse(fs.readFileSync(path.join(oneMcpRoot, 'package.json'), 'utf8'));
+  if (oneMcpPkg.version !== '0.39.8') throw new Error(`unexpected installed 1MCP version: ${oneMcpPkg.version}`);
+  const oneMcpConstants = fs.readFileSync(path.join(oneMcpRoot, 'build', 'constants', 'mcp.js'), 'utf8');
+  if (!oneMcpConstants.includes("process.env.WEBHARNESS_MCP_URI_SEPARATOR || '_'")) {
+    throw new Error('installed 1MCP is missing the WebHarness clean tool namespacing patch');
+  }
+  const oneMcpServerSetup = fs.readFileSync(path.join(oneMcpRoot, 'build', 'server.js'), 'utf8');
+  if (!oneMcpServerSetup.includes('setupResult.instructionAggregator?.setRuntimeInstructionConfiguration(configManager.getRuntimeInstructionConfiguration());')) {
+    throw new Error('installed 1MCP is missing the modern startup instruction-template seed patch');
+  }
 }
 const dev = cfg.mcpServers?.dev;
 const code = cfg.mcpServers?.code;
@@ -72,20 +92,8 @@ if (local) {
   if (JSON.stringify(local.args ?? []) !== JSON.stringify([expectedServer])) throw new Error('unexpected Local broker server path');
   const env = local.env ?? {};
   if (!path.isAbsolute(env.MCP_LOCAL_INNER_CONFIG ?? '')) throw new Error('Local inner config path must be absolute');
-  if (!path.isAbsolute(env.MCP_LOCAL_ONE_MCP_ENTRY ?? '')) throw new Error('Local inner 1MCP entry path must be absolute');
-  if (!env.MCP_LOCAL_ONE_MCP_ENTRY.endsWith('/@1mcp/agent/build/index.js')) throw new Error('unexpected Local inner 1MCP entry path');
-  const oneMcpRoot = path.resolve(env.MCP_LOCAL_ONE_MCP_ENTRY, '..', '..');
-  if (fs.existsSync(oneMcpRoot)) {
-    const oneMcpPkg = JSON.parse(fs.readFileSync(path.join(oneMcpRoot, 'package.json'), 'utf8'));
-    if (oneMcpPkg.version !== '0.39.8') throw new Error(`unexpected installed 1MCP version: ${oneMcpPkg.version}`);
-    const oneMcpConstants = fs.readFileSync(path.join(oneMcpRoot, 'build', 'constants', 'mcp.js'), 'utf8');
-    if (!oneMcpConstants.includes("process.env.WEBHARNESS_MCP_URI_SEPARATOR || '_'")) {
-      throw new Error('installed 1MCP is missing the WebHarness clean tool namespacing patch');
-    }
-    const oneMcpServerSetup = fs.readFileSync(path.join(oneMcpRoot, 'build', 'server.js'), 'utf8');
-    if (!oneMcpServerSetup.includes('setupResult.instructionAggregator?.setRuntimeInstructionConfiguration(configManager.getRuntimeInstructionConfiguration());')) {
-      throw new Error('installed 1MCP is missing the modern startup instruction-template seed patch');
-    }
+  if (env.MCP_LOCAL_ONE_MCP_ENTRY !== undefined) {
+    throw new Error('Local broker must supervise downstream servers directly without MCP_LOCAL_ONE_MCP_ENTRY');
   }
   if (JSON.stringify(local.tags ?? []) !== JSON.stringify(['local'])) throw new Error('Local broker must use only the local tag');
   const pkg = JSON.parse(fs.readFileSync(path.join(repoRoot, 'providers', 'local-tools', 'package.json'), 'utf8'));
@@ -201,19 +209,19 @@ LOCAL_INNER_CONFIG="$BRIDGE_STATE_DIR/local-1mcp/mcp.json"
 LOCAL_INNER_APP_CONFIG="$BRIDGE_STATE_DIR/local-1mcp/config.toml"
 if [ -f "$LOCAL_INNER_CONFIG" ]; then
   if [ ! -f "$LOCAL_INNER_APP_CONFIG" ]; then
-    echo "missing inner 1MCP app config: $LOCAL_INNER_APP_CONFIG (re-render the deployment before starting the bridge)" >&2
+    echo "missing Local broker log policy config: $LOCAL_INNER_APP_CONFIG (re-render the deployment before starting the bridge)" >&2
     exit 1
   fi
   node - "$LOCAL_INNER_APP_CONFIG" "$BRIDGE_STATE_DIR/logs/local-inner.log" <<'NODE'
 const fs = require('fs');
 const [configFile, expectedLogFile] = process.argv.slice(2);
 const text = fs.readFileSync(configFile, 'utf8');
-if (!text.includes('[logging]')) throw new Error('inner 1MCP config.toml must contain [logging]');
-if (!text.includes(`file = ${JSON.stringify(expectedLogFile)}`)) throw new Error('inner 1MCP logging.file must target the bridge state log path');
+if (!text.includes('[logging]')) throw new Error('Local broker config.toml must contain [logging]');
+if (!text.includes(`file = ${JSON.stringify(expectedLogFile)}`)) throw new Error('Local broker logging.file must target the bridge state log path');
 const size = Number(text.match(/^maxSize\s*=\s*(\d+)$/m)?.[1]);
 const files = Number(text.match(/^maxFiles\s*=\s*(\d+)$/m)?.[1]);
-if (!Number.isInteger(size) || size < 1048576 || size > 67108864) throw new Error('inner 1MCP logging.maxSize is outside bridge policy');
-if (!Number.isInteger(files) || files < 1 || files > 10) throw new Error('inner 1MCP logging.maxFiles is outside bridge policy');
+if (!Number.isInteger(size) || size < 1048576 || size > 67108864) throw new Error('Local broker logging.maxSize is outside bridge policy');
+if (!Number.isInteger(files) || files < 1 || files > 10) throw new Error('Local broker logging.maxFiles is outside bridge policy');
 NODE
 fi
 

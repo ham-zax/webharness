@@ -90,7 +90,8 @@ test_1mcp_clean_tool_namespacing_is_guarded() {
   contains "$helper" 'utils/core/errorHandling\.js' &&
   contains "$helper" 'MCP error -32000: interaction_capacity_exceeded' &&
   ! contains "$helper" 'templateTypes\.js' &&
-  contains "$ROOT/providers/local-tools/server.mjs" 'WEBHARNESS_MCP_URI_SEPARATOR: INNER_TOOL_SEPARATOR' &&
+  contains "$ROOT/providers/local-tools/server.mjs" 'DirectLocalServerPool' &&
+  ! contains "$ROOT/providers/local-tools/server.mjs" 'InnerDirect1Mcp' &&
   ! contains "$ROOT/providers/local-tools/server.mjs" 'ONE_MCP_URI_SEPARATOR'
 }
 
@@ -366,7 +367,7 @@ SH
     BRIDGE_PROC_ROOT="$fakeproc" PATH="$fakebin:$PATH" bash "$ROOT/bin/status" 2>&1 || true)"
   grep -Fq '== retained diagnostics ==' <<<"$output" &&
   grep -Fq '1MCP rotated logs: files=2 bytes=2048 policy_bytes=3072' <<<"$output" &&
-  grep -Fq 'Local inner 1MCP logs: files=1 bytes=512 policy_bytes=3072' <<<"$output" &&
+  grep -Fq 'Local broker logs: files=1 bytes=512 policy_bytes=3072' <<<"$output" &&
   grep -Fq 'Dev finalized spools: files=2 bytes=3072 budget_bytes=4096' <<<"$output" &&
   grep -Fq 'Dev active spools: files=1 bytes=512' <<<"$output"
 }

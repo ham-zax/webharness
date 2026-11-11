@@ -1,12 +1,13 @@
+import { spawn } from 'node:child_process';
+import fsSync from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { Client } from '@modelcontextprotocol/client';
-import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
+import { Client, DEFAULT_REQUEST_TIMEOUT_MSEC, ReadBuffer, STDIO_DEFAULT_MAX_BUFFER_SIZE, SdkError, SdkErrorCode, serializeMessage } from '@modelcontextprotocol/client';
+import { getDefaultEnvironment } from '@modelcontextprotocol/client/stdio';
 import { Server } from '@modelcontextprotocol/server';
 import { StdioServerTransport, serveStdio } from '@modelcontextprotocol/server/stdio';
 import { hasActiveRuntimeLeases } from '../../lib/runtime-leases.mjs';
-import { reclaimStaleRuntimeOwnership } from '../../lib/one-mcp-runtime-ownership.mjs';
 import { createStdioErrorReporter } from '../../lib/stdio-diagnostics.mjs';
 
 export const INNER_TOOL_SEPARATOR = '_1mcp_';
@@ -17,6 +18,9 @@ export const MAX_BATCH_CONCURRENCY = 16;
 export const MAX_BATCH_CALLS = 32;
 export const BROKER_TOOL_NAMES = Object.freeze(['tool_list', 'tool_schema', 'tool_call', 'fallback_dispatch', 'tool_batch']);
 const MAX_REPORTED_TOOL_NAME_LENGTH = 128;
+const MAX_STDERR_LINE_BYTES = 2048;
+const MAX_LOG_LINE_BYTES = 2048;
+const MAX_CAUSE_SUMMARY_LENGTH = 512;
 
 const CURSOR_VERSION = 1;
 const MAX_CURSOR_LENGTH = 4096;
@@ -34,6 +38,18 @@ function brokerError(code, message, cause) {
   const error = new Error(`${code}: ${message}`, cause ? { cause } : undefined);
   error.code = code;
   return error;
+}
+
+function causeSummary(error, maxLen = MAX_CAUSE_SUMMARY_LENGTH) {
+  const raw = error instanceof Error ? error.message : String(error ?? '');
+  const clean = raw.replace(/[\r\n]+/g, ' ').trim();
+  if (!clean) return '';
+  return clean.length > maxLen ? `${clean.slice(0, maxLen)}...` : clean;
+}
+
+function withCauseDetail(prefix, error) {
+  const detail = causeSummary(error);
+  return detail ? `${prefix}: ${detail}` : prefix;
 }
 
 function requiredString(value, name) {
@@ -62,6 +78,21 @@ function boundedDuration(value, fallback, name) {
 
 function delay(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function waitWithTimeout(promise, ms) {
+  let timer;
+  try {
+    return await Promise.race([
+      promise.then(() => true),
+      new Promise(resolve => {
+        timer = setTimeout(() => resolve(false), ms);
+        timer.unref?.();
+      })
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function normalizeLimit(value) {
@@ -232,47 +263,487 @@ function normalizeBatchConcurrency(value, callCount) {
   return Math.min(concurrency, callCount);
 }
 
-export class InnerDirect1Mcp {
-  constructor({ transport, client }) {
+function parseLogPolicyToml(text) {
+  const fileRaw = text.match(/^file\s*=\s*("[^"]+"|'[^']+')\s*$/m)?.[1];
+  if (!fileRaw) return null;
+  let file;
+  try {
+    file = fileRaw.startsWith('"') ? JSON.parse(fileRaw) : fileRaw.slice(1, -1);
+  } catch {
+    return null;
+  }
+  if (typeof file !== 'string' || !path.isAbsolute(file)) return null;
+  const maxSize = Number(text.match(/^maxSize\s*=\s*(\d+)\s*$/m)?.[1]);
+  const maxFiles = Number(text.match(/^maxFiles\s*=\s*(\d+)\s*$/m)?.[1]);
+  if (!Number.isSafeInteger(maxSize) || maxSize < 256) return null;
+  if (!Number.isSafeInteger(maxFiles) || maxFiles < 1 || maxFiles > 50) return null;
+  return { file, maxSize, maxFiles };
+}
+
+function rotatedSiblingPath(baseFile, index) {
+  const ext = path.extname(baseFile);
+  const stem = ext ? baseFile.slice(0, -ext.length) : baseFile;
+  return `${stem}${index}${ext}`;
+}
+
+// Bounded rotating diagnostic writer matching the rendered [logging] policy in
+// local-1mcp/config.toml so `bin/status` and operators inspect one bounded log
+// (`logs/local-inner*.log`) without needing a second 1MCP runtime.
+export class LocalDiagnosticLogger {
+  constructor({ appConfigPath, file, maxSize = 10 * 1024 * 1024, maxFiles = 5 } = {}) {
+    this.policy = null;
+    if (typeof file === 'string' && path.isAbsolute(file)) {
+      this.policy = { file, maxSize, maxFiles };
+    } else if (typeof appConfigPath === 'string' && appConfigPath.length > 0) {
+      try {
+        this.policy = parseLogPolicyToml(fsSync.readFileSync(appConfigPath, 'utf8'));
+      } catch {
+        this.policy = null;
+      }
+    }
+    this._tail = Promise.resolve();
+  }
+
+  log(level, fields = {}) {
+    if (!this.policy) return;
+    const parts = [new Date().toISOString(), `[${level}]`];
+    for (const [key, value] of Object.entries(fields)) {
+      if (value === undefined) continue;
+      parts.push(`${key}=${typeof value === 'string' ? JSON.stringify(value) : String(value)}`);
+    }
+    let line = parts.join(' ');
+    const maxChars = Math.min(MAX_LOG_LINE_BYTES, Math.max(64, this.policy.maxSize - 2));
+    if (Buffer.byteLength(line, 'utf8') > maxChars) {
+      line = `${Buffer.from(line, 'utf8').subarray(0, maxChars - 4).toString('utf8')}...`;
+    }
+    const payload = `${line}\n`;
+    this._tail = this._tail.then(() => this._appendBounded(payload)).catch(() => {});
+  }
+
+  async _appendBounded(payload) {
+    const { file, maxSize, maxFiles } = this.policy;
+    const bytes = Buffer.byteLength(payload, 'utf8');
+    if (bytes > maxSize) return;
+    await fs.mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
+    let currentSize = 0;
+    try {
+      currentSize = (await fs.stat(file)).size;
+    } catch (error) {
+      if (error?.code !== 'ENOENT') return;
+    }
+    if (currentSize + bytes > maxSize) {
+      await this._rotate();
+    }
+    await fs.appendFile(file, payload, { encoding: 'utf8', mode: 0o600 });
+  }
+
+  async _rotate() {
+    const { file, maxFiles } = this.policy;
+    if (maxFiles <= 1) {
+      await fs.rm(file, { force: true });
+      return;
+    }
+    // Keep at most (maxFiles - 1) rotated siblings (`local-inner1.log` .. `local-inner{N-1}.log`)
+    // plus the active `local-inner.log`, so total bytes never exceed maxSize * maxFiles.
+    await fs.rm(rotatedSiblingPath(file, maxFiles - 1), { force: true });
+    for (let idx = maxFiles - 2; idx >= 1; idx -= 1) {
+      const src = rotatedSiblingPath(file, idx);
+      const dst = rotatedSiblingPath(file, idx + 1);
+      try {
+        await fs.rename(src, dst);
+      } catch (error) {
+        if (error?.code !== 'ENOENT') throw error;
+      }
+    }
+    try {
+      await fs.rename(file, rotatedSiblingPath(file, 1));
+    } catch (error) {
+      if (error?.code !== 'ENOENT') throw error;
+    }
+  }
+
+  flush() {
+    return this._tail;
+  }
+}
+
+function isProcessGroupAlive(pid, proc) {
+  if (!pid) return false;
+  if (process.platform === 'win32') {
+    return proc.exitCode === null && proc.signalCode === null;
+  }
+  try {
+    process.kill(-pid, 0);
+    return true;
+  } catch (error) {
+    return error?.code === 'EPERM';
+  }
+}
+
+function signalOwnedProcessGroup(pid, proc, signal) {
+  if (!pid) return;
+  try {
+    if (process.platform !== 'win32') {
+      process.kill(-pid, signal);
+    } else if (proc.exitCode === null && proc.signalCode === null) {
+      proc.kill(signal);
+    }
+  } catch (error) {
+    if (error?.code !== 'ESRCH') throw error;
+  }
+}
+
+async function waitForGroupExit(pid, proc, closedPromise, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (isProcessGroupAlive(pid, proc)) {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) return false;
+    await delay(Math.min(25, remaining));
+  }
+  const remaining = Math.max(1, deadline - Date.now());
+  return waitWithTimeout(closedPromise, remaining);
+}
+
+// Stdio client transport that places each spawned downstream MCP server in its own
+// POSIX process group (`detached: true`), captures bounded stderr lines without
+// polluting stdout, and reaps the entire owned process group on close/dispose.
+export class DetachedStdioClientTransport {
+  _process;
+  _pid = null;
+  _procClosed = true;
+  _procClosePromise = Promise.resolve();
+  _closingPromise = null;
+  _intentionalClose = false;
+  _readBuffer;
+  _spawnConfig;
+  _serverParams;
+  onclose;
+  onerror;
+  onmessage;
+
+  constructor(server) {
+    this._spawnConfig = server;
+    // Expose `_serverParams` only when `disposableProbe: true` (`protocolVersion: 'auto'`)
+    // so `pin: '2026-07-28'` negotiates in-place on one process without spawning a sibling.
+    this._serverParams = server.disposableProbe ? server : undefined;
+    this._readBuffer = new ReadBuffer({ maxBufferSize: server.maxBufferSize ?? STDIO_DEFAULT_MAX_BUFFER_SIZE });
+  }
+
+  get pid() {
+    return this._process?.pid ?? null;
+  }
+
+  get stderr() {
+    return this._process?.stderr ?? null;
+  }
+
+  async start() {
+    if (this._process) {
+      throw new Error('DetachedStdioClientTransport already started');
+    }
+    const stderrMode = this._spawnConfig.stderr === 'ignore' ? 'ignore' : 'pipe';
+    return new Promise((resolve, reject) => {
+      const proc = spawn(this._spawnConfig.command, this._spawnConfig.args ?? [], {
+        env: {
+          ...getDefaultEnvironment(),
+          ...this._spawnConfig.env
+        },
+        stdio: ['pipe', 'pipe', stderrMode],
+        shell: false,
+        windowsHide: process.platform === 'win32',
+        detached: process.platform !== 'win32',
+        cwd: this._spawnConfig.cwd
+      });
+      this._process = proc;
+      this._pid = proc.pid ?? null;
+      this._procClosed = false;
+      let settledStart = false;
+
+      let stderrRemainder = '';
+      const emitStderrLine = rawLine => {
+        if (typeof this._spawnConfig.onStderrLine !== 'function') return;
+        const trimmed = rawLine.replace(/\r$/, '');
+        if (!trimmed) return;
+        this._spawnConfig.onStderrLine(trimmed);
+      };
+
+      if (proc.stderr) {
+        proc.stderr.on('data', chunk => {
+          stderrRemainder += chunk.toString('utf8');
+          while (true) {
+            const nl = stderrRemainder.indexOf('\n');
+            if (nl === -1) {
+              if (stderrRemainder.length > MAX_STDERR_LINE_BYTES) {
+                emitStderrLine(`${stderrRemainder.slice(0, MAX_STDERR_LINE_BYTES)}...`);
+                stderrRemainder = '';
+              }
+              break;
+            }
+            const line = stderrRemainder.slice(0, nl);
+            stderrRemainder = stderrRemainder.slice(nl + 1);
+            emitStderrLine(line.length > MAX_STDERR_LINE_BYTES ? `${line.slice(0, MAX_STDERR_LINE_BYTES)}...` : line);
+          }
+        });
+        proc.stderr.on('error', () => {});
+      }
+
+      this._procClosePromise = new Promise(resolveClose => {
+        proc.once('close', (code, signal) => {
+          if (stderrRemainder) {
+            emitStderrLine(stderrRemainder.length > MAX_STDERR_LINE_BYTES ? `${stderrRemainder.slice(0, MAX_STDERR_LINE_BYTES)}...` : stderrRemainder);
+            stderrRemainder = '';
+          }
+          this._procClosed = true;
+          this._process = undefined;
+          if (stderrMode !== 'ignore') {
+            this._spawnConfig.onExit?.({ pid: this._pid, code, signal, intentional: this._intentionalClose });
+          }
+          this.onclose?.();
+          resolveClose();
+        });
+      });
+
+      proc.once('error', error => {
+        this._procClosed = true;
+        this._process = undefined;
+        if (!settledStart) {
+          settledStart = true;
+          reject(error);
+        }
+        this.onerror?.(error);
+      });
+
+      proc.once('spawn', () => {
+        this._pid = proc.pid ?? null;
+        if (!settledStart) {
+          settledStart = true;
+          resolve();
+        }
+      });
+
+      proc.stdin?.on('error', error => {
+        if (!this._intentionalClose) this.onerror?.(error);
+      });
+      proc.stdout?.on('data', chunk => {
+        try {
+          this._readBuffer.append(chunk);
+          this._processReadBuffer();
+        } catch (error) {
+          this.onerror?.(error);
+          void this.close().catch(() => {});
+        }
+      });
+      proc.stdout?.on('error', error => {
+        if (!this._intentionalClose) this.onerror?.(error);
+      });
+    });
+  }
+
+  _processReadBuffer() {
+    while (true) {
+      try {
+        const message = this._readBuffer.readMessage();
+        if (message === null) break;
+        this.onmessage?.(message);
+      } catch (error) {
+        this.onerror?.(error);
+      }
+    }
+  }
+
+  async _reap({ gracefulStdinMs, sigtermMs, sigkillMs }) {
+    if (this._closingPromise) return this._closingPromise;
+    this._intentionalClose = true;
+    this._closingPromise = (async () => {
+      const proc = this._process;
+      const pid = this._pid;
+      const closedPromise = this._procClosePromise;
+      this._process = undefined;
+      try {
+        if (proc && !this._procClosed && gracefulStdinMs > 0) {
+          try { proc.stdin?.end(); } catch { /* ignore closed stdin */ }
+          await waitWithTimeout(closedPromise, gracefulStdinMs);
+        }
+        if (pid && (!this._procClosed || isProcessGroupAlive(pid, proc ?? { exitCode: 0, signalCode: null }))) {
+          signalOwnedProcessGroup(pid, proc ?? { exitCode: 0, signalCode: null }, 'SIGTERM');
+          await waitForGroupExit(pid, proc ?? { exitCode: 0, signalCode: null }, closedPromise, sigtermMs);
+        }
+        if (pid && (!this._procClosed || isProcessGroupAlive(pid, proc ?? { exitCode: 0, signalCode: null }))) {
+          signalOwnedProcessGroup(pid, proc ?? { exitCode: 0, signalCode: null }, 'SIGKILL');
+          await waitForGroupExit(pid, proc ?? { exitCode: 0, signalCode: null }, closedPromise, sigkillMs);
+        }
+      } finally {
+        try { proc?.stdin?.destroy(); } catch { /* ignore */ }
+        try { proc?.stdout?.destroy(); } catch { /* ignore */ }
+        try { proc?.stderr?.destroy(); } catch { /* ignore */ }
+        this._readBuffer.clear();
+      }
+    })();
+    return this._closingPromise;
+  }
+
+  // Used by @modelcontextprotocol/client when `versionNegotiation: { mode: 'auto' }`
+  // spawns a short-lived probe sibling over stdio.
+  async _dispose() {
+    await this._reap({ gracefulStdinMs: 0, sigtermMs: 1000, sigkillMs: 500 });
+  }
+
+  async close() {
+    await this._reap({ gracefulStdinMs: 1000, sigtermMs: 1500, sigkillMs: 1000 });
+  }
+
+  send(message) {
+    return new Promise(resolve => {
+      if (!this._process?.stdin) throw new SdkError(SdkErrorCode.NotConnected, 'Not connected');
+      const json = serializeMessage(message);
+      if (this._process.stdin.write(json)) resolve();
+      else this._process.stdin.once('drain', resolve);
+    });
+  }
+}
+
+function clientNegotiationOptions(protocolVersion) {
+  if (protocolVersion === '2026-07-28') {
+    return { capabilities: {}, versionNegotiation: { pin: '2026-07-28' } };
+  }
+  if (protocolVersion === 'auto') {
+    return { capabilities: {}, versionNegotiation: { mode: 'auto' } };
+  }
+  return { capabilities: {}, versionNegotiation: { mode: 'legacy' } };
+}
+
+function parseServerDefinition(serverName, raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw brokerError('INNER_CONFIG_INVALID', `local server ${serverName} definition must be an object`);
+  }
+  if (raw.type !== undefined && raw.type !== 'stdio') {
+    throw brokerError('INNER_CONFIG_INVALID', `local server ${serverName} type must be stdio`);
+  }
+  if (typeof raw.command !== 'string' || raw.command.length === 0) {
+    throw brokerError('INNER_CONFIG_INVALID', `local server ${serverName} command must be a non-empty string`);
+  }
+  if (raw.args !== undefined && (!Array.isArray(raw.args) || raw.args.some(arg => typeof arg !== 'string'))) {
+    throw brokerError('INNER_CONFIG_INVALID', `local server ${serverName} args must be an array of strings`);
+  }
+  if (raw.cwd !== undefined && (typeof raw.cwd !== 'string' || raw.cwd.length === 0)) {
+    throw brokerError('INNER_CONFIG_INVALID', `local server ${serverName} cwd must be a non-empty string`);
+  }
+  if (raw.env !== undefined) {
+    if (!raw.env || typeof raw.env !== 'object' || Array.isArray(raw.env)) {
+      throw brokerError('INNER_CONFIG_INVALID', `local server ${serverName} env must be an object`);
+    }
+    for (const [key, val] of Object.entries(raw.env)) {
+      if (typeof val !== 'string') {
+        throw brokerError('INNER_CONFIG_INVALID', `local server ${serverName} env.${key} must be a string`);
+      }
+    }
+  }
+  if (raw.protocolVersion !== undefined && !['auto', 'legacy', '2026-07-28'].includes(raw.protocolVersion)) {
+    throw brokerError('INNER_CONFIG_INVALID', `local server ${serverName} protocolVersion is invalid: ${String(raw.protocolVersion)}`);
+  }
+  let requestTimeout;
+  if (raw.requestTimeout !== undefined) {
+    if (!Number.isSafeInteger(raw.requestTimeout) || raw.requestTimeout < 1) {
+      throw brokerError('INNER_CONFIG_INVALID', `local server ${serverName} requestTimeout must be a positive integer`);
+    }
+    requestTimeout = raw.requestTimeout;
+  }
+  if (raw.restartOnExit !== undefined && typeof raw.restartOnExit !== 'boolean') {
+    throw brokerError('INNER_CONFIG_INVALID', `local server ${serverName} restartOnExit must be a boolean`);
+  }
+  return {
+    command: raw.command,
+    args: raw.args ?? [],
+    cwd: raw.cwd,
+    env: raw.env,
+    protocolVersion: raw.protocolVersion ?? 'legacy',
+    requestTimeout,
+    restartOnExit: raw.restartOnExit ?? true
+  };
+}
+
+function extractIsErrorText(result) {
+  if (!Array.isArray(result?.content)) return 'downstream tool returned isError=true';
+  const textItem = result.content.find(item => item?.type === 'text' && typeof item.text === 'string');
+  return causeSummary(textItem?.text ?? 'downstream tool returned isError=true');
+}
+
+export class DirectServerClient {
+  constructor({ serverName, definition, transport, client, logger }) {
+    this.serverName = serverName;
+    this.definition = definition;
     this.transport = transport;
     this.client = client;
+    this.logger = logger;
     this.closed = false;
     this.peerClosed = false;
   }
 
-  static async start({ configPath, oneMcpEntry, signal } = {}) {
-    requiredString(configPath, 'configPath');
-    requiredString(oneMcpEntry, 'oneMcpEntry');
-    if (signal?.aborted) throw brokerError('INNER_START_FAILED', 'inner 1MCP startup aborted');
-    reclaimStaleRuntimeOwnership(path.dirname(configPath));
-    const transport = new StdioClientTransport({
-      command: process.execPath,
-      args: [
-        oneMcpEntry,
-        'serve',
-        '--transport=stdio',
-        '--pagination',
-        '--enable-internal-tools',
-        '--internal-tools=reload',
-        '--config',
-        configPath
-      ],
-      env: { WEBHARNESS_MCP_URI_SEPARATOR: INNER_TOOL_SEPARATOR },
-      stderr: 'inherit'
+  static async start({ serverName, definition, signal, logger, onUnexpectedExit } = {}) {
+    requiredString(serverName, 'serverName');
+    if (signal?.aborted) {
+      throw brokerError('INNER_START_FAILED', `startup aborted for local server ${serverName}`);
+    }
+    const startedAt = Date.now();
+    let instance = null;
+    const transport = new DetachedStdioClientTransport({
+      command: definition.command,
+      args: definition.args,
+      cwd: definition.cwd,
+      env: definition.env,
+      disposableProbe: definition.protocolVersion === 'auto',
+      stderr: 'pipe',
+      onStderrLine: line => {
+        logger?.log('warn', { event: 'server_stderr', server: serverName, stderr: line });
+      },
+      onExit: ({ pid, code, signal: exitSignal, intentional }) => {
+        if (!intentional && instance && !instance.closed) {
+          logger?.log('warn', {
+            event: 'server_exited',
+            server: serverName,
+            pid: pid ?? undefined,
+            code: code ?? undefined,
+            signal: exitSignal ?? undefined
+          });
+          onUnexpectedExit?.();
+        }
+      }
     });
-    const client = new Client({ name: 'mcp-dev-bridge-local-inner', version: '0.1.0' });
-    const inner = new InnerDirect1Mcp({ transport, client });
-    client.onclose = () => { inner.peerClosed = true; };
+    const client = new Client(
+      { name: 'mcp-dev-bridge-local', version: '0.1.0' },
+      clientNegotiationOptions(definition.protocolVersion)
+    );
+    instance = new DirectServerClient({ serverName, definition, transport, client, logger });
+    client.onclose = () => { instance.peerClosed = true; };
     const onAbort = () => { void transport.close().catch(() => {}); };
     signal?.addEventListener('abort', onAbort, { once: true });
     try {
       signal?.throwIfAborted();
-      await client.connect(transport);
-      return inner;
+      const connectTimeout = definition.requestTimeout !== undefined && definition.requestTimeout > DEFAULT_REQUEST_TIMEOUT_MSEC
+        ? definition.requestTimeout
+        : undefined;
+      await client.connect(
+        transport,
+        connectTimeout ? { timeout: connectTimeout } : undefined
+      );
+      logger?.log('info', {
+        event: 'server_started',
+        server: serverName,
+        pid: transport.pid ?? undefined,
+        protocol: client.protocolVersion ?? definition.protocolVersion,
+        duration_ms: Date.now() - startedAt
+      });
+      return instance;
     } catch (error) {
-      inner.closed = true;
+      instance.closed = true;
       try { await transport.close(); } catch { /* failed startup may already be closed */ }
-      throw brokerError('INNER_START_FAILED', 'failed to start inner 1MCP', error);
+      logger?.log('error', {
+        event: 'server_start_failed',
+        server: serverName,
+        duration_ms: Date.now() - startedAt,
+        error: causeSummary(error)
+      });
+      throw brokerError('INNER_START_FAILED', withCauseDetail(`failed to start local server ${serverName}`, error), error);
     } finally {
       signal?.removeEventListener('abort', onAbort);
     }
@@ -282,17 +753,51 @@ export class InnerDirect1Mcp {
     return !this.closed && !this.peerClosed && this.transport.pid !== null;
   }
 
-  async listTools(cursor) {
-    if (!this.alive) throw brokerError('INNER_UNAVAILABLE', 'inner 1MCP is not running');
-    return this.client.listTools(cursor === undefined ? undefined : { cursor });
+  _requestOptions(signal, timeoutOverride) {
+    const timeout = timeoutOverride ?? this.definition.requestTimeout;
+    if (signal === undefined && timeout === undefined) return undefined;
+    return {
+      ...(signal === undefined ? {} : { signal }),
+      ...(timeout === undefined ? {} : { timeout })
+    };
+  }
+
+  async listTools(cursor, { signal, timeout } = {}) {
+    if (!this.alive) throw brokerError('INNER_UNAVAILABLE', `local server ${this.serverName} is not running`);
+    return this.client.listTools(
+      cursor === undefined ? undefined : { cursor },
+      this._requestOptions(signal, timeout)
+    );
   }
 
   async callTool(name, args = {}, signal) {
-    if (!this.alive) throw brokerError('INNER_UNAVAILABLE', 'inner 1MCP is not running');
-    return this.client.callTool(
-      { name, arguments: args },
-      signal === undefined ? undefined : { signal }
-    );
+    if (!this.alive) throw brokerError('INNER_UNAVAILABLE', `local server ${this.serverName} is not running`);
+    const startedAt = Date.now();
+    try {
+      const result = await this.client.callTool(
+        { name, arguments: args },
+        this._requestOptions(signal)
+      );
+      if (result?.isError === true) {
+        this.logger?.log('warn', {
+          event: 'tool_call_error_result',
+          server: this.serverName,
+          tool: name,
+          duration_ms: Date.now() - startedAt,
+          error: extractIsErrorText(result)
+        });
+      }
+      return result;
+    } catch (error) {
+      this.logger?.log('error', {
+        event: 'tool_call_failed',
+        server: this.serverName,
+        tool: name,
+        duration_ms: Date.now() - startedAt,
+        error: causeSummary(error)
+      });
+      throw error;
+    }
   }
 
   async close() {
@@ -301,7 +806,12 @@ export class InnerDirect1Mcp {
     try {
       await this.client.close();
     } catch {
-      try { await this.transport.close(); } catch { /* already closed */ }
+      /* fall through to transport close */
+    }
+    try {
+      await this.transport.close();
+    } catch {
+      /* already closed */
     }
   }
 }
@@ -319,8 +829,8 @@ export function parseInnerIdleMs(value) {
   return parsed;
 }
 
-// Starts the inner 1MCP on first use and stops it after `idleMs` without in-flight
-// operations, so idle inner providers do not hold memory while no client uses Local.
+// Lazy client lifecycle state machine: starts a client on first use and stops it
+// after `idleMs` without in-flight operations unless pinned by an active runtime lease.
 export class LazyInner1Mcp {
   constructor({ start, idleMs = DEFAULT_INNER_IDLE_MS, isPinned = async () => false } = {}) {
     if (typeof start !== 'function') throw new TypeError('start function is required');
@@ -385,7 +895,7 @@ export class LazyInner1Mcp {
         this.inner = null;
         if (stale) await Promise.resolve().then(() => stale.close()).catch(() => {});
         if (this.closePromise) await this.closePromise;
-        if (this.closed) throw brokerError('INNER_UNAVAILABLE', 'inner 1MCP is not running');
+        if (this.closed) throw brokerError('INNER_UNAVAILABLE', 'local backend is shut down');
         const controller = new AbortController();
         this.startAbortController = controller;
         let inner;
@@ -396,7 +906,7 @@ export class LazyInner1Mcp {
         }
         if (this.closed) {
           await Promise.resolve().then(() => inner.close()).catch(() => {});
-          throw brokerError('INNER_UNAVAILABLE', 'inner 1MCP is not running');
+          throw brokerError('INNER_UNAVAILABLE', 'local backend is shut down');
         }
         this.inner = inner;
         return inner;
@@ -409,7 +919,7 @@ export class LazyInner1Mcp {
   }
 
   async run(operation) {
-    if (this.closed) throw brokerError('INNER_UNAVAILABLE', 'inner 1MCP is not running');
+    if (this.closed) throw brokerError('INNER_UNAVAILABLE', 'local backend is shut down');
     this.inFlight += 1;
     this.clearTimer();
     try {
@@ -421,29 +931,204 @@ export class LazyInner1Mcp {
     }
   }
 
-  listTools(cursor) {
-    return this.run(inner => inner.listTools(cursor));
+  listTools(cursor, options) {
+    return this.run(inner => inner.listTools(cursor, options));
   }
 
   callTool(name, args = {}, signal) {
     return this.run(inner => inner.callTool(name, args, signal));
   }
 
-  async close() {
-    if (this.closed) return;
-    this.closed = true;
+  async evict() {
     this.clearTimer();
     this.startAbortController?.abort();
     if (this.startPromise) await this.startPromise.catch(() => {});
     if (this.closePromise) await this.closePromise;
-    const inner = this.inner;
+    const active = this.inner;
     this.inner = null;
-    if (inner) await inner.close();
+    if (active) await Promise.resolve().then(() => active.close()).catch(() => {});
+  }
+
+  async close() {
+    if (this.closed) return;
+    this.closed = true;
+    await this.evict();
+  }
+}
+
+// Direct per-server supervisor pool replacing the ~240 MB inner 1MCP process.
+// Each configured stdio server wakes independently on demand, negotiates its own
+// MCP protocol revision, and idles out independently.
+export class DirectLocalServerPool {
+  constructor({
+    configPath,
+    idleMs = DEFAULT_INNER_IDLE_MS,
+    isPinned = async () => false,
+    logger = null,
+    clientFactory = opts => DirectServerClient.start(opts)
+  } = {}) {
+    requiredString(configPath, 'configPath');
+    if (typeof clientFactory !== 'function') throw new TypeError('clientFactory must be a function');
+    this.configPath = configPath;
+    this.idleMs = idleMs;
+    this.isPinned = isPinned;
+    this.logger = logger;
+    this.clientFactory = clientFactory;
+    this.entries = new Map();
+    this.closed = false;
+  }
+
+  get state() {
+    if (this.closed) return 'closed';
+    let hasStarting = false;
+    let hasStopping = false;
+    for (const entry of this.entries.values()) {
+      const st = entry.supervisor.state;
+      if (st === 'running') return 'running';
+      if (st === 'starting') hasStarting = true;
+      if (st === 'stopping') hasStopping = true;
+    }
+    if (hasStarting) return 'starting';
+    if (hasStopping) return 'stopping';
+    return 'asleep';
+  }
+
+  serverState(server) {
+    if (this.closed) return 'closed';
+    const entry = this.entries.get(server);
+    if (!entry) return 'asleep';
+    if (entry.permanentlyExited) return 'stopped';
+    return entry.supervisor.state;
+  }
+
+  isServerLive(server) {
+    const entry = this.entries.get(server);
+    return Boolean(entry && !entry.permanentlyExited && entry.supervisor.inner?.alive);
+  }
+
+  async _readServerDefinition(server) {
+    let config;
+    try {
+      config = JSON.parse(await fs.readFile(this.configPath, 'utf8'));
+    } catch (error) {
+      throw brokerError('INNER_CONFIG_INVALID', `cannot read inner config ${this.configPath}`, error);
+    }
+    const raw = config?.mcpServers?.[server];
+    if (raw === undefined) {
+      throw brokerError('UNKNOWN_SERVER', `unknown local server: ${server}`);
+    }
+    return { definition: parseServerDefinition(server, raw), fingerprint: JSON.stringify(raw) };
+  }
+
+  async canAutoRecover(server) {
+    try {
+      const { definition } = await this._readServerDefinition(server);
+      return definition.restartOnExit !== false;
+    } catch {
+      return false;
+    }
+  }
+
+  async _ensureEntry(server) {
+    if (this.closed) throw brokerError('INNER_UNAVAILABLE', 'local backend is shut down');
+    const { definition, fingerprint } = await this._readServerDefinition(server);
+    let entry = this.entries.get(server);
+    if (entry && entry.fingerprint !== fingerprint && entry.supervisor.inFlight === 0) {
+      await entry.supervisor.close();
+      this.entries.delete(server);
+      entry = undefined;
+    }
+    if (!entry) {
+      const record = {
+        server,
+        fingerprint,
+        definition,
+        permanentlyExited: false,
+        supervisor: null
+      };
+      record.supervisor = new LazyInner1Mcp({
+        idleMs: this.idleMs,
+        isPinned: this.isPinned,
+        start: async ({ signal } = {}) => {
+          if (record.permanentlyExited) {
+            throw brokerError('DOWNSTREAM_UNAVAILABLE', `local server exited and restartOnExit is false: ${server}`);
+          }
+          const latest = await this._readServerDefinition(server);
+          record.definition = latest.definition;
+          record.fingerprint = latest.fingerprint;
+          return this.clientFactory({
+            serverName: server,
+            definition: latest.definition,
+            signal,
+            logger: this.logger,
+            onUnexpectedExit: () => {
+              if (record.definition.restartOnExit === false) {
+                record.permanentlyExited = true;
+              }
+            }
+          });
+        }
+      });
+      this.entries.set(server, record);
+      entry = record;
+    }
+    if (entry.permanentlyExited) {
+      throw brokerError('DOWNSTREAM_UNAVAILABLE', `local server exited and restartOnExit is false: ${server}`);
+    }
+    return entry;
+  }
+
+  async listServerTools(server, cursor, options) {
+    const entry = await this._ensureEntry(server);
+    return entry.supervisor.listTools(cursor, options);
+  }
+
+  async callServerTool(server, tool, args = {}, signal) {
+    const entry = await this._ensureEntry(server);
+    return entry.supervisor.callTool(tool, args, signal);
+  }
+
+  async restartServer(server, { timeoutMs } = {}) {
+    if (this.closed) throw brokerError('INNER_UNAVAILABLE', 'local backend is shut down');
+    const existing = this.entries.get(server);
+    if (existing) {
+      await existing.supervisor.evict();
+      existing.permanentlyExited = false;
+    }
+    const entry = await this._ensureEntry(server);
+    const controller = new AbortController();
+    let timer;
+    if (timeoutMs !== undefined) {
+      timer = setTimeout(() => controller.abort(new Error(`restart timed out after ${timeoutMs}ms`)), timeoutMs);
+      timer.unref?.();
+    }
+    try {
+      await entry.supervisor.listTools(undefined, { signal: controller.signal, timeout: timeoutMs });
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  // Compatibility shim so generic broker plumbing (`close()`) works identically.
+  async listTools() {
+    throw brokerError('INNER_LIST_FAILED', 'unscoped raw listTools is not used in direct server pool mode');
+  }
+
+  async callTool() {
+    throw brokerError('INNER_CALL_FAILED', 'unscoped raw callTool is not used in direct server pool mode');
+  }
+
+  async close() {
+    if (this.closed) return;
+    this.closed = true;
+    const all = [...this.entries.values()];
+    this.entries.clear();
+    await Promise.allSettled(all.map(entry => entry.supervisor.close()));
   }
 }
 
 export class LocalToolBroker {
-  constructor({ inner, configPath, fallbackOnlyServers = [], recovery = {} }) {
+  constructor({ inner, configPath, fallbackOnlyServers = [], recovery = {}, logger = null }) {
     if (!inner || typeof inner.listTools !== 'function' || typeof inner.callTool !== 'function' || typeof inner.close !== 'function') {
       throw new TypeError('inner with listTools(), callTool(), and close() is required');
     }
@@ -451,6 +1136,7 @@ export class LocalToolBroker {
     if (!Array.isArray(fallbackOnlyServers)) throw new TypeError('fallbackOnlyServers must be an array');
     this.inner = inner;
     this.configPath = configPath;
+    this.logger = logger;
     this.fallbackOnlyServers = new Set();
     for (const server of fallbackOnlyServers) {
       validateServerName(server, 'INVALID_FALLBACK_SERVER_NAME');
@@ -463,6 +1149,10 @@ export class LocalToolBroker {
     this.recoveryPollMs = boundedDuration(recovery.pollMs, DEFAULT_DOWNSTREAM_READY_POLL_MS, 'recovery.pollMs');
     this.closed = false;
     this.recoveryPromises = new Map();
+  }
+
+  get _directMode() {
+    return typeof this.inner.listServerTools === 'function' && typeof this.inner.callServerTool === 'function';
   }
 
   async configuredServers() {
@@ -483,13 +1173,30 @@ export class LocalToolBroker {
     return servers;
   }
 
+  _passthroughBackendError(error) {
+    return error?.code === 'INNER_UNAVAILABLE'
+      || error?.code === 'DOWNSTREAM_UNAVAILABLE'
+      || error?.code === 'INNER_CONFIG_INVALID'
+      || error?.code === 'UNKNOWN_SERVER';
+  }
+
   async page(cursor) {
     if (this.closed) throw brokerError('LOCAL_BROKER_CLOSED', 'local tool broker is shut down');
     try {
       return await this.inner.listTools(cursor);
     } catch (error) {
-      if (error?.code === 'INNER_UNAVAILABLE') throw error;
-      throw brokerError('INNER_LIST_FAILED', 'failed to list inner tools', error);
+      if (this._passthroughBackendError(error)) throw error;
+      throw brokerError('INNER_LIST_FAILED', withCauseDetail('failed to list inner tools', error), error);
+    }
+  }
+
+  async serverPage(server, cursor) {
+    if (this.closed) throw brokerError('LOCAL_BROKER_CLOSED', 'local tool broker is shut down');
+    try {
+      return await this.inner.listServerTools(server, cursor);
+    } catch (error) {
+      if (this._passthroughBackendError(error)) throw error;
+      throw brokerError('INNER_LIST_FAILED', withCauseDetail(`failed to list tools for ${server}`, error), error);
     }
   }
 
@@ -500,22 +1207,36 @@ export class LocalToolBroker {
       const cursorKey = cursor ?? '';
       if (seenCursors.has(cursorKey)) throw brokerError('INNER_LIST_FAILED', 'inner tools/list cursor repeated');
       seenCursors.add(cursorKey);
-      const page = await this.page(cursor);
-      for (const innerTool of page.tools ?? []) {
-        const parsed = parseQualifiedName(innerTool?.name);
-        if (parsed?.server === server) return true;
+      if (this._directMode) {
+        const page = await this.serverPage(server, cursor);
+        for (const toolDef of page.tools ?? []) {
+          if (typeof toolDef?.name === 'string' && toolDef.name.length > 0) return true;
+        }
+        if (page.nextCursor === undefined) return false;
+        cursor = page.nextCursor;
+      } else {
+        const page = await this.page(cursor);
+        for (const innerTool of page.tools ?? []) {
+          const parsed = parseQualifiedName(innerTool?.name);
+          if (parsed?.server === server) return true;
+        }
+        if (page.nextCursor === undefined) return false;
+        cursor = page.nextCursor;
       }
-      if (page.nextCursor === undefined) return false;
-      cursor = page.nextCursor;
     }
   }
 
-  // The reload returns before the backend finishes booting, so one immediate
-  // tools/list reports a healthy server as missing. Poll to the recovery deadline.
+  // A cold backend can take time to register tools after starting/restarting,
+  // so poll with bounded backoff up to the recovery deadline.
   async waitForServerTools(server, deadline = Date.now() + this.recoveryTimeoutMs) {
     let interval = this.recoveryPollMs;
     while (true) {
-      if (await this.hasServerTools(server)) return true;
+      try {
+        if (await this.hasServerTools(server)) return true;
+      } catch (error) {
+        if (this._passthroughBackendError(error)) throw error;
+        // Transient startup/listing error while recovering: keep polling until deadline.
+      }
       const remaining = deadline - Date.now();
       if (remaining <= 0) return false;
       await delay(Math.min(interval, remaining));
@@ -529,25 +1250,45 @@ export class LocalToolBroker {
     const recovery = (async () => {
       const startedAt = Date.now();
       const deadline = startedAt + this.recoveryTimeoutMs;
-      let result;
-      try {
-        result = await this.inner.callTool(INNER_RELOAD_TOOL, {
-          server,
-          configOnly: false,
-          force: true,
-          timeout: this.recoveryTimeoutMs
-        });
-      } catch (error) {
-        if (error?.code === 'INNER_UNAVAILABLE') throw error;
-        throw brokerError('DOWNSTREAM_RECOVERY_FAILED', `failed to reload local server: ${server}`, error);
-      }
-      if (result?.isError === true || result?.structuredContent?.status === 'failed') {
-        throw brokerError('DOWNSTREAM_RECOVERY_FAILED', `1MCP could not reload local server: ${server}`);
+      if (this._directMode && typeof this.inner.restartServer === 'function') {
+        try {
+          await this.inner.restartServer(server, { timeoutMs: this.recoveryTimeoutMs });
+        } catch (error) {
+          if (this._passthroughBackendError(error)) throw error;
+          this.logger?.log('error', {
+            event: 'server_recovery_failed',
+            server,
+            duration_ms: Date.now() - startedAt,
+            error: causeSummary(error)
+          });
+          throw brokerError('DOWNSTREAM_RECOVERY_FAILED', withCauseDetail(`failed to restart local server: ${server}`, error), error);
+        }
+      } else {
+        let result;
+        try {
+          result = await this.inner.callTool(INNER_RELOAD_TOOL, {
+            server,
+            configOnly: false,
+            force: true,
+            timeout: this.recoveryTimeoutMs
+          });
+        } catch (error) {
+          if (this._passthroughBackendError(error)) throw error;
+          throw brokerError('DOWNSTREAM_RECOVERY_FAILED', `failed to reload local server: ${server}`, error);
+        }
+        if (result?.isError === true || result?.structuredContent?.status === 'failed') {
+          throw brokerError('DOWNSTREAM_RECOVERY_FAILED', `1MCP could not reload local server: ${server}`);
+        }
       }
       if (!await this.waitForServerTools(server, deadline)) {
         const waited = ((Date.now() - startedAt) / 1000).toFixed(1);
         throw brokerError('DOWNSTREAM_UNAVAILABLE', `local server is configured but unavailable after ${waited}s: ${server}`);
       }
+      this.logger?.log('info', {
+        event: 'server_recovered',
+        server,
+        duration_ms: Date.now() - startedAt
+      });
     })();
     this.recoveryPromises.set(server, recovery);
     try {
@@ -558,8 +1299,26 @@ export class LocalToolBroker {
   }
 
   async ensureServerAvailable(server) {
-    // One listing can miss a server that is still starting. Give it a single short
-    // grace window before a reload restarts a backend that may already be healthy.
+    // In direct mode, do not swallow an initial startup error behind a blind restart
+    // unless the server actually started with zero tools or died.
+    if (this._directMode) {
+      let initialOk = false;
+      try {
+        initialOk = await this.hasServerTools(server);
+      } catch (error) {
+        if (this._passthroughBackendError(error)) throw error;
+        if (typeof this.inner.canAutoRecover === 'function' && !await this.inner.canAutoRecover(server)) {
+          throw error;
+        }
+      }
+      if (initialOk) return;
+      if (typeof this.inner.canAutoRecover === 'function' && !await this.inner.canAutoRecover(server)) {
+        throw brokerError('DOWNSTREAM_UNAVAILABLE', `local server is unavailable and restartOnExit is false: ${server}`);
+      }
+      if (await this.waitForServerTools(server, Date.now() + this.recoveryPollMs)) return;
+      await this.recoverServer(server);
+      return;
+    }
     if (await this.waitForServerTools(server, Date.now() + this.recoveryPollMs)) return;
     await this.recoverServer(server);
   }
@@ -589,8 +1348,13 @@ export class LocalToolBroker {
 
     if (selectedServer === undefined) {
       if (pageCursor !== undefined) throw brokerError('INVALID_CURSOR', 'unscoped server discovery cursor is invalid');
+      const serverStateFor = name => (
+        typeof this.inner.serverState === 'function'
+          ? this.inner.serverState(name)
+          : (this.inner.state ?? 'unknown')
+      );
       const matching = Array.from(publicServers)
-        .map(name => conciseServer(name, this.inner.state ?? 'unknown'))
+        .map(name => conciseServer(name, serverStateFor(name)))
         .filter(item => matchesServerQuery(item, selectedQuery));
       const servers = matching.slice(offset, offset + selectedLimit);
       const nextOffset = offset + servers.length;
@@ -610,29 +1374,51 @@ export class LocalToolBroker {
       if (seenCursors.has(cursorKey)) throw brokerError('INNER_LIST_FAILED', 'inner tools/list cursor repeated');
       seenCursors.add(cursorKey);
 
-      const page = await this.page(pageCursor);
-      const innerTools = Array.isArray(page.tools) ? page.tools : [];
-      const start = Math.min(offset, innerTools.length);
-      for (let index = start; index < innerTools.length; index += 1) {
-        const innerTool = innerTools[index];
-        const parsed = parseQualifiedName(innerTool?.name);
-        if (!parsed || parsed.server === '1mcp' || !inspectableServers.has(parsed.server)) continue;
-        if (parsed.server !== selectedServer) continue;
-        const item = conciseTool(innerTool, parsed.server, parsed.tool);
-        if (!matchesQuery(item, selectedQuery)) continue;
-        if (tools.length === selectedLimit) {
-          return {
-            tools,
-            hasMore: true,
-            nextCursor: encodeCursor({ pageCursor, offset: index, server: selectedServer, query: selectedQuery })
-          };
+      if (this._directMode) {
+        const page = await this.serverPage(selectedServer, pageCursor);
+        const serverTools = Array.isArray(page.tools) ? page.tools : [];
+        const start = Math.min(offset, serverTools.length);
+        for (let index = start; index < serverTools.length; index += 1) {
+          const toolDef = serverTools[index];
+          if (typeof toolDef?.name !== 'string' || toolDef.name.length === 0) continue;
+          const item = conciseTool(toolDef, selectedServer, toolDef.name);
+          if (!matchesQuery(item, selectedQuery)) continue;
+          if (tools.length === selectedLimit) {
+            return {
+              tools,
+              hasMore: true,
+              nextCursor: encodeCursor({ pageCursor, offset: index, server: selectedServer, query: selectedQuery })
+            };
+          }
+          tools.push(item);
         }
-        tools.push(item);
+        if (page.nextCursor === undefined) return { tools, hasMore: false };
+        pageCursor = page.nextCursor;
+        offset = 0;
+      } else {
+        const page = await this.page(pageCursor);
+        const innerTools = Array.isArray(page.tools) ? page.tools : [];
+        const start = Math.min(offset, innerTools.length);
+        for (let index = start; index < innerTools.length; index += 1) {
+          const innerTool = innerTools[index];
+          const parsed = parseQualifiedName(innerTool?.name);
+          if (!parsed || parsed.server === '1mcp' || !inspectableServers.has(parsed.server)) continue;
+          if (parsed.server !== selectedServer) continue;
+          const item = conciseTool(innerTool, parsed.server, parsed.tool);
+          if (!matchesQuery(item, selectedQuery)) continue;
+          if (tools.length === selectedLimit) {
+            return {
+              tools,
+              hasMore: true,
+              nextCursor: encodeCursor({ pageCursor, offset: index, server: selectedServer, query: selectedQuery })
+            };
+          }
+          tools.push(item);
+        }
+        if (page.nextCursor === undefined) return { tools, hasMore: false };
+        pageCursor = page.nextCursor;
+        offset = 0;
       }
-
-      if (page.nextCursor === undefined) return { tools, hasMore: false };
-      pageCursor = page.nextCursor;
-      offset = 0;
     }
   }
 
@@ -643,18 +1429,26 @@ export class LocalToolBroker {
     if (!inspectableServers.has(selectedServer)) throw brokerError('UNKNOWN_SERVER', `unknown local server: ${selectedServer}`);
     await this.ensureServerAvailable(selectedServer);
 
-    const target = qualifiedName(selectedServer, selectedTool);
     let cursor;
     const seenCursors = new Set();
     while (true) {
       const cursorKey = cursor ?? '';
       if (seenCursors.has(cursorKey)) throw brokerError('INNER_LIST_FAILED', 'inner tools/list cursor repeated');
       seenCursors.add(cursorKey);
-      const page = await this.page(cursor);
-      const found = (page.tools ?? []).find(toolDef => toolDef?.name === target);
-      if (found) return { server: selectedServer, tool: selectedTool, definition: { ...found, name: selectedTool } };
-      if (page.nextCursor === undefined) throw brokerError('UNKNOWN_TOOL', `unknown tool ${selectedServer}/${selectedTool}`);
-      cursor = page.nextCursor;
+      if (this._directMode) {
+        const page = await this.serverPage(selectedServer, cursor);
+        const found = (page.tools ?? []).find(toolDef => toolDef?.name === selectedTool);
+        if (found) return { server: selectedServer, tool: selectedTool, definition: { ...found, name: selectedTool } };
+        if (page.nextCursor === undefined) throw brokerError('UNKNOWN_TOOL', `unknown tool ${selectedServer}/${selectedTool}`);
+        cursor = page.nextCursor;
+      } else {
+        const target = qualifiedName(selectedServer, selectedTool);
+        const page = await this.page(cursor);
+        const found = (page.tools ?? []).find(toolDef => toolDef?.name === target);
+        if (found) return { server: selectedServer, tool: selectedTool, definition: { ...found, name: selectedTool } };
+        if (page.nextCursor === undefined) throw brokerError('UNKNOWN_TOOL', `unknown tool ${selectedServer}/${selectedTool}`);
+        cursor = page.nextCursor;
+      }
     }
   }
 
@@ -674,10 +1468,13 @@ export class LocalToolBroker {
 
   async dispatch({ server, tool }, args, signal) {
     try {
+      if (this._directMode) {
+        return await this.inner.callServerTool(server, tool, args, signal);
+      }
       return await this.inner.callTool(qualifiedName(server, tool), args, signal);
     } catch (error) {
-      if (error?.code === 'INNER_UNAVAILABLE') throw error;
-      throw brokerError('INNER_CALL_FAILED', `failed to call ${server}/${tool}`, error);
+      if (this._passthroughBackendError(error)) throw error;
+      throw brokerError('INNER_CALL_FAILED', withCauseDetail(`failed to call ${server}/${tool}`, error), error);
     }
   }
 
@@ -687,7 +1484,16 @@ export class LocalToolBroker {
     try {
       return await this.dispatch(route, this.prepareArguments(args), signal);
     } catch (error) {
-      if (error?.code !== 'INNER_CALL_FAILED' || await this.hasServerTools(route.server)) throw error;
+      if (error?.code !== 'INNER_CALL_FAILED' || error?.cause?.code === 'INNER_START_FAILED' || signal?.aborted) throw error;
+      if (this._directMode) {
+        const stillLive = typeof this.inner.isServerLive === 'function' ? this.inner.isServerLive(route.server) : true;
+        if (stillLive) throw error;
+        if (typeof this.inner.canAutoRecover === 'function' && !await this.inner.canAutoRecover(route.server)) {
+          throw error;
+        }
+      } else if (await this.hasServerTools(route.server)) {
+        throw error;
+      }
       await this.recoverServer(route.server);
       throw brokerError(
         'DOWNSTREAM_RECOVERED_RETRY_REQUIRED',
@@ -754,6 +1560,7 @@ export class LocalToolBroker {
     if (this.closed) return;
     this.closed = true;
     await this.inner.close();
+    await this.logger?.flush();
   }
 }
 
@@ -880,21 +1687,24 @@ export function createLocalBrokerServer({ broker } = {}) {
 
 export async function runLocalBrokerStdio({
   configPath = process.env.MCP_LOCAL_INNER_CONFIG,
-  oneMcpEntry = process.env.MCP_LOCAL_ONE_MCP_ENTRY,
-  idleMs = parseInnerIdleMs(process.env.MCP_LOCAL_INNER_IDLE_MS)
+  idleMs = parseInnerIdleMs(process.env.MCP_LOCAL_INNER_IDLE_MS),
+  logConfigPath
 } = {}) {
   requiredString(configPath, 'MCP_LOCAL_INNER_CONFIG');
-  requiredString(oneMcpEntry, 'MCP_LOCAL_ONE_MCP_ENTRY');
-  const inner = new LazyInner1Mcp({
-    start: ({ signal } = {}) => InnerDirect1Mcp.start({ configPath, oneMcpEntry, signal }),
+  const logger = new LocalDiagnosticLogger({
+    appConfigPath: logConfigPath ?? path.join(path.dirname(configPath), 'config.toml')
+  });
+  const inner = new DirectLocalServerPool({
+    configPath,
     idleMs,
-    isPinned: () => hasActiveRuntimeLeases(process.env.MCP_LIFECYCLE_LEASE_DIR)
+    isPinned: () => hasActiveRuntimeLeases(process.env.MCP_LIFECYCLE_LEASE_DIR),
+    logger
   });
   const fallbackOnlyServers = (process.env.MCP_LOCAL_FALLBACK_ONLY_SERVERS ?? '')
     .split(',')
     .map(server => server.trim())
     .filter(Boolean);
-  const broker = new LocalToolBroker({ inner, configPath, fallbackOnlyServers });
+  const broker = new LocalToolBroker({ inner, configPath, fallbackOnlyServers, logger });
   const transport = new StdioServerTransport();
   let server = null;
   let handle;
@@ -924,7 +1734,7 @@ export async function runLocalBrokerStdio({
     serverClose?.();
     void shutdown();
   };
-  return { inner, broker, get server() { return server; }, handle, transport, shutdown };
+  return { inner, broker, logger, get server() { return server; }, handle, transport, shutdown };
 }
 
 async function main() {

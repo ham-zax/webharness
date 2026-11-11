@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 import { loadPolicy } from '../providers/skill-library/policy.mjs';
 import { DEFAULT_MAX_OUTPUT_BYTES } from '../providers/pi-dev/output-limits.mjs';
-import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { constants as fsConstants } from 'node:fs';
 import fs from 'node:fs/promises';
@@ -213,16 +212,6 @@ async function atomicWrite(file, content, mode = 0o600) {
   await fs.rename(temp, file);
 }
 
-function resolveOneMcpEntry(override) {
-  if (override !== undefined && override !== '') {
-    if (!path.isAbsolute(override)) throw new Error('BRIDGE_ONE_MCP_ENTRY must be an absolute path when set');
-    return override;
-  }
-  const npmRoot = execFileSync('npm', ['root', '-g'], { encoding: 'utf8' }).trim();
-  if (!npmRoot) throw new Error('npm root -g returned an empty path');
-  return path.join(npmRoot, '@1mcp', 'agent', 'build', 'index.js');
-}
-
 export async function renderConfig(options) {
   const scriptDir = path.dirname(fileURLToPath(import.meta.url));
   const repoRoot = path.resolve(options.repoRoot ?? path.join(scriptDir, '..'));
@@ -242,7 +231,7 @@ export async function renderConfig(options) {
   const deployment = {
     ...(await readEnvFile(envFile, { optional: true })),
     ...Object.fromEntries(
-      ['MCP_WORKSPACE_ROOT', 'MCP_PUBLIC_URL', 'MCP_TUNNEL_NAME', 'MCP_DEV_MAX_OUTPUT_BYTES', 'MCP_DEV_READ_DEFAULT_LINES', 'MCP_DEV_IMPORT_MAX_BYTES', 'MCP_DEV_MAX_SPOOL_BYTES', 'MCP_DEV_SPOOL_TTL_SECONDS', 'MCP_DEV_SPOOL_MAX_TOTAL_BYTES', 'MCP_ONE_MCP_PORT', 'MCP_ONE_MCP_LOG_MAX_SIZE_BYTES', 'MCP_ONE_MCP_LOG_MAX_FILES', 'MCP_PERSONAL_DEFAULT_CWD', 'MCP_TERMINAL_FRONTEND', 'MCP_OWNER_CONTEXT_FILE', 'MCP_OWNER_ENV_FILE', 'MCP_SKILL_POLICY_FILE', 'MCP_SKILL_JEV_ENABLED', 'MCP_SKILL_JEV_ENV_FILE', 'MCP_LOCAL_SERVERS_FILE', 'BRIDGE_ONE_MCP_ENTRY', 'BRIDGE_COLD_START', 'BRIDGE_BACKEND_PORT', 'BRIDGE_WAKE_IDLE_MS', 'MCP_LOCAL_INNER_IDLE_MS', 'MCP_DEV_WORKER_IDLE_MS', 'MCP_LIFECYCLE_LEASE_DIR'].filter((key) => process.env[key] !== undefined).map((key) => [key, process.env[key]]),
+      ['MCP_WORKSPACE_ROOT', 'MCP_PUBLIC_URL', 'MCP_TUNNEL_NAME', 'MCP_DEV_MAX_OUTPUT_BYTES', 'MCP_DEV_READ_DEFAULT_LINES', 'MCP_DEV_IMPORT_MAX_BYTES', 'MCP_DEV_MAX_SPOOL_BYTES', 'MCP_DEV_SPOOL_TTL_SECONDS', 'MCP_DEV_SPOOL_MAX_TOTAL_BYTES', 'MCP_ONE_MCP_PORT', 'MCP_ONE_MCP_LOG_MAX_SIZE_BYTES', 'MCP_ONE_MCP_LOG_MAX_FILES', 'MCP_PERSONAL_DEFAULT_CWD', 'MCP_TERMINAL_FRONTEND', 'MCP_OWNER_CONTEXT_FILE', 'MCP_OWNER_ENV_FILE', 'MCP_SKILL_POLICY_FILE', 'MCP_SKILL_JEV_ENABLED', 'MCP_SKILL_JEV_ENV_FILE', 'MCP_LOCAL_SERVERS_FILE', 'BRIDGE_COLD_START', 'BRIDGE_BACKEND_PORT', 'BRIDGE_WAKE_IDLE_MS', 'MCP_LOCAL_INNER_IDLE_MS', 'MCP_DEV_WORKER_IDLE_MS', 'MCP_LIFECYCLE_LEASE_DIR'].filter((key) => process.env[key] !== undefined).map((key) => [key, process.env[key]]),
     ),
   };
   const profileValues = await readEnvFile(path.join(repoRoot, 'config', 'profiles', `${profile}.env`));
@@ -404,7 +393,6 @@ export async function renderConfig(options) {
   if (parsedUrl.protocol !== 'https:') throw new Error('MCP_PUBLIC_URL must use https');
 
   const localInnerConfigPath = isLocal ? path.join(stateDir, 'local-1mcp', 'mcp.json') : '';
-  const oneMcpEntry = isLocal ? resolveOneMcpEntry(deployment.BRIDGE_ONE_MCP_ENTRY) : '';
   const replacements = {
     __WORKSPACE_ROOT__: workspaceRoot,
     __REPO_ROOT__: repoRoot,
@@ -419,7 +407,6 @@ export async function renderConfig(options) {
     __TERMINAL_FRONTEND__: terminalFrontend,
     __RUNTIME_DIR__: runtimeDir ?? '',
     __LOCAL_INNER_CONFIG__: localInnerConfigPath,
-    __ONE_MCP_ENTRY__: oneMcpEntry,
     __SKILL_POLICY_FILE__: skillPolicyFile,
     __SKILL_JEV_ENABLED__: skillJevEnabled,
     __SKILL_JEV_ENV_FILE__: skillJevEnvFile,
@@ -490,7 +477,6 @@ export async function renderConfig(options) {
   };
   Object.assign(rendered, managedInstructionConfig);
   if (localRendered) {
-    Object.assign(localRendered, managedInstructionConfig);
     rendered.mcpServers.local.env.MCP_LOCAL_INNER_CONFIG_REVISION = createHash('sha256')
       .update(JSON.stringify(localRendered))
       .digest('hex');
@@ -518,8 +504,8 @@ export async function renderConfig(options) {
     `maxFiles = ${oneMcpLogMaxFiles}`,
     '',
   ].join('\n');
-  // The inner 1MCP reads config.toml from the directory of its --config file, so this
-  // block gives it a file transport and the same rotation policy as the outer process.
+  // Local's direct supervisor reads config.toml next to its downstream mcp.json, giving
+  // bounded rotated diagnostics (`logs/local-inner*.log`) under the same retention policy.
   const localInnerAppConfig = isLocal
     ? [
         '[logging]',
@@ -560,7 +546,6 @@ export async function renderConfig(options) {
     if (isPersonal) await atomicWrite(path.join(stateDir, 'owner.env'), renderOwnerRuntimeEnv(ownerEnv));
     if (localRendered) await atomicWrite(localInnerConfigPath, `${JSON.stringify(localRendered, null, 2)}\n`);
     if (localInnerAppConfigPath) await atomicWrite(localInnerAppConfigPath, localInnerAppConfig);
-    if (localOneMcpDir) await atomicWrite(path.join(localOneMcpDir, 'instructions-template.md'), instructionsTemplate);
     await atomicWrite(configPath, `${JSON.stringify(rendered, null, 2)}\n`);
     await atomicWrite(appConfigPath, appConfig);
     await atomicWrite(path.join(oneMcpDir, 'instructions-template.md'), instructionsTemplate);

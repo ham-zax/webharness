@@ -108,7 +108,7 @@ if (!personalLocal.mcpServers.host.args.includes(root + '/providers/pi-dev/host-
 if (personal.mcpServers.local.command !== 'node') process.exit(1);
 if (!personal.mcpServers.local.args.includes(root + '/providers/local-tools/server.mjs')) process.exit(1);
 if (personal.mcpServers.local.env.MCP_LOCAL_INNER_CONFIG !== personalLocalFile) process.exit(1);
-if (!personal.mcpServers.local.env.MCP_LOCAL_ONE_MCP_ENTRY.endsWith('/@1mcp/agent/build/index.js')) process.exit(1);
+if (personal.mcpServers.local.env.MCP_LOCAL_ONE_MCP_ENTRY !== undefined) process.exit(1);
 if (personal.mcpServers.local.env.MCP_LOCAL_INNER_IDLE_MS !== '1800000') process.exit(1);
 if (personal.mcpServers.dev.env.MCP_DEV_WORKER_IDLE_MS !== '600000') process.exit(1);
 if (personalLocal.mcpServers.dev.env.MCP_DEV_WORKER_IDLE_MS !== '600000') process.exit(1);
@@ -152,7 +152,7 @@ if (server.mcpServers.local.env.MCP_LOCAL_FALLBACK_ONLY_SERVERS !== 'dev') proce
 if (JSON.stringify(server.mcpServers.local.tags) !== JSON.stringify(['local'])) process.exit(1);
 if (serverLocal.mcpServers.dev.tags !== undefined) process.exit(1);
 if (server.mcpServers.local.env.MCP_LOCAL_INNER_CONFIG !== serverLocalFile) process.exit(1);
-if (!server.mcpServers.local.env.MCP_LOCAL_ONE_MCP_ENTRY.endsWith('/@1mcp/agent/build/index.js')) process.exit(1);
+if (server.mcpServers.local.env.MCP_LOCAL_ONE_MCP_ENTRY !== undefined) process.exit(1);
 if (server.mcpServers.local.env.MCP_LOCAL_INNER_IDLE_MS !== '1800000') process.exit(1);
 if (server.mcpServers.dev.env.MCP_DEV_WORKER_IDLE_MS !== '600000') process.exit(1);
 if (serverLocal.mcpServers.dev.env.MCP_DEV_WORKER_IDLE_MS !== '600000') process.exit(1);
@@ -162,9 +162,13 @@ if (personalLocal.mcpServers['browser-devtools'].requestTimeout !== 180000) proc
 if (personalLocal.mcpServers['browser-fast'].requestTimeout !== 180000) process.exit(1);
 if (personal.mcpServers.local.requestTimeout !== 240000) process.exit(1);
 if (server.mcpServers.local.requestTimeout !== 240000) process.exit(1);
-for (const cfg of [restricted, trusted, personal, personalLocal, server, serverLocal]) {
+for (const cfg of [restricted, trusted, personal, server]) {
   if (cfg.activeInstructionTemplate !== 'webharness') process.exit(1);
   if (typeof cfg.publishedInstructionTemplates?.webharness?.initialization !== 'string') process.exit(1);
+}
+for (const localCfg of [personalLocal, serverLocal]) {
+  if (localCfg.activeInstructionTemplate !== undefined) process.exit(1);
+  if (localCfg.publishedInstructionTemplates !== undefined) process.exit(1);
 }
 NODE2
   local rc=$?
@@ -184,7 +188,7 @@ NODE2
     done
     for profile in personal server; do
       inner_cfg="$tmp/$profile/local-1mcp/config.toml"
-      cmp "$ROOT/config/templates/instructions-template.md" "$tmp/$profile/local-1mcp/instructions-template.md" || rc=1
+      [ ! -e "$tmp/$profile/local-1mcp/instructions-template.md" ] || rc=1
       grep -Fq '[logging]' "$inner_cfg" || rc=1
       grep -Fq "file = \"$tmp/$profile/logs/local-inner.log\"" "$inner_cfg" || rc=1
       grep -Fq 'maxSize = 1048576' "$inner_cfg" || rc=1

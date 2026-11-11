@@ -18,7 +18,7 @@ A `timeout_seconds` value above 300 is rejected before the command runs, with `t
 
 ## A browser tool call fails with `-32603 Error calling tool`
 
-That message is 1MCP's wrapper for any failed upstream call, and the wrapper replaces the cause. The cause is written to the inner 1MCP log.
+When the outer 1MCP gateway wraps an upstream failure, or when diagnosing slow/crashing downstream providers, the Local broker records per-server lifecycle, stderr, and failed call diagnostics (`server`, `tool`, `duration_ms`, and error message) in `logs/local-inner.log`.
 
 ```bash
 grep -n 'browser-devtools' "${XDG_STATE_HOME:-$HOME/.local/state}/mcp-dev-bridge/logs/local-inner.log" | tail -20

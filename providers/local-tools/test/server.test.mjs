@@ -7,8 +7,9 @@ import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
 import {
   BROKER_TOOL_NAMES,
   DEFAULT_INNER_IDLE_MS,
-  InnerDirect1Mcp,
+  DirectLocalServerPool,
   LazyInner1Mcp,
+  LocalDiagnosticLogger,
   LocalToolBroker,
   MAX_LIST_LIMIT,
   createLocalBrokerServer,
@@ -810,17 +811,255 @@ test('createLocalBrokerServer catches async tool_call and fallback_dispatch reje
   }
 });
 
-test('InnerDirect1Mcp starts installed @1mcp/agent with _1mcp_ separator without yargs env rejection', async t => {
-  const candidate = path.join(os.homedir(), '.local/lib/node_modules/@1mcp/agent/build/index.js');
+const mcpServerModUrl = new URL('../node_modules/@modelcontextprotocol/server/dist/index.mjs', import.meta.url).href;
+const mcpServerStdioModUrl = new URL('../node_modules/@modelcontextprotocol/server/dist/stdio.mjs', import.meta.url).href;
+
+async function writeFixtureMcpServer(dir, name, { modern = true, slowMs = 0, crashFirstCall = false } = {}) {
+  const pidLog = path.join(dir, `${name}.pids`);
+  const callLog = path.join(dir, `${name}.calls`);
+  const script = path.join(dir, `${name}.mjs`);
+  await fs.writeFile(
+    script,
+    `import fs from 'node:fs';
+import { Server } from ${JSON.stringify(mcpServerModUrl)};
+import { StdioServerTransport, serveStdio } from ${JSON.stringify(mcpServerStdioModUrl)};
+
+fs.appendFileSync(${JSON.stringify(pidLog)}, String(process.pid) + '\\n');
+function buildServer() {
+  const server = new Server({ name: ${JSON.stringify(name)}, version: '1.0.0' }, { capabilities: { tools: {} } });
+  server.setRequestHandler('tools/list', async () => ({
+    tools: [{ name: ${JSON.stringify(`ping_${name}`)}, description: 'Ping fixture', inputSchema: { type: 'object', properties: { msg: { type: 'string' } } } }]
+  }));
+  server.setRequestHandler('tools/call', async req => {
+    const prev = fs.existsSync(${JSON.stringify(callLog)}) ? fs.readFileSync(${JSON.stringify(callLog)}, 'utf8').trim().split('\\n').filter(Boolean).length : 0;
+    fs.appendFileSync(${JSON.stringify(callLog)}, JSON.stringify(req.params) + '\\n');
+    process.stderr.write(${JSON.stringify(`${name}: handling call\n`)});
+    if (${JSON.stringify(crashFirstCall)} && prev === 0) {
+      process.exit(1);
+    }
+    if (${JSON.stringify(slowMs)} > 0) {
+      await new Promise(r => setTimeout(r, ${JSON.stringify(slowMs)}));
+    }
+    return { content: [{ type: 'text', text: ${JSON.stringify(`${name}:`)} + String(req.params.arguments?.msg ?? 'pong') }] };
+  });
+  return server;
+}
+if (${JSON.stringify(modern)}) {
+  const handle = serveStdio(() => buildServer());
+  process.stdin.once('end', () => { void handle.close(); });
+} else {
+  const server = buildServer();
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+  process.stdin.once('end', () => { void server.close(); });
+}
+`,
+    'utf8'
+  );
+  return { script, pidLog, callLog };
+}
+
+async function readPids(pidLog) {
   try {
-    await fs.access(candidate);
-  } catch {
-    t.skip('@1mcp/agent is not installed at ~/.local/lib/node_modules');
-    return;
+    return (await fs.readFile(pidLog, 'utf8')).trim().split('\n').filter(Boolean).map(Number);
+  } catch (error) {
+    if (error.code === 'ENOENT') return [];
+    throw error;
   }
-  const configPath = await configFile(t, []);
-  const inner = await InnerDirect1Mcp.start({ configPath, oneMcpEntry: candidate });
-  t.after(() => inner.close());
-  const listed = await inner.listTools();
-  assert.ok(listed.tools.some(tool => tool.name === '1mcp_1mcp_mcp_reload'));
+}
+
+test('DirectLocalServerPool wakes only the addressed server and negotiates both modern 2026-07-28 and legacy stdio servers', async t => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'local-direct-pool-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const alpha = await writeFixtureMcpServer(dir, 'alpha', { modern: true });
+  const beta = await writeFixtureMcpServer(dir, 'beta', { modern: false });
+  const cfgPath = path.join(dir, 'mcp.json');
+  await fs.writeFile(cfgPath, JSON.stringify({
+    version: '1.0.0',
+    mcpServers: {
+      alpha: { type: 'stdio', protocolVersion: '2026-07-28', command: process.execPath, args: [alpha.script] },
+      beta: { type: 'stdio', protocolVersion: 'legacy', command: process.execPath, args: [beta.script] }
+    }
+  }), 'utf8');
+
+  const pool = new DirectLocalServerPool({ configPath: cfgPath, idleMs: 0 });
+  const broker = new LocalToolBroker({ inner: pool, configPath: cfgPath });
+  t.after(() => broker.shutdown());
+
+  const initial = await broker.list({});
+  assert.deepEqual(initial.servers, [
+    { server: 'alpha', available: null, toolCount: null, backendState: 'asleep' },
+    { server: 'beta', available: null, toolCount: null, backendState: 'asleep' }
+  ]);
+  assert.deepEqual(await readPids(alpha.pidLog), []);
+  assert.deepEqual(await readPids(beta.pidLog), []);
+
+  const alphaRes = await broker.call({ server: 'alpha', tool: 'ping_alpha', arguments: { msg: 'one' } });
+  assert.equal(alphaRes.content[0].text, 'alpha:one');
+  const alphaPids = await readPids(alpha.pidLog);
+  assert.equal(alphaPids.length, 1);
+  assert.deepEqual(await readPids(beta.pidLog), [], 'addressing alpha must never spawn beta');
+
+  const mid = await broker.list({});
+  assert.deepEqual(mid.servers, [
+    { server: 'alpha', available: null, toolCount: null, backendState: 'running' },
+    { server: 'beta', available: null, toolCount: null, backendState: 'asleep' }
+  ]);
+
+  const betaRes = await broker.call({ server: 'beta', tool: 'ping_beta', arguments: { msg: 'two' } });
+  assert.equal(betaRes.content[0].text, 'beta:two');
+  const betaPids = await readPids(beta.pidLog);
+  assert.equal(betaPids.length, 1);
+
+  await broker.shutdown();
+  for (const pid of [...alphaPids, ...betaPids]) {
+    assert.throws(() => process.kill(pid, 0), err => err.code === 'ESRCH');
+  }
+});
+
+test('DirectLocalServerPool negotiates protocolVersion auto via detached probe sibling on both modern and strict-legacy servers without orphan processes', async t => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'local-direct-auto-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const autoSrv = await writeFixtureMcpServer(dir, 'autosrv', { modern: true });
+  const strictLegacyPidLog = path.join(dir, 'strict-legacy.pids');
+  const strictLegacyScript = path.join(dir, 'strict-legacy.mjs');
+  await fs.writeFile(
+    strictLegacyScript,
+    `import fs from 'node:fs';
+import readline from 'node:readline';
+fs.appendFileSync(${JSON.stringify(strictLegacyPidLog)}, String(process.pid) + '\\n');
+const rl = readline.createInterface({ input: process.stdin });
+let initialized = false;
+rl.on('line', line => {
+  const msg = JSON.parse(line);
+  if (!initialized && msg.method !== 'initialize') process.exit(1);
+  if (msg.method === 'initialize') {
+    initialized = true;
+    process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { protocolVersion: '2025-11-25', capabilities: { tools: {} }, serverInfo: { name: 'strict-legacy', version: '1.0.0' } } }) + '\\n');
+  } else if (msg.method === 'tools/list') {
+    process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { tools: [{ name: 'legacy_ping', inputSchema: { type: 'object' } }] } }) + '\\n');
+  }
+});
+`,
+    'utf8'
+  );
+  const cfgPath = path.join(dir, 'mcp.json');
+  await fs.writeFile(cfgPath, JSON.stringify({
+    version: '1.0.0',
+    mcpServers: {
+      autosrv: { type: 'stdio', protocolVersion: 'auto', command: process.execPath, args: [autoSrv.script] },
+      strictlegacy: { type: 'stdio', protocolVersion: 'auto', command: process.execPath, args: [strictLegacyScript] }
+    }
+  }), 'utf8');
+
+  const pool = new DirectLocalServerPool({ configPath: cfgPath, idleMs: 0 });
+  const broker = new LocalToolBroker({ inner: pool, configPath: cfgPath });
+  t.after(() => broker.shutdown());
+
+  const listed = await broker.list({ server: 'autosrv' });
+  assert.deepEqual(listed.tools.map(tool => tool.tool), ['ping_autosrv']);
+  const legacyListed = await broker.list({ server: 'strictlegacy' });
+  assert.deepEqual(legacyListed.tools.map(tool => tool.tool), ['legacy_ping']);
+
+  for (const pidLog of [autoSrv.pidLog, strictLegacyPidLog]) {
+    const pids = await readPids(pidLog);
+    assert.equal(pids.length, 2, 'auto negotiation probes on one disposable sibling then opens one session');
+    assert.throws(() => process.kill(pids[0], 0), err => err.code === 'ESRCH', 'probe sibling must already be reaped');
+  }
+  const allPids = [...await readPids(autoSrv.pidLog), ...await readPids(strictLegacyPidLog)];
+  await broker.shutdown();
+  for (const pid of allPids) {
+    assert.throws(() => process.kill(pid, 0), err => err.code === 'ESRCH');
+  }
+});
+
+test('DirectLocalServerPool enforces per-server requestTimeout and logs failure details', async t => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'local-direct-timeout-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const slow = await writeFixtureMcpServer(dir, 'slow', { modern: true, slowMs: 2000 });
+  const cfgPath = path.join(dir, 'mcp.json');
+  const logFile = path.join(dir, 'logs', 'local-inner.log');
+  const tomlPath = path.join(dir, 'config.toml');
+  await fs.writeFile(tomlPath, `[logging]\nfile = ${JSON.stringify(logFile)}\nlevel = "info"\nmaxSize = 4096\nmaxFiles = 3\n`, 'utf8');
+  await fs.writeFile(cfgPath, JSON.stringify({
+    version: '1.0.0',
+    mcpServers: {
+      slow: { type: 'stdio', protocolVersion: '2026-07-28', command: process.execPath, args: [slow.script], requestTimeout: 120 }
+    }
+  }), 'utf8');
+
+  const logger = new LocalDiagnosticLogger({ appConfigPath: tomlPath });
+  const pool = new DirectLocalServerPool({ configPath: cfgPath, idleMs: 0, logger });
+  const broker = new LocalToolBroker({ inner: pool, configPath: cfgPath, logger });
+  t.after(() => broker.shutdown());
+
+  const startedAt = Date.now();
+  await assert.rejects(
+    () => broker.call({ server: 'slow', tool: 'ping_slow', arguments: {} }),
+    err => err.code === 'INNER_CALL_FAILED' && /timed out/i.test(err.message)
+  );
+  assert.ok(Date.now() - startedAt < 1800, 'requestTimeout must abort slow tool call promptly');
+  await logger.flush();
+  const logText = await fs.readFile(logFile, 'utf8');
+  assert.match(logText, /event="tool_call_failed" server="slow" tool="ping_slow" duration_ms=\d+/);
+  assert.match(logText, /event="server_stderr" server="slow" stderr="slow: handling call"/);
+});
+
+test('DirectLocalServerPool crash recovery respects restartOnExit without auto-replaying failed calls', async t => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'local-direct-crash-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const sup = await writeFixtureMcpServer(dir, 'supervised', { modern: true, crashFirstCall: true });
+  const one = await writeFixtureMcpServer(dir, 'oneshot', { modern: true, crashFirstCall: true });
+  const cfgPath = path.join(dir, 'mcp.json');
+  await fs.writeFile(cfgPath, JSON.stringify({
+    version: '1.0.0',
+    mcpServers: {
+      supervised: { type: 'stdio', protocolVersion: '2026-07-28', command: process.execPath, args: [sup.script], restartOnExit: true },
+      oneshot: { type: 'stdio', protocolVersion: '2026-07-28', command: process.execPath, args: [one.script], restartOnExit: false }
+    }
+  }), 'utf8');
+
+  const pool = new DirectLocalServerPool({ configPath: cfgPath, idleMs: 0 });
+  const broker = new LocalToolBroker({ inner: pool, configPath: cfgPath, recovery: { pollMs: 10, timeoutMs: 3000 } });
+  t.after(() => broker.shutdown());
+
+  await assert.rejects(
+    () => broker.call({ server: 'supervised', tool: 'ping_supervised', arguments: { msg: 'first' } }),
+    { code: 'DOWNSTREAM_RECOVERED_RETRY_REQUIRED' }
+  );
+  const supCallsAfterCrash = (await fs.readFile(sup.callLog, 'utf8')).trim().split('\n').filter(Boolean);
+  assert.equal(supCallsAfterCrash.length, 1, 'ambiguous crashed call must never be auto-replayed');
+  const retryRes = await broker.call({ server: 'supervised', tool: 'ping_supervised', arguments: { msg: 'second' } });
+  assert.equal(retryRes.content[0].text, 'supervised:second');
+  assert.equal((await readPids(sup.pidLog)).length, 2);
+
+  await assert.rejects(
+    () => broker.call({ server: 'oneshot', tool: 'ping_oneshot', arguments: { msg: 'only' } }),
+    { code: 'INNER_CALL_FAILED' }
+  );
+  await assert.rejects(
+    () => broker.call({ server: 'oneshot', tool: 'ping_oneshot', arguments: { msg: 'again' } }),
+    { code: 'DOWNSTREAM_UNAVAILABLE' }
+  );
+  assert.equal((await readPids(one.pidLog)).length, 1, 'restartOnExit=false must not respawn crashed server');
+});
+
+test('LocalDiagnosticLogger rotates local-inner*.log files within maxSize * maxFiles budget', async t => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'local-diag-rotate-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const logFile = path.join(dir, 'local-inner.log');
+  const logger = new LocalDiagnosticLogger({ file: logFile, maxSize: 512, maxFiles: 3 });
+  for (let i = 0; i < 40; i += 1) {
+    logger.log('error', { event: 'tool_call_failed', server: 'browser-devtools', iter: i, detail: 'x'.repeat(60) });
+  }
+  await logger.flush();
+  const names = (await fs.readdir(dir)).filter(name => /^local-inner.*\.log$/.test(name)).sort();
+  assert.ok(names.length >= 2 && names.length <= 3, `expected 2..3 rotated files, got ${names.join(',')}`);
+  let totalBytes = 0;
+  for (const name of names) {
+    const st = await fs.stat(path.join(dir, name));
+    assert.ok(st.size <= 512, `${name} exceeded maxSize (${st.size} > 512)`);
+    totalBytes += st.size;
+  }
+  assert.ok(totalBytes <= 512 * 3, `total bytes ${totalBytes} exceeded policy budget ${512 * 3}`);
 });

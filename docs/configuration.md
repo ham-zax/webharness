@@ -148,9 +148,9 @@ owner.env         sanitized personal GUI environment when the personal profile i
 1mcp/mcp.json     rendered provider composition
 1mcp/config.toml  rendered 1MCP application policy, including bounded native logging
 1mcp/             1MCP writable application/OAuth/session state
-local-1mcp/       inner 1MCP composition and application policy for the Local broker
+local-1mcp/       Local broker downstream server composition (`mcp.json`) and log policy (`config.toml`)
 logs/one-mcp.log  current native 1MCP application log; rotated siblings stay in logs/
-logs/local-inner.log  current inner 1MCP log; rotated siblings stay in logs/
+logs/local-inner.log  current Local broker diagnostic log; rotated siblings stay in logs/
 dev/              Dev durable retained-output state when enabled
 ```
 
