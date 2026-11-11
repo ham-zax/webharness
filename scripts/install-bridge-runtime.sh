@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ONE_MCP_VERSION="0.37.0"
+ONE_MCP_VERSION="0.39.8"
 SHELL_MCP_VERSION="1.1.8"
 
 HEADLESS=0
@@ -18,7 +18,7 @@ echo "== installing pinned 1MCP aggregator =="
 npm install -g "@1mcp/agent@$ONE_MCP_VERSION"
 
 echo "== applying pinned 1MCP OAuth callback compatibility =="
-SDK_PROVIDER="$(npm root -g)/@1mcp/agent/build/auth/sdkOAuthServerProvider.js"
+SDK_PROVIDER="$(npm root -g)/@1mcp/agent/build/sdk/legacy/auth/sdkOAuthServerProvider.js"
 node --input-type=module - "$SDK_PROVIDER" <<'NODE'
 import fs from 'node:fs';
 const [providerPath] = process.argv.slice(2);
@@ -86,35 +86,19 @@ if (source.includes(upstream)) {
 NODE
 echo "  patched restart-stable tailable rotation"
 
-echo "== applying pinned 1MCP supervised-restart capability preservation =="
+echo "== verifying pinned 1MCP supervised-restart capability preservation =="
 SUPERVISOR_IMPL="$(npm root -g)/@1mcp/agent/build/core/server/backendStdioSupervisor.js"
 node --input-type=module - "$SUPERVISOR_IMPL" <<'NODE'
 import fs from 'node:fs';
 const [supervisorPath] = process.argv.slice(2);
-const upstream = `            result.activate?.();
-            if (this.isRecoveryStale(generation, controller)) {
-                await result.dispose?.();
-                return;
-            }
-            this.recoveryController = null;
-            this.state = 'connected';`;
-const patched = `            this.state = 'connected';
-            result.activate?.();
-            if (this.isRecoveryStale(generation, controller)) {
-                await result.dispose?.();
-                return;
-            }
-            this.recoveryController = null;`;
-
-let source = fs.readFileSync(supervisorPath, 'utf8');
-if (source.includes(upstream)) {
-  source = source.replace(upstream, patched);
-  fs.writeFileSync(supervisorPath, source);
-} else if (!source.includes(patched)) {
-  throw new Error('pinned 1MCP stdio supervisor source shape changed; refusing an unsafe recovery patch');
+const source = fs.readFileSync(supervisorPath, 'utf8');
+const stateIdx = source.indexOf("this.state = 'connected';");
+const activateIdx = source.indexOf('result.activate?.();');
+if (stateIdx === -1 || activateIdx === -1 || stateIdx >= activateIdx) {
+  throw new Error('pinned 1MCP stdio supervisor does not set connected state before activate()');
 }
 NODE
-echo "  patched supervised restart capability preservation"
+echo "  verified upstream supervised restart capability preservation (#547)"
 
 echo "== applying pinned 1MCP clean tool namespacing and instructions =="
 MCP_CONSTANTS="$(npm root -g)/@1mcp/agent/build/constants/mcp.js"

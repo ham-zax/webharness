@@ -229,7 +229,7 @@ A tmux-owned Terminal shell is suitable as an external control process because t
 
 1MCP's `--config-dir` is also its writable OAuth/session home. When changing the state root, preserve inbound OAuth continuity with `scripts/migrate-legacy-oauth-state.sh` before replacing the live service. Do not treat Streamable HTTP transport sessions as credential state.
 
-## 1MCP 0.37.0 compatibility
+## 1MCP 0.39.8 compatibility
 
 This project intentionally:
 
@@ -238,8 +238,8 @@ This project intentionally:
 - reclaims upstream 1MCP's persisted `runtime.owner` only after acquiring that process-scoped lease and only when no live 1MCP process matches the exact config root; this is recovery for legacy/crash residue rather than the primary ownership mechanism;
 - gives 1MCP a 10-second graceful TERM window by default before escalating to KILL, while retaining the shorter generic daemon stop window for the watchdog and Cloudflare transport;
 - verifies that the pinned runtime supports structured native `logging.maxSize` / `logging.maxFiles` rotation before relying on it;
-- patches 1MCP's consent-page CSP to permit an exact registered HTTPS callback origin; upstream 0.37.0 still permits only registered loopback callbacks, which blocks ChatGPT's HTTPS callback after consent;
-- patches 1MCP's stdio supervisor so a recovered client is activated only after the supervisor state has become `connected`; upstream 0.37.0 activates the fresh client while still marked `restarting`, causing `ClientManager` to erase its freshly negotiated capabilities and making the recovered server disappear from `tools/list`;
+- patches 1MCP's consent-page CSP (`build/sdk/legacy/auth/sdkOAuthServerProvider.js`) to permit an exact registered HTTPS callback origin and completes consent outside `form-action`; upstream 0.39.8 still permits only registered loopback callbacks by default, which blocks ChatGPT's HTTPS callback after consent;
+- verifies that upstream 1MCP's stdio supervisor marks recovered clients `connected` before `activate()` (#547), preserving negotiated capabilities across supervised restarts;
 - uses built-in `mcp.json` hot reload for provider-only changes, including atomic renderer replacements; restart the bridge only when the 1MCP executable itself changes or when observed reload failure requires it.
 
 Failed launches report only native log bytes written by that launch, plus a separate startup-stderr tail when present. Older retained health records are not presented as evidence for the new process.

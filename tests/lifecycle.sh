@@ -33,7 +33,7 @@ test_no_global_process_matching() {
 }
 
 test_dependencies_are_pinned() {
-  contains "$ROOT/scripts/install-bridge-runtime.sh" 'ONE_MCP_VERSION="0\.37\.0"' && \
+  contains "$ROOT/scripts/install-bridge-runtime.sh" 'ONE_MCP_VERSION="0\.39\.8"' && \
   contains "$ROOT/providers/pi-dev/package.json" '"@earendil-works/pi-coding-agent"[[:space:]]*:[[:space:]]*"0\.84\.1"' && \
   contains "$ROOT/config/templates/mcp.json" 'mcp-shell-server==1\.1\.8'
 }
@@ -77,7 +77,7 @@ EOF
 
 test_1mcp_https_callback_csp_compatibility_is_guarded() {
   local helper="$ROOT/scripts/install-bridge-runtime.sh"
-  contains "$helper" 'auth/sdkOAuthServerProvider\.js' &&
+  contains "$helper" 'sdk/legacy/auth/sdkOAuthServerProvider\.js' &&
   contains "$helper" "requested\.protocol === 'https:'" &&
   contains "$helper" 'registeredRedirectUris\.includes\(requestedRedirectUri\)' &&
   contains "$helper" 'refusing an unsafe patch'

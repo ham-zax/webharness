@@ -223,13 +223,13 @@ That separation is deliberate: Dev owns the small direct workstation primitive s
 
 ## Reference implementation and forking
 
-The full generic workstation source is public, but the maintained qualification is intentionally narrow. The reference currently assumes a pinned globally installed 1MCP 0.37.0 runtime with qualified compatibility patches, a Personal Workstation toolbox, WSL user-systemd, and the documented browser ownership model. Those are reproducibility constraints, not claims that every Linux/macOS/Windows environment is supported.
+The full generic workstation source is public, but the maintained qualification is intentionally narrow. The reference currently assumes a pinned globally installed 1MCP 0.39.8 runtime with qualified compatibility patches, a Personal Workstation toolbox, WSL user-systemd, and the documented browser ownership model. Those are reproducibility constraints, not claims that every Linux/macOS/Windows environment is supported.
 
 Forks should preserve the model-facing contracts they rely on, then deliberately replace transport, package ownership, browser lifecycle, or host integration as needed. See [MCP Compatibility](docs/compatibility.md) and [Reference Environment](docs/reference-environment.md).
 
 ## Compatibility and security notes
 
-- The project currently pins 1MCP 0.37.0 after qualification of the current provider composition, direct-mode rich Browser results, config reload, OAuth behavior, and the supervised-stdio compatibility patches described in the operations guide. Upgrade it deliberately rather than treating it as an unqualified interchangeable dependency.
+- The project currently pins 1MCP 0.39.8 after qualification of the current provider composition, direct-mode rich Browser results, config reload, OAuth behavior, modern `2026-07-28` `server/discover` negotiation, and the compatibility patches described in the operations guide. Upgrade it deliberately rather than treating it as an unqualified interchangeable dependency.
 - 1MCP listens on loopback; Cloudflare supplies the public HTTPS route. OAuth remains required for the public MCP origin.
 - The Local broker is one authorization domain for Terminal, Host, Browser, and owner-added MCPs. `fallback_dispatch` additionally reaches the hidden Dev mirror and is intentionally advertised with `readOnlyHint`; treat its description and selected downstream operation—not that hint—as the real side-effect boundary.
 - Browser debugging endpoints are local implementation details and are not intentionally published beyond loopback.

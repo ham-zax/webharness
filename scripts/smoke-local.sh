@@ -35,6 +35,15 @@ if (local) {
   if (!path.isAbsolute(env.MCP_LOCAL_INNER_CONFIG ?? '')) throw new Error('Local inner config path must be absolute');
   if (!path.isAbsolute(env.MCP_LOCAL_ONE_MCP_ENTRY ?? '')) throw new Error('Local inner 1MCP entry path must be absolute');
   if (!env.MCP_LOCAL_ONE_MCP_ENTRY.endsWith('/@1mcp/agent/build/index.js')) throw new Error('unexpected Local inner 1MCP entry path');
+  const oneMcpRoot = path.resolve(env.MCP_LOCAL_ONE_MCP_ENTRY, '..', '..');
+  if (fs.existsSync(oneMcpRoot)) {
+    const oneMcpPkg = JSON.parse(fs.readFileSync(path.join(oneMcpRoot, 'package.json'), 'utf8'));
+    if (oneMcpPkg.version !== '0.39.8') throw new Error(`unexpected installed 1MCP version: ${oneMcpPkg.version}`);
+    const oneMcpConstants = fs.readFileSync(path.join(oneMcpRoot, 'build', 'constants', 'mcp.js'), 'utf8');
+    if (!oneMcpConstants.includes("process.env.WEBHARNESS_MCP_URI_SEPARATOR || '_'")) {
+      throw new Error('installed 1MCP is missing the WebHarness clean tool namespacing patch');
+    }
+  }
   if (JSON.stringify(local.tags ?? []) !== JSON.stringify(['local'])) throw new Error('Local broker must use only the local tag');
   const pkg = JSON.parse(fs.readFileSync(path.join(repoRoot, 'providers', 'local-tools', 'package.json'), 'utf8'));
   if (pkg.dependencies?.['@modelcontextprotocol/sdk'] !== '1.30.0') throw new Error('unexpected Local broker MCP SDK pin');

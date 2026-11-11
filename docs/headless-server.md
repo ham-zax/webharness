@@ -141,6 +141,6 @@ Check the DNS record's target against the intended tunnel UUID. A workstation's 
 
 ### Revoked or invalid token shows HTTP 500
 
-Pinned 1MCP 0.37.0 throws a generic error when its access-token session is missing or invalid. The SDK maps that error to `HTTP 500` with `server_error`, rather than the expected OAuth invalid-token refusal status. A deployment check reproduced this after revoking a temporary test grant; no MCP access was granted, and health remained ready. Requests without a bearer token returned HTTP 401.
+Historical 1MCP 0.37.0 threw a generic error when its access-token session was missing or invalid (0.39.8 throws `InvalidTokenError`, though legacy vs v2 error-class routing in upstream 1MCP should still be verified during deployment checks). The SDK maps that error to `HTTP 500` with `server_error`, rather than the expected OAuth invalid-token refusal status. A deployment check reproduced this after revoking a temporary test grant; no MCP access was granted, and health remained ready. Requests without a bearer token returned HTTP 401.
 
 This is an upstream status-reporting quirk, not evidence that a revoked grant remains usable. Reconnect through owner approval when a grant is invalid. WebHarness does not currently patch this upstream behavior. A future 1MCP upgrade should recheck both refusal and the returned status.
