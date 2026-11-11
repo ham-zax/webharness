@@ -502,15 +502,23 @@ export class OperationCore {
         requestArguments,
         {
           onBeforeDispatch: async () => {
-            if (!this.store.isCurrentTurn(operation.principal_id, operation.turn_id)) throw new Error('superseded_by_newer_turn');
-            if (!this.store.markDispatchStarted(operationId)) throw new Error('failed to persist dispatch intent');
+            this.store.db.exec('BEGIN IMMEDIATE');
+            try {
+              if (!this.store.activeCapabilityById(operation.principal_id)) throw new Error('submission capability expired or was revoked before execution');
+              if (!this.store.isCurrentTurn(operation.principal_id, operation.turn_id)) throw new Error('superseded_by_newer_turn');
+              if (!this.store.markDispatchStarted(operationId)) throw new Error('failed to persist dispatch intent');
+              this.store.db.exec('COMMIT');
+            } catch (error) {
+              this.store.db.exec('ROLLBACK');
+              throw error;
+            }
             dispatchStarted = true;
           },
         },
       );
     } catch (error) {
-      if (dispatchStarted && !error?.beforeBackendDispatch) this.store.markUnknownOutcome(operationId);
-      else if (error?.message === 'superseded_by_newer_turn') this.store.rejectOperation(operationId, error.message);
+      if (dispatchStarted) this.store.markUnknownOutcome(operationId);
+      else if (error?.message === 'superseded_by_newer_turn' || error?.message === 'submission capability expired or was revoked before execution') this.store.rejectOperation(operationId, error.message);
       else this.store.failOperation(operationId, boundedError(error));
       return;
     }

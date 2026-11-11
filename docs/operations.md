@@ -183,6 +183,8 @@ ${XDG_STATE_HOME:-$HOME/.local/state}/wsl-agent-terminal
 
 1MCP's current log lives under `mcp-dev-bridge/logs/` and is rotated by the pinned 1MCP/Winston runtime according to `1mcp/config.toml`. Do not recreate shell `>> one-mcp.log` capture. After upgrading from a deployment that predates `config.toml`, rerun the renderer/bootstrap before restart; `scripts/smoke-local.sh` deliberately rejects stale generated state.
 
+Run `scripts/smoke-local.sh [MCP_URL]` to check readiness and unauthenticated Bearer refusal. These checks do not prove authorized tool access. To check a harmless UTF-8 file, add `--auth-state-dir DIR --read-path PATH`. This mode requires the installed adapter and existing OAuth authorization. It does not print file contents or begin interactive authorization.
+
 The Local broker starts a second 1MCP process that writes its own log at `logs/local-inner.log`, rotated by `local-1mcp/config.toml`. A failed browser tool call surfaces as `-32603 Error calling tool` at the client, and the cause is recorded only in that inner log. `bin/status` prints a `Local inner 1MCP logs:` line beside the outer one; both are checked against their own rendered rotation policy.
 
 Use `bin/status`, `systemctl --user status ...`, and `journalctl --user -u <unit>` before changing state manually. When a non-login shell lacks the user bus, the broker socket remains the direct runtime signal; derive the bus environment as shown above before interpreting `systemctl --user` failures.

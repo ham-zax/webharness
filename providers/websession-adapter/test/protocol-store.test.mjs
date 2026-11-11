@@ -7,9 +7,10 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
+import { Server, createMcpHandler } from '@modelcontextprotocol/server';
 import { OperationCore, renderToolResult } from '../core.mjs';
 import { webSessionInstructions, compactInstructions, decodeToolName, parseRequest, parseUniversalRequest, toolListSnapshot } from '../protocol.mjs';
-import { listMcpTools } from '../mcp-client.mjs';
+import { callMcpTool, listMcpTools } from '../mcp-client.mjs';
 import { AdapterStore, requestHash } from '../store.mjs';
 
 function encode(value) {
@@ -491,7 +492,11 @@ function startToolFixture(t, tools, runTool) {
     } else if (message.method === 'tools/call') {
       result = await runTool(message.params.name, message.params.arguments, events);
     } else {
-      result = {};
+      // -32601 is the definitive legacy signal: the adapter's version probe
+      // falls back to the plain initialize handshake.
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ jsonrpc: '2.0', id: message.id, error: { code: -32601, message: 'Method not found' } }));
+      return;
     }
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify({ jsonrpc: '2.0', id: message.id, result }));
@@ -510,6 +515,89 @@ async function slowTool(name, args, events) {
   await new Promise(resolve => setTimeout(resolve, 250));
   events.push({ name, phase: 'end', at: Date.now() });
   return { content: [{ type: 'text', text: `${name} ok` }] };
+}
+
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((settle, fail) => { resolve = settle; reject = fail; });
+  promise.catch(() => {});
+  return { promise, resolve, reject };
+}
+
+// Bounds a gate wait so a broken fixture fails the test instead of hanging it.
+function withinMs(promise, ms, message) {
+  let timer;
+  const guard = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), ms);
+    timer.unref?.();
+  });
+  return Promise.race([promise, guard]).finally(() => clearTimeout(timer));
+}
+
+function jsonRpcMethods(body) {
+  if (!body.length) return [];
+  let parsed;
+  try {
+    parsed = JSON.parse(body.toString('utf8'));
+  } catch {
+    return [];
+  }
+  const messages = Array.isArray(parsed) ? parsed : [parsed];
+  return messages.map(message => message?.method).filter(method => typeof method === 'string');
+}
+
+// In-process modern 2026-07-28 gateway: createMcpHandler serves the stateless
+// HTTP era, and the HTTP wrapper counts the JSON-RPC methods the adapter sends.
+function startModernMcpStub(t, tools, runTool) {
+  const counts = { discover: 0, initialize: 0, listTools: 0, calls: 0 };
+  const handler = createMcpHandler(() => {
+    const server = new Server({ name: 'modern-fixture', version: '1' }, { capabilities: { tools: {} } });
+    server.setRequestHandler('tools/list', () => ({ tools }));
+    server.setRequestHandler('tools/call', ({ params }) => runTool(params.name, params.arguments, counts));
+    return server;
+  });
+  const server = createServer(async (req, res) => {
+    const url = new URL(req.url ?? '/', 'http://127.0.0.1');
+    if (url.pathname !== '/mcp') {
+      res.writeHead(404).end();
+      return;
+    }
+    const chunks = [];
+    for await (const chunk of req) chunks.push(chunk);
+    const body = Buffer.concat(chunks);
+    for (const method of jsonRpcMethods(body)) {
+      if (method === 'server/discover') counts.discover += 1;
+      else if (method === 'initialize') counts.initialize += 1;
+      else if (method === 'tools/list') counts.listTools += 1;
+      else if (method === 'tools/call') counts.calls += 1;
+    }
+    const headers = new Headers();
+    for (const [name, value] of Object.entries(req.headers)) {
+      if (value === undefined) continue;
+      if (Array.isArray(value)) value.forEach(entry => headers.append(name, entry));
+      else headers.set(name, value);
+    }
+    const init = { method: req.method, headers };
+    if (req.method !== 'GET' && req.method !== 'HEAD') init.body = body;
+    try {
+      const response = await handler.fetch(new Request(url, init));
+      const payload = Buffer.from(await response.arrayBuffer());
+      if (res.writableEnded || res.destroyed) return;
+      res.writeHead(response.status, Object.fromEntries(response.headers));
+      res.end(payload);
+    } catch {
+      if (!res.headersSent) res.writeHead(500).end();
+      else if (!res.writableEnded) res.end();
+    }
+  });
+  server.listen(0, '127.0.0.1');
+  t.after(() => {
+    server.closeAllConnections();
+    server.close();
+    void handler.close();
+  });
+  return { counts, server, handler };
 }
 
 test('read-only tools run during slow mutations while mutations stay serialized', async t => {
@@ -557,11 +645,9 @@ test('read-only tools run during slow mutations while mutations stay serialized'
   }
 });
 
-test('overlapping calls retry pre-dispatch 1MCP interaction_capacity_exceeded without evicting the pool', async t => {
+test('exact interaction_capacity_exceeded error after dispatch is never replayed', async t => {
   const stateDir = mkdtempSync(join(tmpdir(), 'websession-capacity-'));
-  let activeBackendCalls = 0;
-  let capacityRejections = 0;
-  let initializations = 0;
+  let backendCalls = 0;
   const server = createServer(async (req, res) => {
     if (req.method !== 'POST') { res.writeHead(200).end(); return; }
     let body = '';
@@ -569,13 +655,12 @@ test('overlapping calls retry pre-dispatch 1MCP interaction_capacity_exceeded wi
     const message = JSON.parse(body);
     if (message.id === undefined) { res.writeHead(202).end(); return; }
     if (message.method === 'initialize') {
-      initializations += 1;
       res.writeHead(200, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({
-        jsonrpc: '2.0',
-        id: message.id,
-        result: { protocolVersion: message.params.protocolVersion, capabilities: { tools: {} }, serverInfo: { name: '1mcp-sim', version: '0.39.8' } },
-      }));
+      res.end(JSON.stringify({ jsonrpc: '2.0', id: message.id, result: {
+        protocolVersion: message.params.protocolVersion,
+        capabilities: { tools: {} },
+        serverInfo: { name: '1mcp-sim', version: '0.39.8' },
+      } }));
       return;
     }
     if (message.method === 'tools/list') {
@@ -584,24 +669,15 @@ test('overlapping calls retry pre-dispatch 1MCP interaction_capacity_exceeded wi
       return;
     }
     if (message.method === 'tools/call') {
-      if (activeBackendCalls > 0) {
-        capacityRejections += 1;
-        res.writeHead(200, { 'content-type': 'application/json' });
-        res.end(JSON.stringify({ jsonrpc: '2.0', id: message.id, error: { code: -32000, message: 'interaction_capacity_exceeded' } }));
-        return;
-      }
-      activeBackendCalls += 1;
-      try {
-        await new Promise(resolve => setTimeout(resolve, 45));
-        res.writeHead(200, { 'content-type': 'application/json' });
-        res.end(JSON.stringify({ jsonrpc: '2.0', id: message.id, result: { content: [{ type: 'text', text: `${message.params.name} ok` }] } }));
-      } finally {
-        activeBackendCalls -= 1;
-      }
+      // The exact legacy 1MCP admission error, arriving after dispatch intent
+      // is persisted. It must fail the operation, never replay the call.
+      backendCalls += 1;
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ jsonrpc: '2.0', id: message.id, error: { code: -32000, message: 'interaction_capacity_exceeded' } }));
       return;
     }
     res.writeHead(200, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({ jsonrpc: '2.0', id: message.id, result: {} }));
+    res.end(JSON.stringify({ jsonrpc: '2.0', id: message.id, error: { code: -32601, message: 'Method not found' } }));
   });
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
@@ -618,18 +694,270 @@ test('overlapping calls retry pre-dispatch 1MCP interaction_capacity_exceeded wi
   try {
     const issued = core.store.issueMainCapability(120);
     await core.permittedTools(issued.token);
-    const batch = core.submitBatch(issued.token, 'batch-cap-test', [
-      parseRequest({ version: 1, tool: 'fixture_read', arguments: {} }),
-      parseRequest({ version: 1, tool: 'fixture_read', arguments: {} }),
-      parseRequest({ version: 1, tool: 'fixture_write', arguments: {} }),
-    ]);
-    await Promise.all(batch.submissions.map(item => core.waitForOperation(item.operation.id, 5000)));
-    for (const item of batch.submissions) {
-      assert.equal(core.store.getOperation(item.operation.id).state, 'completed');
-    }
-    assert.ok(capacityRejections >= 1, 'simulated 1MCP capacity rejection occurred');
-    assert.equal(initializations, 2, 'execution connection stayed pooled across capacity retries');
+    const submitted = core.submit(
+      issued.token,
+      'capacity-after-dispatch',
+      parseRequest({ version: 1, tool: 'fixture_write', arguments: { path: '/tmp/x' } }),
+      'json-post-v1',
+    );
+    await core.waitForOperation(submitted.operation.id, 5000);
+    assert.equal(backendCalls, 1, 'the dispatched tools/call was attempted exactly once');
+    assert.equal(core.store.getOperation(submitted.operation.id).state, 'unknown_outcome');
   } finally {
+    await core.close();
+    rmSync(stateDir, { recursive: true, force: true });
+  }
+});
+
+test('newer turn fence prevents queued older-turn write from dispatching', async t => {
+  const stateDir = mkdtempSync(join(tmpdir(), 'websession-fence-dispatch-'));
+  const firstWriteEntered = deferred();
+  const firstWriteGate = deferred();
+  const calls = [];
+  const { server } = startToolFixture(t, CONCURRENCY_TOOLS, async (name, args) => {
+    calls.push({ name, args });
+    if (args?.path === '/tmp/first') {
+      firstWriteEntered.resolve();
+      await firstWriteGate.promise;
+    }
+    return { content: [{ type: 'text', text: `${name} ok` }] };
+  });
+  await once(server, 'listening');
+  t.after(() => {
+    server.closeAllConnections();
+    server.close();
+  });
+  const core = new OperationCore({
+    stateDir,
+    mcpUrl: `http://127.0.0.1:${server.address().port}/mcp`,
+    callbackUrl: 'http://127.0.0.1:9/callback',
+    toolTimeoutMs: 15000,
+  });
+  try {
+    const issued = core.store.issueMainCapability(120);
+    await core.permittedTools(issued.token);
+    assert.equal(core._readOnlyTools.has('fixture_write'), false, 'writes stay serialized');
+
+    const first = core.submit(issued.token, 'fence-write-1', parseRequest({ version: 1, tool: 'fixture_write', arguments: { path: '/tmp/first' } }), 'json-post-v1', 1);
+    const second = core.submit(issued.token, 'fence-write-2', parseRequest({ version: 1, tool: 'fixture_write', arguments: { path: '/tmp/second' } }), 'json-post-v1', 1);
+    assert.equal(second.operation.state, 'queued');
+
+    try {
+      await withinMs(firstWriteEntered.promise, 15000, 'the first write never reached the backend');
+      // A newer turn arrives while the second write still waits behind it.
+      assert.equal(core.store.advanceTurn(issued.id, 2), true);
+    } finally {
+      firstWriteGate.resolve();
+    }
+
+    await core.waitForOperation(first.operation.id, 15000);
+    await core.waitForOperation(second.operation.id, 15000);
+
+    assert.equal(core.store.getOperation(first.operation.id).state, 'completed');
+    const superseded = core.store.getOperation(second.operation.id);
+    assert.equal(superseded.state, 'rejected');
+    assert.equal(superseded.error_text, 'superseded_by_newer_turn');
+    assert.deepEqual(calls.map(call => call.args.path), ['/tmp/first'], 'the superseded write never reached the backend');
+  } finally {
+    firstWriteGate.resolve();
+    await core.close();
+    rmSync(stateDir, { recursive: true, force: true });
+  }
+});
+
+test('revoked capability cannot dispatch after waiting for the tool catalog', async t => {
+  const stateDir = mkdtempSync(join(tmpdir(), 'websession-revoke-dispatch-'));
+  const listingEntered = deferred();
+  const listingGate = deferred();
+  let calls = 0;
+  const server = createServer(async (req, res) => {
+    if (req.method !== 'POST') { res.writeHead(200).end(); return; }
+    let body = '';
+    for await (const chunk of req) body += chunk;
+    const message = JSON.parse(body);
+    if (message.id === undefined) { res.writeHead(202).end(); return; }
+    let result;
+    if (message.method === 'initialize') {
+      result = { protocolVersion: message.params.protocolVersion, capabilities: { tools: {} }, serverInfo: { name: 'fixture', version: '1' } };
+    } else if (message.method === 'tools/list') {
+      listingEntered.resolve();
+      await listingGate.promise;
+      result = { tools: CONCURRENCY_TOOLS };
+    } else if (message.method === 'tools/call') {
+      calls += 1;
+      result = { content: [{ type: 'text', text: 'unexpected' }] };
+    } else {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ jsonrpc: '2.0', id: message.id, error: { code: -32601, message: 'Method not found' } }));
+      return;
+    }
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ jsonrpc: '2.0', id: message.id, result }));
+  });
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  t.after(() => { server.closeAllConnections(); server.close(); });
+  const core = new OperationCore({ stateDir, mcpUrl: `http://127.0.0.1:${server.address().port}/mcp`, callbackUrl: 'http://127.0.0.1:9/callback', toolTimeoutMs: 5000 });
+  try {
+    const issued = core.store.issueMainCapability(120);
+    const submitted = core.submit(issued.token, 'revoke-before-dispatch', parseRequest({ version: 1, tool: 'fixture_write', arguments: {} }), 'json-post-v1');
+    await withinMs(listingEntered.promise, 15000, 'tool catalog was not requested');
+    assert.equal(core.store.revokeCapability(issued.id), true);
+    listingGate.resolve();
+    const operation = await core.waitForOperation(submitted.operation.id, 15000);
+    assert.equal(operation.state, 'rejected');
+    assert.match(operation.error_text, /capability expired or was revoked/);
+    assert.equal(calls, 0);
+  } finally {
+    listingGate.resolve();
+    await core.close();
+    rmSync(stateDir, { recursive: true, force: true });
+  }
+});
+
+const SIX_SESSION_TOOLS = [
+  {
+    name: 'fixture_read',
+    description: 'Read a file.',
+    inputSchema: { type: 'object', properties: { session: { type: 'number' } } },
+    annotations: { readOnlyHint: true },
+  },
+];
+
+test('five modern requests finish while a sixth remains blocked', async t => {
+  const stateDir = mkdtempSync(join(tmpdir(), 'websession-six-overlap-'));
+  const entered = deferred();
+  const gate = deferred();
+  const invocations = [];
+  const { counts, server } = startModernMcpStub(t, SIX_SESSION_TOOLS, async (_name, args) => {
+    invocations.push(args.session);
+    if (args.session === 1) { entered.resolve(); await gate.promise; }
+    return { content: [{ type: 'text', text: 'ok' }] };
+  });
+  await once(server, 'listening');
+  const options = { mcpUrl: `http://127.0.0.1:${server.address().port}/mcp`, stateDir, callbackUrl: 'http://127.0.0.1:9/callback' };
+  try {
+    let firstFinished = false;
+    const first = callMcpTool(options, 'fixture_read', { session: 1 }).finally(() => { firstFinished = true; });
+    await withinMs(entered.promise, 15000, 'first call did not enter');
+    await withinMs(Promise.all([2, 3, 4, 5, 6].map(session => callMcpTool(options, 'fixture_read', { session }))), 15000, 'other calls did not complete');
+    assert.equal(firstFinished, false);
+    assert.deepEqual(invocations.slice().sort(), [1, 2, 3, 4, 5, 6]);
+    assert.equal(counts.discover, 1);
+    assert.equal(counts.initialize, 0);
+    gate.resolve();
+    await first;
+  } finally {
+    gate.resolve();
+    const { closeMcpPools } = await import('../mcp-client.mjs');
+    await closeMcpPools();
+    rmSync(stateDir, { recursive: true, force: true });
+  }
+});
+
+test('six-session modern 2026-07-28 gateway concurrency, barrier overlap, failure isolation, and timeout/cancel isolation', async t => {
+  const stateDir = mkdtempSync(join(tmpdir(), 'websession-six-session-'));
+  const sessionOneEntered = deferred();
+  const sessionOneGate = deferred();
+  const cancelEntered = deferred();
+  const cancelGate = deferred();
+  const invocations = new Map();
+  // All six sessions use the read-only fixture tool: OperationCore serializes
+  // mutations on one tail, which would prevent the barrier overlap this test
+  // must prove.
+  const { counts, server } = startModernMcpStub(t, SIX_SESSION_TOOLS, async (name, args) => {
+    const session = Number(args?.session);
+    invocations.set(session, (invocations.get(session) ?? 0) + 1);
+    if (session === 1) {
+      sessionOneEntered.resolve();
+      await sessionOneGate.promise;
+      return { content: [{ type: 'text', text: 'session 1 ok' }] };
+    }
+    if (session === 2) await sessionOneEntered.promise;
+    if (session === 7) {
+      cancelEntered.resolve();
+      await cancelGate.promise;
+    }
+    if (session === 5) throw new Error('backend tool failed for session 5');
+    if (session === 6) {
+      // Outlives toolTimeoutMs, so the adapter must time out without replaying.
+      await new Promise(resolve => { setTimeout(resolve, 5000).unref(); });
+      return { content: [{ type: 'text', text: 'session 6 late' }] };
+    }
+    return { content: [{ type: 'text', text: `session ${session} ok` }] };
+  });
+  await once(server, 'listening');
+  const core = new OperationCore({
+    stateDir,
+    mcpUrl: `http://127.0.0.1:${server.address().port}/mcp`,
+    callbackUrl: 'http://127.0.0.1:9/callback',
+    toolTimeoutMs: 150,
+  });
+  try {
+    const capabilities = [];
+    for (let index = 0; index < 6; index += 1) capabilities.push(core.store.issueMainCapability(120));
+    assert.ok(await core.permittedTools(capabilities[0].token));
+    assert.equal(core._readOnlyTools.has('fixture_read'), true);
+    const discoversBeforeExecution = counts.discover;
+
+    const submitted = capabilities.map((issued, index) => core.submit(
+      issued.token,
+      `six-session-${index + 1}`,
+      parseRequest({ version: 1, tool: 'fixture_read', arguments: { session: index + 1 } }),
+      'json-post-v1',
+    ));
+
+    let overlapped = false;
+    const releaseSessionOne = (async () => {
+      try {
+        await withinMs(sessionOneEntered.promise, 15000, 'session 1 never reached the backend');
+        const second = await core.waitForOperation(submitted[1].operation.id, 15000);
+        overlapped = second.state === 'completed';
+      } finally {
+        sessionOneGate.resolve();
+      }
+    })();
+
+    await Promise.all([
+      ...submitted.map(entry => core.waitForOperation(entry.operation.id, 20000)),
+      releaseSessionOne,
+    ]);
+
+    const stateOf = index => core.store.getOperation(submitted[index].operation.id).state;
+    assert.equal(overlapped, true, 'session 2 completed while session 1 was still blocked in the backend');
+    for (const index of [0, 1, 2, 3]) assert.equal(stateOf(index), 'completed', `session ${index + 1} completed`);
+    assert.equal(stateOf(4), 'unknown_outcome', 'session 5 recorded an ambiguous outcome');
+    assert.equal(stateOf(5), 'unknown_outcome', 'session 6 recorded an ambiguous outcome after its timeout');
+    assert.equal(invocations.get(5), 1, 'session 5 backend invoked once: no replay after dispatch');
+    assert.equal(invocations.get(6), 1, 'session 6 backend invoked once: no replay after the timeout');
+    assert.equal(counts.initialize, 0, 'modern 2026-07-28 was negotiated without initialize');
+    assert.ok(counts.discover >= 1, 'the server/discover probe reached the gateway');
+    assert.equal(counts.discover, discoversBeforeExecution + 1, 'all six calls shared one execution connection');
+
+    const discoversBeforeFollowUp = counts.discover;
+    const followUp = core.submit(
+      capabilities[0].token,
+      'six-session-follow-up',
+      parseRequest({ version: 1, tool: 'fixture_read', arguments: { session: 1 } }),
+      'json-post-v1',
+    );
+    await core.waitForOperation(followUp.operation.id, 15000);
+    assert.equal(core.store.getOperation(followUp.operation.id).state, 'completed');
+    assert.equal(counts.discover, discoversBeforeFollowUp, 'the follow-up call reused the pooled execution connection');
+    const controller = new AbortController();
+    const cancelled = callMcpTool({ mcpUrl: core.mcpUrl, stateDir, callbackUrl: core.callbackUrl, signal: controller.signal }, 'fixture_read', { session: 7 });
+    await withinMs(cancelEntered.promise, 15000, 'cancelled call never reached the backend');
+    controller.abort();
+    await assert.rejects(cancelled);
+    cancelGate.resolve();
+    const afterCancel = core.submit(capabilities[0].token, 'after-cancel', parseRequest({ version: 1, tool: 'fixture_read', arguments: { session: 1 } }), 'json-post-v1');
+    await core.waitForOperation(afterCancel.operation.id, 15000);
+    assert.equal(core.store.getOperation(afterCancel.operation.id).state, 'completed');
+    assert.equal(invocations.get(7), 1);
+    assert.equal(counts.discover, discoversBeforeFollowUp, 'cancellation preserved the pooled connection');
+  } finally {
+    sessionOneGate.resolve();
+    cancelGate.resolve();
     await core.close();
     rmSync(stateDir, { recursive: true, force: true });
   }

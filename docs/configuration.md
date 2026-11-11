@@ -179,6 +179,8 @@ Pi Dev also bounds retained Bash diagnostics independently of the model-visible 
 
 A fresh 1MCP launch suppresses the duplicate console stream after native file logging is configured and removes the legacy runtime `one-mcp.log` append file. `scripts/smoke-local.sh` requires the generated `config.toml`, so after upgrading an existing installation re-render/bootstrap the deployment before the first restart. If startup health fails, the lifecycle helper prints a bounded tail from the native log when available.
 
+The smoke command checks readiness and unauthenticated OAuth refusal. Add `--auth-state-dir DIR --read-path PATH` to check authorized access with an existing adapter grant and a harmless UTF-8 file. The two arguments are required together.
+
 The Local broker starts a second 1MCP process, and that process cannot see the outer log. The renderer therefore writes `local-1mcp/config.toml` with its own `[logging]` block, using the same `MCP_ONE_MCP_LOG_MAX_SIZE_BYTES` and `MCP_ONE_MCP_LOG_MAX_FILES` values, and points it at `logs/local-inner.log`. The inner 1MCP reads `config.toml` from the directory of its `--config` file, so no extra argument is needed. `bin/status` reports both logs; `scripts/smoke-local.sh` rejects a missing or unbounded inner block.
 
 ## Request timeouts

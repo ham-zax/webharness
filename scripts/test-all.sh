@@ -9,6 +9,9 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 echo "=== Running harness integration suite ==="
 bash "$ROOT/tests/harness.sh"
 
+echo "=== Running isolated smoke suite ==="
+bash "$ROOT/tests/smoke-local.sh"
+
 echo "=== Running publication suite ==="
 bash "$ROOT/tests/publication.sh"
 

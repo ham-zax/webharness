@@ -4,6 +4,40 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck disable=SC1091
 source "$DIR/lib/bridge/common.sh"
 
+URL=""
+AUTH_STATE_DIR=""
+READ_PATH=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --auth-state-dir|--read-path)
+      [ "$#" -ge 2 ] && [ -n "$2" ] && [[ "$2" != --* ]] || { echo "missing value for $1" >&2; exit 2; }
+      if [ "$1" = --auth-state-dir ]; then
+        [ -z "$AUTH_STATE_DIR" ] || { echo 'duplicate --auth-state-dir' >&2; exit 2; }
+        AUTH_STATE_DIR="$2"
+      else
+        [ -z "$READ_PATH" ] || { echo 'duplicate --read-path' >&2; exit 2; }
+        READ_PATH="$2"
+      fi
+      shift 2 ;;
+    -*) echo "unknown argument: $1" >&2; exit 2 ;;
+    *) [ -z "$URL" ] || { echo 'only one MCP URL is allowed' >&2; exit 2; }; URL="$1"; shift ;;
+  esac
+done
+if { [ -n "$AUTH_STATE_DIR" ] && [ -z "$READ_PATH" ]; } || { [ -z "$AUTH_STATE_DIR" ] && [ -n "$READ_PATH" ]; }; then
+  echo '--auth-state-dir and --read-path are required together' >&2
+  exit 2
+fi
+if [ -n "$AUTH_STATE_DIR" ]; then
+  if [ ! -f "$DIR/providers/websession-adapter/mcp-client.mjs" ] || [ ! -d "$DIR/providers/websession-adapter/node_modules/@modelcontextprotocol/client" ]; then
+    echo 'authenticated mode requires the installed websession-adapter package' >&2
+    exit 2
+  fi
+  if [ ! -r "$AUTH_STATE_DIR/oauth.json" ] || [ ! -f "$READ_PATH" ] || [ ! -r "$READ_PATH" ]; then
+    echo 'authenticated mode requires readable OAuth state and a readable file' >&2
+    exit 2
+  fi
+fi
+
 CONFIG="$BRIDGE_CONFIG_DIR/mcp.json"
 if [ -f "$CONFIG" ]; then
   node - "$CONFIG" "$DIR" "${MCP_BRIDGE_PROFILE:-}" <<'NODE'
@@ -43,10 +77,6 @@ if (local) {
     const oneMcpConstants = fs.readFileSync(path.join(oneMcpRoot, 'build', 'constants', 'mcp.js'), 'utf8');
     if (!oneMcpConstants.includes("process.env.WEBHARNESS_MCP_URI_SEPARATOR || '_'")) {
       throw new Error('installed 1MCP is missing the WebHarness clean tool namespacing patch');
-    }
-    const oneMcpErrorHandling = fs.readFileSync(path.join(oneMcpRoot, 'build', 'utils', 'core', 'errorHandling.js'), 'utf8');
-    if (!oneMcpErrorHandling.includes("MCP error -32000: interaction_capacity_exceeded")) {
-      throw new Error('installed 1MCP is missing the WebHarness capacity error passthrough patch');
     }
   }
   if (JSON.stringify(local.tags ?? []) !== JSON.stringify(['local'])) throw new Error('Local broker must use only the local tag');
@@ -179,12 +209,8 @@ if (!Number.isInteger(files) || files < 1 || files > 10) throw new Error('inner 
 NODE
 fi
 
-URL="${1:-http://127.0.0.1:$BRIDGE_ONE_MCP_PORT/mcp}"
-echo "== MCP initialize against $URL =="
-curl --noproxy '*' -sf -m 5 -X POST "$URL" \
-  -H 'Content-Type: application/json' \
-  -H 'Accept: application/json, text/event-stream' \
-  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"smoke","version":"1.0.0"}}}'
-echo
-echo
-echo "(connectivity check only; inspect workspace-scoped Dev for restricted/trusted-dev profiles, or direct Dev plus the five-tool Local broker with terminal/host/browser logical servers for personal composition)"
+URL="${URL:-http://127.0.0.1:$BRIDGE_ONE_MCP_PORT/mcp}"
+node "$DIR/scripts/smoke-mcp-auth.mjs" --public "$URL"
+if [ -n "$AUTH_STATE_DIR" ]; then
+  node "$DIR/scripts/smoke-mcp-auth.mjs" --auth "$URL" "$AUTH_STATE_DIR" "$READ_PATH"
+fi

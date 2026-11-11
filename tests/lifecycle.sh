@@ -87,8 +87,7 @@ test_1mcp_clean_tool_namespacing_is_guarded() {
   contains "$helper" 'constants/mcp\.js' &&
   contains "$helper" "process\.env\.WEBHARNESS_MCP_URI_SEPARATOR \|\| '_'" &&
   contains "$helper" "toolPattern: '\{server\}_\{tool\}'" &&
-  contains "$helper" 'utils/core/errorHandling\.js' &&
-  contains "$helper" 'MCP error -32000: interaction_capacity_exceeded' &&
+  ! contains "$helper" 'utils/core/errorHandling\.js' &&
   contains "$ROOT/providers/local-tools/server.mjs" 'WEBHARNESS_MCP_URI_SEPARATOR: INNER_TOOL_SEPARATOR' &&
   ! contains "$ROOT/providers/local-tools/server.mjs" 'ONE_MCP_URI_SEPARATOR'
 }

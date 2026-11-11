@@ -608,29 +608,7 @@ test_personal_runtime_files_have_no_machine_home() {
 
 
 test_personal_smoke_validation() {
-  local tmp fakebin
-  tmp="$(mktemp -d)" || return 1
-  fakebin="$tmp/fakebin"
-  mkdir -p "$fakebin" "$tmp/home" "$tmp/runtime"
-  cat > "$tmp/deployment.env" <<'ENV'
-MCP_PUBLIC_URL=https://mcp.example.test
-MCP_TUNNEL_NAME=
-ENV
-  HOME="$tmp/home" XDG_RUNTIME_DIR="$tmp/runtime" node "$ROOT/scripts/render-config.mjs" \
-    --profile personal \
-    --env-file "$tmp/deployment.env" \
-    --state-dir "$tmp/state" \
-    --repo-root "$ROOT" >/dev/null || { rm -rf "$tmp"; return 1; }
-  cat > "$fakebin/curl" <<'SH'
-#!/usr/bin/env bash
-printf '{}'
-SH
-  chmod +x "$fakebin/curl"
-  HOME="$tmp/home" XDG_RUNTIME_DIR="$tmp/runtime" BRIDGE_STATE_DIR="$tmp/state" PATH="$fakebin:$PATH" \
-    bash "$ROOT/scripts/smoke-local.sh" http://127.0.0.1:1/mcp >/dev/null
-  local rc=$?
-  rm -rf "$tmp"
-  return "$rc"
+  bash "$ROOT/tests/smoke-local.sh" --personal-only
 }
 
 test_pi_provider_structure() {
