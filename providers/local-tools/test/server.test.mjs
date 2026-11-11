@@ -814,7 +814,7 @@ test('createLocalBrokerServer catches async tool_call and fallback_dispatch reje
 const mcpServerModUrl = new URL('../node_modules/@modelcontextprotocol/server/dist/index.mjs', import.meta.url).href;
 const mcpServerStdioModUrl = new URL('../node_modules/@modelcontextprotocol/server/dist/stdio.mjs', import.meta.url).href;
 
-async function writeFixtureMcpServer(dir, name, { modern = true, slowMs = 0, crashFirstCall = false } = {}) {
+async function writeFixtureMcpServer(dir, name, { modern = true, modernOnly = false, slowMs = 0, crashFirstCall = false } = {}) {
   const pidLog = path.join(dir, `${name}.pids`);
   const callLog = path.join(dir, `${name}.calls`);
   const script = path.join(dir, `${name}.mjs`);
@@ -845,7 +845,7 @@ function buildServer() {
   return server;
 }
 if (${JSON.stringify(modern)}) {
-  const handle = serveStdio(() => buildServer());
+  const handle = serveStdio(() => buildServer(), { legacy: ${JSON.stringify(modernOnly)} ? 'reject' : 'serve' });
   process.stdin.once('end', () => { void handle.close(); });
 } else {
   const server = buildServer();
@@ -871,7 +871,7 @@ async function readPids(pidLog) {
 test('DirectLocalServerPool wakes only the addressed server and negotiates both modern 2026-07-28 and legacy stdio servers', async t => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'local-direct-pool-'));
   t.after(() => fs.rm(dir, { recursive: true, force: true }));
-  const alpha = await writeFixtureMcpServer(dir, 'alpha', { modern: true });
+  const alpha = await writeFixtureMcpServer(dir, 'alpha', { modern: true, modernOnly: true });
   const beta = await writeFixtureMcpServer(dir, 'beta', { modern: false });
   const cfgPath = path.join(dir, 'mcp.json');
   await fs.writeFile(cfgPath, JSON.stringify({
@@ -916,6 +916,84 @@ test('DirectLocalServerPool wakes only the addressed server and negotiates both 
     assert.throws(() => process.kill(pid, 0), err => err.code === 'ESRCH');
   }
 });
+
+function poolGate() {
+  let resolve;
+  const promise = new Promise(done => { resolve = done; });
+  return { promise, resolve };
+}
+
+async function lifecyclePoolFixture(t) {
+  const configPath = await configFile(t, ['fixture']);
+  const clients = [];
+  const pool = new DirectLocalServerPool({
+    configPath,
+    idleMs: 0,
+    clientFactory: async () => {
+      const client = {
+        alive: true,
+        listTools: async () => ({ tools: [] }),
+        close: async () => { client.alive = false; }
+      };
+      clients.push(client);
+      return client;
+    }
+  });
+  t.after(async () => {
+    await pool.close();
+    await Promise.all(clients.map(client => client.close()));
+  });
+  return { pool, clients, configPath };
+}
+
+test('concurrent config replacements share one supervisor and leave no client after close', async t => {
+  const { pool, clients, configPath } = await lifecyclePoolFixture(t);
+  await pool.listServerTools('fixture');
+  const entered = poolGate();
+  const release = poolGate();
+  const originalClose = clients[0].close;
+  clients[0].close = async () => { entered.resolve(); await release.promise; await originalClose(); };
+  await fs.writeFile(configPath, JSON.stringify({ mcpServers: { fixture: { command: 'fixture', args: ['new'] } } }));
+  const first = pool.listServerTools('fixture');
+  await entered.promise;
+  const second = pool.listServerTools('fixture');
+  try {
+    release.resolve();
+    await Promise.all([first, second]);
+    assert.equal(clients.length, 2, 'one original and one replacement client');
+    assert.equal(pool.entries.size, 1);
+    assert.equal(pool.entryUpdates.size, 0);
+    await pool.close();
+    assert.equal(clients.filter(client => client.alive).length, 0);
+  } finally {
+    release.resolve();
+  }
+});
+
+for (const blockedRead of [1, 2]) {
+  test(`closing the pool during config read ${blockedRead} prevents late startup and awaits pending work`, async t => {
+    const { pool, clients } = await lifecyclePoolFixture(t);
+    const entered = poolGate();
+    const release = poolGate();
+    const original = pool._readServerDefinition.bind(pool);
+    let reads = 0;
+    pool._readServerDefinition = async server => {
+      const result = await original(server);
+      if (++reads === blockedRead) { entered.resolve(); await release.promise; }
+      return result;
+    };
+    const call = pool.listServerTools('fixture');
+    const rejected = assert.rejects(call, /shut down|abort/i);
+    await entered.promise;
+    const closing = pool.close();
+    assert.equal(pool.close(), closing, 'repeated close waits for the same cleanup');
+    release.resolve();
+    await Promise.all([rejected, closing]);
+    assert.equal(clients.length, 0);
+    assert.equal(pool.entries.size, 0);
+    assert.equal(pool.entryUpdates.size, 0);
+  });
+}
 
 test('DirectLocalServerPool negotiates protocolVersion auto via detached probe sibling on both modern and strict-legacy servers without orphan processes', async t => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'local-direct-auto-'));

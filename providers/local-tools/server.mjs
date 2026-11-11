@@ -604,7 +604,7 @@ export class DetachedStdioClientTransport {
 
 function clientNegotiationOptions(protocolVersion) {
   if (protocolVersion === '2026-07-28') {
-    return { capabilities: {}, versionNegotiation: { pin: '2026-07-28' } };
+    return { capabilities: {}, versionNegotiation: { mode: { pin: '2026-07-28' } } };
   }
   if (protocolVersion === 'auto') {
     return { capabilities: {}, versionNegotiation: { mode: 'auto' } };
@@ -975,6 +975,8 @@ export class DirectLocalServerPool {
     this.logger = logger;
     this.clientFactory = clientFactory;
     this.entries = new Map();
+    this.entryUpdates = new Map();
+    this.closePromise = null;
     this.closed = false;
   }
 
@@ -1031,10 +1033,25 @@ export class DirectLocalServerPool {
 
   async _ensureEntry(server) {
     if (this.closed) throw brokerError('INNER_UNAVAILABLE', 'local backend is shut down');
+    let pending = this.entryUpdates.get(server);
+    if (!pending) {
+      pending = this._updateEntry(server);
+      this.entryUpdates.set(server, pending);
+      const clear = () => {
+        if (this.entryUpdates.get(server) === pending) this.entryUpdates.delete(server);
+      };
+      pending.then(clear, clear);
+    }
+    return pending;
+  }
+
+  async _updateEntry(server) {
     const { definition, fingerprint } = await this._readServerDefinition(server);
+    if (this.closed) throw brokerError('INNER_UNAVAILABLE', 'local backend is shut down');
     let entry = this.entries.get(server);
     if (entry && entry.fingerprint !== fingerprint && entry.supervisor.inFlight === 0) {
       await entry.supervisor.close();
+      if (this.closed) throw brokerError('INNER_UNAVAILABLE', 'local backend is shut down');
       this.entries.delete(server);
       entry = undefined;
     }
@@ -1054,6 +1071,8 @@ export class DirectLocalServerPool {
             throw brokerError('DOWNSTREAM_UNAVAILABLE', `local server exited and restartOnExit is false: ${server}`);
           }
           const latest = await this._readServerDefinition(server);
+          signal?.throwIfAborted();
+          if (this.closed) throw brokerError('INNER_UNAVAILABLE', 'local backend is shut down');
           record.definition = latest.definition;
           record.fingerprint = latest.fingerprint;
           return this.clientFactory({
@@ -1080,11 +1099,13 @@ export class DirectLocalServerPool {
 
   async listServerTools(server, cursor, options) {
     const entry = await this._ensureEntry(server);
+    if (this.closed) throw brokerError('INNER_UNAVAILABLE', 'local backend is shut down');
     return entry.supervisor.listTools(cursor, options);
   }
 
   async callServerTool(server, tool, args = {}, signal) {
     const entry = await this._ensureEntry(server);
+    if (this.closed) throw brokerError('INNER_UNAVAILABLE', 'local backend is shut down');
     return entry.supervisor.callTool(tool, args, signal);
   }
 
@@ -1118,12 +1139,16 @@ export class DirectLocalServerPool {
     throw brokerError('INNER_CALL_FAILED', 'unscoped raw callTool is not used in direct server pool mode');
   }
 
-  async close() {
-    if (this.closed) return;
+  close() {
+    if (this.closePromise) return this.closePromise;
     this.closed = true;
     const all = [...this.entries.values()];
     this.entries.clear();
-    await Promise.allSettled(all.map(entry => entry.supervisor.close()));
+    this.closePromise = Promise.allSettled([
+      ...all.map(entry => entry.supervisor.close()),
+      ...this.entryUpdates.values()
+    ]).then(() => {});
+    return this.closePromise;
   }
 }
 
