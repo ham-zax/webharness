@@ -61,7 +61,7 @@ const serverLocal = JSON.parse(fs.readFileSync(serverLocalFile, 'utf8'));
 const serverEnv = fs.readFileSync(serverEnvFile, 'utf8');
 const personalEnv = fs.readFileSync(personalEnvFile, 'utf8');
 const keys = cfg => Object.keys(cfg.mcpServers ?? {}).sort();
-if (JSON.stringify(keys(restricted)) !== JSON.stringify(['dev', 'shell'])) process.exit(1);
+if (JSON.stringify(keys(restricted)) !== JSON.stringify(['dev'])) process.exit(1);
 if (JSON.stringify(keys(trusted)) !== JSON.stringify(['dev'])) process.exit(1);
 if (JSON.stringify(keys(personal)) !== JSON.stringify(['dev', 'local'])) process.exit(1);
 if (JSON.stringify(keys(personalLocal)) !== JSON.stringify(['browser-devtools', 'browser-fast', 'dev', 'host', 'skill-library', 'terminal'])) process.exit(1);

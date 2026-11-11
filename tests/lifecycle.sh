@@ -21,7 +21,7 @@ contains() { grep -Eq "$2" "$1"; }
 
 test_scripts_are_executable() {
   local script
-  for script in setup.sh install-bridge-runtime.sh bootstrap-personal.sh bootstrap-server.sh start.sh stop.sh status.sh tunnel-up.sh tunnel-down.sh; do
+  for script in setup.sh install-bridge-runtime.sh bootstrap-personal.sh bootstrap-server.sh start.sh stop.sh status.sh; do
     [ -x "$ROOT/scripts/$script" ] || return 1
   done
   [ -x "$ROOT/bin/start" ] && [ -x "$ROOT/bin/status" ] && [ -x "$ROOT/bin/stop" ] && \
@@ -34,8 +34,7 @@ test_no_global_process_matching() {
 
 test_dependencies_are_pinned() {
   contains "$ROOT/scripts/install-bridge-runtime.sh" 'ONE_MCP_VERSION="0\.39\.8"' && \
-  contains "$ROOT/providers/pi-dev/package.json" '"@earendil-works/pi-coding-agent"[[:space:]]*:[[:space:]]*"0\.84\.1"' && \
-  contains "$ROOT/config/templates/mcp.json" 'mcp-shell-server==1\.1\.8'
+  contains "$ROOT/providers/pi-dev/package.json" '"@earendil-works/pi-coding-agent"[[:space:]]*:[[:space:]]*"0\.84\.1"'
 }
 
 test_native_1mcp_rotation_capability_is_guarded() {
@@ -100,8 +99,7 @@ test_shared_bridge_runtime_installer_is_used() {
   contains "$ROOT/scripts/bootstrap-server.sh" 'install-bridge-runtime\.sh" --headless' && \
   contains "$helper" 'npm install -g "@1mcp/agent@\$ONE_MCP_VERSION"' && \
   contains "$helper" '"--headless"' && \
-  contains "$helper" 'REQUIRED_CMDS=\(node npm npx cloudflared curl flock\)' && \
-  contains "$helper" 'REQUIRED_CMDS\+=\(uv uvx\)'
+  contains "$helper" 'REQUIRED_CMDS=\(node npm npx cloudflared curl flock\)'
 }
 
 test_cloudflare_oauth_is_canonical() {
@@ -145,9 +143,7 @@ test_watchdog_starts_only_after_public_health() {
 test_compatibility_wrappers_are_thin() {
   contains "$ROOT/scripts/start.sh" 'exec .*bin/start' && \
   contains "$ROOT/scripts/status.sh" 'exec .*bin/status' && \
-  contains "$ROOT/scripts/stop.sh" 'exec .*bin/stop' && \
-  contains "$ROOT/scripts/tunnel-up.sh" 'exec .*scripts/start\.sh' && \
-  contains "$ROOT/scripts/tunnel-down.sh" 'exec .*scripts/stop\.sh'
+  contains "$ROOT/scripts/stop.sh" 'exec .*bin/stop'
 }
 
 test_status_has_core_diagnostics() {
@@ -300,7 +296,7 @@ run_test 'direct 1MCP startup is used without serve --background' test_no_intern
 run_test '1MCP runtime avoids an unbounded console append log' test_1mcp_runtime_does_not_append_an_unbounded_console_log
 run_test '1MCP origin is reconciled before watchdog startup' test_start_orders_origin_before_watchdog
 run_test 'watchdog starts only after public health succeeds' test_watchdog_starts_only_after_public_health
-run_test 'legacy tunnel scripts are thin start/stop aliases' test_compatibility_wrappers_are_thin
+run_test 'script lifecycle wrappers are thin bin aliases' test_compatibility_wrappers_are_thin
 run_test 'restart --wait blocks until the new unit invocation is active' test_restart_wait_blocks_until_new_invocation_is_active
 run_test 'status keeps duplicate and PID/listener diagnostics' test_status_has_core_diagnostics
 run_test 'systemd user unit autostarts the canonical bridge' test_systemd_user_autostart_contract
@@ -481,20 +477,6 @@ EOF
     ' _ "$ROOT" "$state" "$runtime"
 }
 
-test_legacy_deployment_keeps_repo_state() {
-  local sandbox="$TMP/legacy-state"
-  local fake_root="$sandbox/repo"
-  mkdir -p "$fake_root/config" "$fake_root/run"
-  printf '{}\n' > "$fake_root/config/mcp.json"
-  : > "$fake_root/run/cloudflare-oauth.enabled"
-  env -u BRIDGE_RUN_DIR -u BRIDGE_CONFIG_DIR \
-    BRIDGE_ROOT="$fake_root" HOME="$sandbox/home" XDG_STATE_HOME="$sandbox/state" XDG_RUNTIME_DIR="$sandbox/runtime" \
-    bash -c '
-      source "$1/lib/bridge/common.sh"
-      [ "$BRIDGE_CONFIG_DIR" = "$2/config" ] && [ "$BRIDGE_RUN_DIR" = "$2/run" ]
-    ' _ "$ROOT" "$fake_root"
-}
-
 test_explicit_state_overrides_win() {
   local sandbox="$TMP/override-state"
   mkdir -p "$sandbox/run" "$sandbox/config"
@@ -507,7 +489,6 @@ test_explicit_state_overrides_win() {
 
 run_test 'generated deployment uses external XDG state' test_generated_deployment_uses_external_state
 run_test 'lifecycle derives the service user home when HOME is missing' test_common_derives_user_home_when_home_missing
-run_test 'legacy deployment keeps repository state paths' test_legacy_deployment_keeps_repo_state
 run_test 'explicit runtime/config overrides win' test_explicit_state_overrides_win
 
 # ---------- Shared lifecycle behavior ----------

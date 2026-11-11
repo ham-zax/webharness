@@ -2,26 +2,6 @@
   "$schema": "https://docs.1mcp.app/schemas/v1.0.0/mcp-config.json",
   "version": "1.0.0",
   "mcpServers": {
-    "shell": {
-      "command": "uvx",
-      "args": [
-        "--from",
-        "mcp-shell-server==1.1.8",
-        "python",
-        "__REPO_ROOT__/providers/legacy-shell/server.py"
-      ],
-      "env": {
-        "ALLOW_COMMANDS": "__SHELL_ALLOW_COMMANDS__",
-        "ALLOW_PATTERNS": "__SHELL_ALLOW_PATTERNS__",
-        "MCP_SHELL_ALLOW_DANGEROUS": "__SHELL_ALLOW_DANGEROUS__",
-        "MCP_SHELL_DEFAULT_TIMEOUT_SECONDS": "30",
-        "MCP_SHELL_MAX_TIMEOUT_SECONDS": "300",
-        "MCP_SHELL_OUTPUT_LIMIT_BYTES": "1048576"
-      },
-      "tags": [
-        "shell"
-      ]
-    },
     "dev": {
       "command": "node",
       "args": [

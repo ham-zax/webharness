@@ -2,11 +2,8 @@
 set -euo pipefail
 
 ONE_MCP_VERSION="0.39.8"
-SHELL_MCP_VERSION="1.1.8"
 
-HEADLESS=0
 if [ "${1:-}" = "--headless" ]; then
-  HEADLESS=1
   shift
 fi
 if [ "$#" -gt 0 ]; then
@@ -200,16 +197,10 @@ echo "  verified native log rotation (structured maxSize/maxFiles)"
 
 echo "== verifying WebHarness prerequisites =="
 REQUIRED_CMDS=(node npm npx cloudflared curl flock)
-if [ "$HEADLESS" -eq 0 ]; then
-  REQUIRED_CMDS+=(uv uvx)
-else
-  echo "  headless mode: legacy-shell uv/uvx prerequisites are not required"
-fi
 for cmd in "${REQUIRED_CMDS[@]}"; do
   command -v "$cmd" >/dev/null 2>&1 || { echo "$cmd missing" >&2; exit 1; }
 done
 
 echo "  1MCP:           @1mcp/agent@$ONE_MCP_VERSION"
-echo "  shell MCP:      mcp-shell-server==$SHELL_MCP_VERSION"
 echo "  cloudflared:    $(cloudflared --version 2>/dev/null | head -n1)"
 echo "  node:           $(node -v)"

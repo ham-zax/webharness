@@ -13,7 +13,6 @@ providers/browser-fast/ compact observe/execute facade over Agent Browser on Win
 providers/local-tools/ stable Local tool broker over inner 1MCP
 providers/skill-library/ native read-only policy/catalog/search/reader
 skill-library/       reviewed distributable packs and explicit readable-file policy
-providers/legacy-shell/ restricted-profile legacy shell
 extensions/          engineering-checkout domain packs; the public reference ships generic extension machinery but excludes these machine/domain-specific packs
 config/              tracked templates and trust profiles
 scripts/             setup, doctor, rendering, publication staging, toolbox, installers

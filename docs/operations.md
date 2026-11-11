@@ -227,7 +227,7 @@ A tmux-owned Terminal shell is suitable as an external control process because t
 
 ## OAuth continuity
 
-1MCP's `--config-dir` is also its writable OAuth/session home. When changing the state root, preserve inbound OAuth continuity with `scripts/migrate-legacy-oauth-state.sh` before replacing the live service. Do not treat Streamable HTTP transport sessions as credential state.
+1MCP's `--config-dir` (`$BRIDGE_STATE_DIR/1mcp`) is also its writable OAuth/session home. When moving a deployment, copy active inbound OAuth session records under `1mcp/sessions/sessions/server/` before replacing the live service, and do not treat Streamable HTTP transport sessions as credential state.
 
 ## 1MCP 0.39.8 compatibility
 

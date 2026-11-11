@@ -405,9 +405,6 @@ export async function renderConfig(options) {
   const replacements = {
     __WORKSPACE_ROOT__: workspaceRoot,
     __REPO_ROOT__: repoRoot,
-    __SHELL_ALLOW_COMMANDS__: profileValues.MCP_SHELL_ALLOW_COMMANDS ?? '',
-    __SHELL_ALLOW_PATTERNS__: profileValues.MCP_SHELL_ALLOW_PATTERNS ?? '',
-    __SHELL_ALLOW_DANGEROUS__: profileValues.MCP_SHELL_ALLOW_DANGEROUS ?? '',
     __SHELL_MODE__: shellMode,
     __DEV_STATE_DIR__: path.join(stateDir, 'dev'),
     __DEV_MAX_OUTPUT_BYTES__: String(devMaxOutputBytes),
@@ -480,7 +477,6 @@ export async function renderConfig(options) {
       .digest('hex');
   } else {
     rendered.mcpServers.dev.env.MCP_DEV_PATH_MODE = 'workspace';
-    if (profile === 'trusted-dev') delete rendered.mcpServers.shell;
   }
 
   const oneMcpDir = path.join(stateDir, '1mcp');

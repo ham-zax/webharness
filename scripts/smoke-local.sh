@@ -20,7 +20,7 @@ if (cfg.mcpServers?.codedb) throw new Error('CodeDB is not part of the maintaine
 if (cfg.mcpServers?.['browser-devtools'] || cfg.mcpServers?.['browser-fast']) throw new Error('Browser providers must remain behind the Local broker');
 if (profile) {
   const actual = Object.keys(cfg.mcpServers ?? {}).sort();
-  const expected = profile === 'trusted-dev' ? ['dev'] : profile === 'restricted' ? ['dev', 'shell'] : profile === 'personal' ? ['dev', 'local'] : null;
+  const expected = (profile === 'trusted-dev' || profile === 'restricted') ? ['dev'] : profile === 'personal' ? ['dev', 'local'] : null;
   if (!expected || JSON.stringify(actual) !== JSON.stringify(expected)) {
     throw new Error(`unexpected final provider set for ${profile || 'unknown'}: ${actual.join(',')}`);
   }
@@ -178,4 +178,4 @@ curl --noproxy '*' -sf -m 5 -X POST "$URL" \
   -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"smoke","version":"1.0.0"}}}'
 echo
 echo
-echo "(connectivity check only; inspect dev plus restricted-only shell for smaller profiles, or direct Dev plus the five-tool Local broker with terminal/host/browser logical servers for personal composition)"
+echo "(connectivity check only; inspect workspace-scoped Dev for restricted/trusted-dev profiles, or direct Dev plus the five-tool Local broker with terminal/host/browser logical servers for personal composition)"
