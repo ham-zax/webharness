@@ -162,6 +162,10 @@ if (personalLocal.mcpServers['browser-devtools'].requestTimeout !== 180000) proc
 if (personalLocal.mcpServers['browser-fast'].requestTimeout !== 180000) process.exit(1);
 if (personal.mcpServers.local.requestTimeout !== 240000) process.exit(1);
 if (server.mcpServers.local.requestTimeout !== 240000) process.exit(1);
+for (const cfg of [restricted, trusted, personal, personalLocal, server, serverLocal]) {
+  if (cfg.activeInstructionTemplate !== 'webharness') process.exit(1);
+  if (typeof cfg.publishedInstructionTemplates?.webharness?.initialization !== 'string') process.exit(1);
+}
 NODE2
   local rc=$?
   if [ "$rc" -eq 0 ]; then

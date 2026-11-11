@@ -86,6 +86,7 @@ test_1mcp_clean_tool_namespacing_is_guarded() {
   local helper="$ROOT/scripts/install-bridge-runtime.sh"
   contains "$helper" 'constants/mcp\.js' &&
   contains "$helper" "process\.env\.WEBHARNESS_MCP_URI_SEPARATOR \|\| '_'" &&
+  contains "$helper" 'setRuntimeInstructionConfiguration\(configManager\.getRuntimeInstructionConfiguration\(\)\)' &&
   contains "$helper" 'utils/core/errorHandling\.js' &&
   contains "$helper" 'MCP error -32000: interaction_capacity_exceeded' &&
   ! contains "$helper" 'templateTypes\.js' &&

@@ -122,11 +122,12 @@ if (stateIdx === -1 || activateIdx === -1 || stateIdx >= activateIdx) {
 NODE
 echo "  verified upstream supervised restart capability preservation (#547)"
 
-echo "== applying pinned 1MCP clean tool namespacing =="
+echo "== applying pinned 1MCP clean tool namespacing and startup instruction template seeding =="
 MCP_CONSTANTS="$(npm root -g)/@1mcp/agent/build/constants/mcp.js"
-node --input-type=module - "$MCP_CONSTANTS" <<'NODE'
+SERVER_SETUP="$(npm root -g)/@1mcp/agent/build/server.js"
+node --input-type=module - "$MCP_CONSTANTS" "$SERVER_SETUP" <<'NODE'
 import fs from 'node:fs';
-const [constantsPath] = process.argv.slice(2);
+const [constantsPath, serverSetupPath] = process.argv.slice(2);
 
 const upstreamSep = "export const MCP_URI_SEPARATOR = '_1mcp_';";
 const legacyPatchedSep = "export const MCP_URI_SEPARATOR = process.env.ONE_MCP_URI_SEPARATOR || '_';";
@@ -142,9 +143,24 @@ if (constantsSrc.includes(upstreamSep)) {
   throw new Error('pinned 1MCP constants/mcp.js source shape changed; refusing an unsafe separator patch');
 }
 
-
+const upstreamSetup = `        const setupResult = nonblockingStartup
+            ? await setupServerAsync(transports, context, backendLoadingPolicy, startupPolicy)
+            : await setupServerSync(transports, context, backendLoadingPolicy);
+        const { templateServers, errors } = configManager.loadDeclaredServerConfigs();`;
+const patchedSetup = `        const setupResult = nonblockingStartup
+            ? await setupServerAsync(transports, context, backendLoadingPolicy, startupPolicy)
+            : await setupServerSync(transports, context, backendLoadingPolicy);
+        setupResult.instructionAggregator?.setRuntimeInstructionConfiguration(configManager.getRuntimeInstructionConfiguration());
+        const { templateServers, errors } = configManager.loadDeclaredServerConfigs();`;
+let serverSrc = fs.readFileSync(serverSetupPath, 'utf8');
+if (serverSrc.includes(upstreamSetup)) {
+  serverSrc = serverSrc.replace(upstreamSetup, patchedSetup);
+  fs.writeFileSync(serverSetupPath, serverSrc);
+} else if (!serverSrc.includes(patchedSetup)) {
+  throw new Error('pinned 1MCP build/server.js source shape changed; refusing an unsafe instruction-config seed patch');
+}
 NODE
-echo "  patched clean {server}_{tool} namespacing"
+echo "  patched clean {server}_{tool} namespacing and modern startup instruction seeding"
 
 echo "== verifying pinned 1MCP native log rotation =="
 LOGGING_CONFIG="$(npm root -g)/@1mcp/agent/build/logger/loggingConfig.js"

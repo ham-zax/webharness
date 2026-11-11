@@ -45,6 +45,10 @@ const fs = require('fs');
 const path = require('path');
 const [configFile, repoRoot, profile] = process.argv.slice(2);
 const cfg = JSON.parse(fs.readFileSync(configFile, 'utf8'));
+const expectedTemplate = fs.readFileSync(path.join(repoRoot, 'config', 'templates', 'instructions-template.md'), 'utf8');
+if (cfg.activeInstructionTemplate !== 'webharness' || cfg.publishedInstructionTemplates?.webharness?.initialization !== expectedTemplate) {
+  throw new Error('1MCP mcp.json is missing the active webharness instruction template (re-render the deployment)');
+}
 const dev = cfg.mcpServers?.dev;
 const code = cfg.mcpServers?.code;
 const terminal = cfg.mcpServers?.terminal;
@@ -77,6 +81,10 @@ if (local) {
     const oneMcpConstants = fs.readFileSync(path.join(oneMcpRoot, 'build', 'constants', 'mcp.js'), 'utf8');
     if (!oneMcpConstants.includes("process.env.WEBHARNESS_MCP_URI_SEPARATOR || '_'")) {
       throw new Error('installed 1MCP is missing the WebHarness clean tool namespacing patch');
+    }
+    const oneMcpServerSetup = fs.readFileSync(path.join(oneMcpRoot, 'build', 'server.js'), 'utf8');
+    if (!oneMcpServerSetup.includes('setupResult.instructionAggregator?.setRuntimeInstructionConfiguration(configManager.getRuntimeInstructionConfiguration());')) {
+      throw new Error('installed 1MCP is missing the modern startup instruction-template seed patch');
     }
   }
   if (JSON.stringify(local.tags ?? []) !== JSON.stringify(['local'])) throw new Error('Local broker must use only the local tag');

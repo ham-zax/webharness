@@ -475,11 +475,25 @@ export async function renderConfig(options) {
       }
       localRendered.mcpServers[name] = server;
     }
+  } else {
+    rendered.mcpServers.dev.env.MCP_DEV_PATH_MODE = 'workspace';
+  }
+
+  const instructionsTemplate = await fs.readFile(path.join(repoRoot, 'config', 'templates', 'instructions-template.md'), 'utf8');
+  // 1MCP 0.39.8 modern 2026-07-28 HTTP routes read activeInstructionTemplate
+  // from mcp.json rather than the legacy instructions-template.md customTemplate.
+  const managedTemplateVariant = { initialization: instructionsTemplate, cli: instructionsTemplate };
+  const managedInstructionConfig = {
+    instructionTemplates: { webharness: managedTemplateVariant },
+    publishedInstructionTemplates: { webharness: managedTemplateVariant },
+    activeInstructionTemplate: 'webharness',
+  };
+  Object.assign(rendered, managedInstructionConfig);
+  if (localRendered) {
+    Object.assign(localRendered, managedInstructionConfig);
     rendered.mcpServers.local.env.MCP_LOCAL_INNER_CONFIG_REVISION = createHash('sha256')
       .update(JSON.stringify(localRendered))
       .digest('hex');
-  } else {
-    rendered.mcpServers.dev.env.MCP_DEV_PATH_MODE = 'workspace';
   }
 
   const oneMcpDir = path.join(stateDir, '1mcp');
@@ -490,7 +504,6 @@ export async function renderConfig(options) {
   const localInnerAppConfigPath = isLocal ? path.join(localOneMcpDir, 'config.toml') : '';
   const configPath = path.join(oneMcpDir, 'mcp.json');
   const appConfigPath = path.join(oneMcpDir, 'config.toml');
-  const instructionsTemplate = await fs.readFile(path.join(repoRoot, 'config', 'templates', 'instructions-template.md'), 'utf8');
   const bridgeEnvPath = path.join(stateDir, 'bridge.env');
   const appConfig = [
     `port = ${coldStart === '1' ? backendPort : oneMcpPort}`,

@@ -17,10 +17,10 @@ const runtime = join(dir, 'runtime');
 const auth = join(dir, 'auth');
 for (const path of [home, runtime, auth]) mkdirSync(path, { recursive: true });
 const token = 'fixture-secret-token';
+const refreshToken = 'fixture-refresh-token-v1';
 const contents = 'private fixture contents';
 const file = join(dir, 'fixture.txt');
 writeFileSync(file, contents);
-writeFileSync(join(auth, 'oauth.json'), JSON.stringify({ version: 1, tokens: { access_token: token, token_type: 'Bearer' } }));
 writeFileSync(join(dir, 'deployment.env'), 'MCP_PUBLIC_URL=https://mcp.example.test\nMCP_TUNNEL_NAME=\n');
 const cleanEnv = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^(MCP|BRIDGE)_/.test(key)));
 const env = { ...cleanEnv, HOME: home, XDG_RUNTIME_DIR: runtime, BRIDGE_STATE_DIR: state };
@@ -28,6 +28,9 @@ const rendered = spawnSync(process.execPath, [join(root, 'scripts/render-config.
 assert.equal(rendered.status, 0, rendered.stderr);
 let behavior = 'ok';
 let calls = 0;
+let refreshAttempts = 0;
+let activeRefreshToken = refreshToken;
+let origin = '';
 const server = createServer(async (req, res) => {
   if (req.url === '/health/ready') {
     res.writeHead(behavior === 'not-ready' ? 503 : 200, { 'content-type': 'application/json' });
@@ -39,10 +42,40 @@ const server = createServer(async (req, res) => {
     res.end(JSON.stringify(payload));
     return;
   }
+  if (req.url === '/.well-known/oauth-protected-resource') {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ resource: `${origin}/mcp`, authorization_servers: [origin] }));
+    return;
+  }
+  if (req.url === '/.well-known/oauth-authorization-server') {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({
+      issuer: origin,
+      authorization_endpoint: `${origin}/authorize`,
+      token_endpoint: `${origin}/token`,
+      response_types_supported: ['code'],
+      grant_types_supported: ['authorization_code', 'refresh_token'],
+    }));
+    return;
+  }
+  if (req.url === '/token' && req.method === 'POST') {
+    refreshAttempts += 1;
+    activeRefreshToken = 'rotated-refresh-token-v2';
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({
+      access_token: token,
+      refresh_token: activeRefreshToken,
+      token_type: 'Bearer',
+      expires_in: 3600,
+    }));
+    return;
+  }
   if (req.url !== '/mcp') { res.writeHead(404).end(); return; }
   if (req.headers.authorization !== `Bearer ${token}` || behavior === 'reject') {
     const status = behavior === 'unexpected-success' ? 200 : 401;
-    const headers = behavior === 'no-challenge' ? {} : { 'www-authenticate': 'Bearer realm="fixture"' };
+    const headers = behavior === 'no-challenge'
+      ? {}
+      : { 'www-authenticate': `Bearer realm="fixture", resource_metadata="${origin}/.well-known/oauth-protected-resource"` };
     res.writeHead(status, headers).end();
     return;
   }
@@ -63,7 +96,23 @@ const server = createServer(async (req, res) => {
   res.end(JSON.stringify(result ? { jsonrpc: '2.0', id: message.id, result } : { jsonrpc: '2.0', id: message.id, error: { code: -32601, message: 'Method not found' } }));
 });
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-const url = `http://127.0.0.1:${server.address().port}/mcp`;
+origin = `http://127.0.0.1:${server.address().port}`;
+const url = `${origin}/mcp`;
+const initialOAuthRaw = `${JSON.stringify({
+  version: 1,
+  clientInformation: { client_id: 'smoke-client' },
+  tokens: { access_token: token, refresh_token: refreshToken, token_type: 'Bearer' },
+  discoveryState: {
+    authorizationServerUrl: origin,
+    authorizationServerMetadata: {
+      issuer: origin,
+      authorization_endpoint: `${origin}/authorize`,
+      token_endpoint: `${origin}/token`,
+      response_types_supported: ['code'],
+    },
+  },
+})}\n`;
+writeFileSync(join(auth, 'oauth.json'), initialOAuthRaw);
 function run(args) {
   return new Promise((resolve, reject) => {
     const child = spawn('bash', [join(root, 'scripts/smoke-local.sh'), ...args], { env });
@@ -78,7 +127,7 @@ try {
   async function check(label, args, expected) {
     const result = await run(args);
     assert.equal(result.code, expected, `${label}: ${result.output}`);
-    assert.ok(!result.output.includes(token) && !result.output.includes(contents), `${label}: secret leaked`);
+    assert.ok(!result.output.includes(token) && !result.output.includes(refreshToken) && !result.output.includes(contents), `${label}: secret leaked`);
     console.log(`ok - ${label}`);
   }
   await check('personal configuration and positional URL', [url], 0);
@@ -92,13 +141,15 @@ try {
     if (existsSync(join(root, 'providers/websession-adapter/mcp-client.mjs')) && existsSync(join(root, 'providers/websession-adapter/node_modules/@modelcontextprotocol/client'))) {
       await check('authenticated read', [url, '--auth-state-dir', auth, '--read-path', file], 0);
       assert.equal(calls, 1);
-      behavior = 'reject'; await check('rejected credentials', [url, '--auth-state-dir', auth, '--read-path', file], 1);
+      behavior = 'reject'; await check('rejected credentials do not trigger OAuth refresh rotation', [url, '--auth-state-dir', auth, '--read-path', file], 1);
+      assert.equal(refreshAttempts, 0, 'smoke probe must never call /token or rotate refresh credentials');
+      assert.equal(activeRefreshToken, refreshToken);
       behavior = 'tool-error'; await check('tool isError', [url, '--auth-state-dir', auth, '--read-path', file], 1);
       assert.equal(calls, 2);
     } else {
       await check('adapter prerequisite', [url, '--auth-state-dir', auth, '--read-path', file], 2);
     }
-    assert.equal(JSON.parse(readFileSync(join(auth, 'oauth.json'), 'utf8')).tokens.access_token, token);
+    assert.equal(readFileSync(join(auth, 'oauth.json'), 'utf8'), initialOAuthRaw);
   }
 } finally {
   server.closeAllConnections();

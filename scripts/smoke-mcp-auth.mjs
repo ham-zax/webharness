@@ -1,6 +1,7 @@
-import { copyFileSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 const [mode, address, stateDir, readPath] = process.argv.slice(2);
 let url;
@@ -37,22 +38,36 @@ if (mode === '--public') {
     process.exitCode = 1;
   }
 } else if (mode === '--auth') {
-  let temporary;
-  let connection;
+  let client;
+  let transport;
   try {
     const state = JSON.parse(readFileSync(join(stateDir, 'oauth.json'), 'utf8'));
-    if (!state?.tokens?.access_token) {
+    const accessToken = typeof state?.tokens?.access_token === 'string' ? state.tokens.access_token.trim() : '';
+    if (!accessToken) {
       console.error('Authenticated mode requires existing OAuth authorization.');
       process.exitCode = 2;
     } else {
       new TextDecoder('utf-8', { fatal: true }).decode(readFileSync(readPath));
-      temporary = mkdtempSync(join(tmpdir(), 'webharness-smoke-'));
-      copyFileSync(join(stateDir, 'oauth.json'), join(temporary, 'oauth.json'));
-      const { connectMcp } = await import('../providers/websession-adapter/mcp-client.mjs');
-      connection = await connectMcp({ mcpUrl: url.href, stateDir: temporary, callbackUrl: 'http://127.0.0.1:9/callback', signal: AbortSignal.timeout(SMOKE_TIMEOUT_MS) });
-      const listed = await connection.client.listTools(undefined, { timeout: SMOKE_TIMEOUT_MS });
+      const adapterRequire = createRequire(new URL('../providers/websession-adapter/package.json', import.meta.url));
+      const { Client, StreamableHTTPClientTransport } = await import(pathToFileURL(adapterRequire.resolve('@modelcontextprotocol/client')).href);
+      // Never supply an authProvider or refresh_token here: rotating a refresh
+      // grant inside a non-persisted probe would invalidate the live oauth.json.
+      transport = new StreamableHTTPClientTransport(new URL(url.href), {
+        requestInit: {
+          headers: {
+            authorization: `Bearer ${accessToken}`,
+            'user-agent': 'websession-smoke/1',
+          },
+        },
+      });
+      client = new Client(
+        { name: 'websession-smoke', version: '0.1.0' },
+        { capabilities: {}, versionNegotiation: { mode: 'auto' } },
+      );
+      await client.connect(transport, { signal: AbortSignal.timeout(SMOKE_TIMEOUT_MS) });
+      const listed = await client.listTools(undefined, { timeout: SMOKE_TIMEOUT_MS });
       if (!listed.tools.some(tool => tool.name === 'dev_read')) throw new Error();
-      const result = await connection.client.callTool({ name: 'dev_read', arguments: { path: readPath, offset: 1, limit: 1 } }, { timeout: SMOKE_TIMEOUT_MS });
+      const result = await client.callTool({ name: 'dev_read', arguments: { path: readPath, offset: 1, limit: 1 } }, { timeout: SMOKE_TIMEOUT_MS });
       if (result.isError === true || !result.content?.some(part => part.type === 'text' && typeof part.text === 'string' && part.text.trim())) throw new Error();
       console.log('Authenticated dev_read succeeded.');
     }
@@ -60,8 +75,8 @@ if (mode === '--public') {
     console.error('Authenticated MCP read failed.');
     process.exitCode = 1;
   } finally {
-    await connection?.close();
-    if (temporary) rmSync(temporary, { recursive: true, force: true });
+    await client?.close().catch(() => {});
+    await transport?.close().catch(() => {});
   }
 } else {
   console.error('Invalid smoke mode.');
