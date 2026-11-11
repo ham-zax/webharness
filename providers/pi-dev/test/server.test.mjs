@@ -49,7 +49,11 @@ async function userFixture(maxBytes = '1048576') {
 
 async function withClientAt(serverPath, env, fn) {
   const cleanParentEnv = { ...process.env };
-  delete cleanParentEnv.MCP_DEV_READ_DEFAULT_LINES;
+  for (const key of Object.keys(cleanParentEnv)) {
+    if (key.startsWith('MCP_') || key.startsWith('BRIDGE_')) {
+      delete cleanParentEnv[key];
+    }
+  }
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [serverPath],
