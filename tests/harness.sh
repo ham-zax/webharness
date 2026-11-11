@@ -167,6 +167,10 @@ NODE2
   if [ "$rc" -eq 0 ]; then
     for profile in restricted trusted-dev personal server; do
       log_cfg="$tmp/$profile/1mcp/config.toml"
+      cmp "$ROOT/config/templates/instructions-template.md" "$tmp/$profile/1mcp/instructions-template.md" || rc=1
+      HOME="$tmp/home" XDG_RUNTIME_DIR="$tmp/runtime" node "$ROOT/scripts/render-config.mjs" \
+        --profile "$profile" --env-file "$tmp/deployment.env" --state-dir "$tmp/$profile" --repo-root "$ROOT" >/dev/null || rc=1
+      cmp "$ROOT/config/templates/instructions-template.md" "$tmp/$profile/1mcp/instructions-template.md" || rc=1
       grep -Fq '[auth]' "$log_cfg" || rc=1
       grep -Fq 'sessionTtl = 43200' "$log_cfg" || rc=1
       grep -Fq '[logging]' "$log_cfg" || rc=1
@@ -176,11 +180,15 @@ NODE2
     done
     for profile in personal server; do
       inner_cfg="$tmp/$profile/local-1mcp/config.toml"
+      cmp "$ROOT/config/templates/instructions-template.md" "$tmp/$profile/local-1mcp/instructions-template.md" || rc=1
       grep -Fq '[logging]' "$inner_cfg" || rc=1
       grep -Fq "file = \"$tmp/$profile/logs/local-inner.log\"" "$inner_cfg" || rc=1
       grep -Fq 'maxSize = 1048576' "$inner_cfg" || rc=1
       grep -Fq 'maxFiles = 3' "$inner_cfg" || rc=1
     done
+    HOME="$tmp/home" XDG_RUNTIME_DIR="$tmp/runtime" node "$ROOT/scripts/render-config.mjs" \
+      --check --profile restricted --env-file "$tmp/deployment.env" --state-dir "$tmp/check-only" --repo-root "$ROOT" >/dev/null || rc=1
+    [ ! -e "$tmp/check-only" ] || rc=1
   fi
   rm -rf "$tmp"
   return "$rc"
@@ -195,7 +203,7 @@ test_owner_local_stdio_supervision_defaults() {
 exit 0
 SH
   chmod +x "$tmp/server" || { rm -rf "$tmp"; return 1; }
-  printf '{"version":"1.0.0","mcpServers":{"supervised":{"command":"%s"},"unsupervised":{"command":"%s","restartOnExit":false}}}\n' \
+  printf '{"version":"1.0.0","mcpServers":{"supervised":{"command":"%s","protocolVersion":"legacy"},"unsupervised":{"command":"%s","protocolVersion":"2026-07-28","restartOnExit":false}}}\n' \
     "$tmp/server" "$tmp/server" > "$tmp/local.json"
   cat > "$tmp/deployment.env" <<EOF
 MCP_WORKSPACE_ROOT=$tmp/workspace
@@ -214,11 +222,23 @@ const cfg = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 const supervised = cfg.mcpServers?.supervised;
 const unsupervised = cfg.mcpServers?.unsupervised;
 if (supervised?.type !== 'stdio') process.exit(1);
+if (supervised?.protocolVersion !== 'legacy') process.exit(1);
 if (supervised?.restartOnExit !== true) process.exit(1);
 if (unsupervised?.type !== 'stdio') process.exit(1);
+if (unsupervised?.protocolVersion !== '2026-07-28') process.exit(1);
 if (unsupervised?.restartOnExit !== false) process.exit(1);
 NODE
   local rc=$?
+  if [ "$rc" -eq 0 ]; then
+    printf '{"version":"1.0.0","mcpServers":{"bad":{"command":"%s","protocolVersion":"2024-11-05"}}}\n' "$tmp/server" > "$tmp/local.json"
+    if HOME="$tmp/home" XDG_RUNTIME_DIR="$tmp/runtime" node "$ROOT/scripts/render-config.mjs" \
+      --profile personal \
+      --env-file "$tmp/deployment.env" \
+      --state-dir "$tmp/state" \
+      --repo-root "$ROOT" >/dev/null 2>&1; then
+      rc=1
+    fi
+  fi
   rm -rf "$tmp"
   return "$rc"
 }

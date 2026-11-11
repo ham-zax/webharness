@@ -226,26 +226,28 @@ export async function callMcpTool(options, name, args, hooks = {}) {
       await refreshConnection(entry, options).catch(() => {});
       continue;
     }
+    options.signal?.throwIfAborted();
     if (!toolNames.has(name)) {
       if (refreshed) throw new Error(`MCP tool is unavailable: ${name}`);
       refreshed = true;
       await refreshConnection(entry, options).catch(() => {});
       continue;
     }
-    options.signal?.throwIfAborted();
-    if (hooks.onBeforeDispatch) await hooks.onBeforeDispatch();
     // Dispatch intent is persisted, so exactly one callTool attempt follows.
     // No error text or error code ever replays it: a duplicate mutation is
     // worse than an unknown outcome. Modern 2026-07-28 HTTP has no legacy
     // single-flight admission lease to wait on either.
     connection.inFlight = (connection.inFlight ?? 0) + 1;
+    let invoked = false;
     try {
+      if (hooks.onBeforeDispatch) await hooks.onBeforeDispatch();
+      invoked = true;
       return await connection.client.callTool(
         { name, arguments: args },
         { timeout: options.timeoutMs ?? 120_000, ...(options.signal ? { signal: options.signal } : {}) },
       );
     } catch (error) {
-      if (shouldEvictAfterError(error, options.signal, connection)) {
+      if (invoked && shouldEvictAfterError(error, options.signal, connection)) {
         if (entry.connection === connection) {
           entry.connection = undefined;
           entry.connecting = undefined;

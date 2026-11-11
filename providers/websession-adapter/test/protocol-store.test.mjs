@@ -709,6 +709,38 @@ test('exact interaction_capacity_exceeded error after dispatch is never replayed
   }
 });
 
+test('a dropped connection after a mutation records unknown outcome without replay', async t => {
+  const stateDir = mkdtempSync(join(tmpdir(), 'websession-drop-write-'));
+  let mutations = 0;
+  const server = createServer(async (req, res) => {
+    if (req.method !== 'POST') { res.writeHead(200).end(); return; }
+    let body = '';
+    for await (const chunk of req) body += chunk;
+    const message = JSON.parse(body);
+    if (message.id === undefined) { res.writeHead(202).end(); return; }
+    let result;
+    if (message.method === 'initialize') result = { protocolVersion: message.params.protocolVersion, capabilities: { tools: {} }, serverInfo: { name: 'fixture', version: '1' } };
+    else if (message.method === 'tools/list') result = { tools: CONCURRENCY_TOOLS };
+    else if (message.method === 'tools/call') { mutations += 1; req.socket.destroy(); return; }
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify(result ? { jsonrpc: '2.0', id: message.id, result } : { jsonrpc: '2.0', id: message.id, error: { code: -32601, message: 'Method not found' } }));
+  });
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  t.after(() => { server.closeAllConnections(); server.close(); });
+  const core = new OperationCore({ stateDir, mcpUrl: `http://127.0.0.1:${server.address().port}/mcp`, callbackUrl: 'http://127.0.0.1:9/callback', toolTimeoutMs: 5000 });
+  try {
+    const issued = core.store.issueMainCapability(120);
+    const submitted = core.submit(issued.token, 'dropped-write', parseRequest({ version: 1, tool: 'fixture_write', arguments: {} }), 'json-post-v1');
+    const operation = await core.waitForOperation(submitted.operation.id, 10000);
+    assert.equal(mutations, 1);
+    assert.equal(operation.state, 'unknown_outcome');
+  } finally {
+    await core.close();
+    rmSync(stateDir, { recursive: true, force: true });
+  }
+});
+
 test('newer turn fence prevents queued older-turn write from dispatching', async t => {
   const stateDir = mkdtempSync(join(tmpdir(), 'websession-fence-dispatch-'));
   const firstWriteEntered = deferred();
@@ -861,6 +893,8 @@ test('six-session modern 2026-07-28 gateway concurrency, barrier overlap, failur
   const sessionOneGate = deferred();
   const cancelEntered = deferred();
   const cancelGate = deferred();
+  const otherEntered = deferred();
+  const otherGate = deferred();
   const invocations = new Map();
   // All six sessions use the read-only fixture tool: OperationCore serializes
   // mutations on one tail, which would prevent the barrier overlap this test
@@ -878,7 +912,14 @@ test('six-session modern 2026-07-28 gateway concurrency, barrier overlap, failur
       cancelEntered.resolve();
       await cancelGate.promise;
     }
-    if (session === 5) throw new Error('backend tool failed for session 5');
+    if (session === 8) {
+      otherEntered.resolve();
+      await otherGate.promise;
+    }
+    if (session === 5) {
+      await sessionOneEntered.promise;
+      throw new Error('backend tool failed for session 5');
+    }
     if (session === 6) {
       // Outlives toolTimeoutMs, so the adapter must time out without replaying.
       await new Promise(resolve => { setTimeout(resolve, 5000).unref(); });
@@ -912,7 +953,8 @@ test('six-session modern 2026-07-28 gateway concurrency, barrier overlap, failur
       try {
         await withinMs(sessionOneEntered.promise, 15000, 'session 1 never reached the backend');
         const second = await core.waitForOperation(submitted[1].operation.id, 15000);
-        overlapped = second.state === 'completed';
+        const failure = await core.waitForOperation(submitted[4].operation.id, 15000);
+        overlapped = second.state === 'completed' && failure.state === 'unknown_outcome';
       } finally {
         sessionOneGate.resolve();
       }
@@ -946,10 +988,13 @@ test('six-session modern 2026-07-28 gateway concurrency, barrier overlap, failur
     assert.equal(counts.discover, discoversBeforeFollowUp, 'the follow-up call reused the pooled execution connection');
     const controller = new AbortController();
     const cancelled = callMcpTool({ mcpUrl: core.mcpUrl, stateDir, callbackUrl: core.callbackUrl, signal: controller.signal }, 'fixture_read', { session: 7 });
-    await withinMs(cancelEntered.promise, 15000, 'cancelled call never reached the backend');
+    const concurrent = callMcpTool({ mcpUrl: core.mcpUrl, stateDir, callbackUrl: core.callbackUrl }, 'fixture_read', { session: 8 });
+    await withinMs(Promise.all([cancelEntered.promise, otherEntered.promise]), 15000, 'concurrent calls never reached the backend');
     controller.abort();
     await assert.rejects(cancelled);
     cancelGate.resolve();
+    otherGate.resolve();
+    await concurrent;
     const afterCancel = core.submit(capabilities[0].token, 'after-cancel', parseRequest({ version: 1, tool: 'fixture_read', arguments: { session: 1 } }), 'json-post-v1');
     await core.waitForOperation(afterCancel.operation.id, 15000);
     assert.equal(core.store.getOperation(afterCancel.operation.id).state, 'completed');
@@ -958,6 +1003,7 @@ test('six-session modern 2026-07-28 gateway concurrency, barrier overlap, failur
   } finally {
     sessionOneGate.resolve();
     cancelGate.resolve();
+    otherGate.resolve();
     await core.close();
     rmSync(stateDir, { recursive: true, force: true });
   }

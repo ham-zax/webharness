@@ -4,7 +4,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 node --input-type=module - "$ROOT" "${1:-}" <<'NODE'
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -31,7 +31,12 @@ let calls = 0;
 const server = createServer(async (req, res) => {
   if (req.url === '/health/ready') {
     res.writeHead(behavior === 'not-ready' ? 503 : 200, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({ status: behavior === 'not-ready' ? 'not_ready' : 'ready' }));
+    const payload = behavior === 'not-ready'
+      ? { status: 'not_ready' }
+      : behavior === 'wake-proxy'
+        ? { status: 'available', backend: 'asleep' }
+        : { status: 'ready' };
+    res.end(JSON.stringify(payload));
     return;
   }
   if (req.url !== '/mcp') { res.writeHead(404).end(); return; }
@@ -78,16 +83,21 @@ try {
   }
   await check('personal configuration and positional URL', [url], 0);
   if (mode !== '--personal-only') {
+    behavior = 'wake-proxy'; await check('cold-start wake proxy readiness', [url], 0);
     behavior = 'not-ready'; await check('readiness failure', [url], 1);
     behavior = 'no-challenge'; await check('missing challenge', [url], 1);
     behavior = 'unexpected-success'; await check('unexpected unauthenticated success', [url], 1);
     behavior = 'ok'; await check('missing paired argument', [url, '--auth-state-dir', auth], 2);
     await check('missing prerequisite', [url, '--auth-state-dir', join(dir, 'missing'), '--read-path', file], 2);
-    await check('authenticated read', [url, '--auth-state-dir', auth, '--read-path', file], 0);
-    assert.equal(calls, 1);
-    behavior = 'reject'; await check('rejected credentials', [url, '--auth-state-dir', auth, '--read-path', file], 1);
-    behavior = 'tool-error'; await check('tool isError', [url, '--auth-state-dir', auth, '--read-path', file], 1);
-    assert.equal(calls, 2);
+    if (existsSync(join(root, 'providers/websession-adapter/mcp-client.mjs')) && existsSync(join(root, 'providers/websession-adapter/node_modules/@modelcontextprotocol/client'))) {
+      await check('authenticated read', [url, '--auth-state-dir', auth, '--read-path', file], 0);
+      assert.equal(calls, 1);
+      behavior = 'reject'; await check('rejected credentials', [url, '--auth-state-dir', auth, '--read-path', file], 1);
+      behavior = 'tool-error'; await check('tool isError', [url, '--auth-state-dir', auth, '--read-path', file], 1);
+      assert.equal(calls, 2);
+    } else {
+      await check('adapter prerequisite', [url, '--auth-state-dir', auth, '--read-path', file], 2);
+    }
     assert.equal(JSON.parse(readFileSync(join(auth, 'oauth.json'), 'utf8')).tokens.access_token, token);
   }
 } finally {

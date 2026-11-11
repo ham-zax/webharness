@@ -136,12 +136,15 @@ async function parseLocalServersConfig(text) {
     if (!server || typeof server !== 'object' || Array.isArray(server)) {
       throw new Error(`Local downstream server ${name} must be an object`);
     }
-    const allowed = new Set(['type', 'command', 'args', 'cwd', 'env', 'restartOnExit']);
+    const allowed = new Set(['type', 'protocolVersion', 'command', 'args', 'cwd', 'env', 'restartOnExit']);
     for (const key of Object.keys(server)) {
       if (!allowed.has(key)) throw new Error(`Local downstream server ${name} has unsupported field: ${key}`);
     }
     if (server.type !== undefined && server.type !== 'stdio') {
       throw new Error(`Local downstream server ${name} type must be stdio when set`);
+    }
+    if (server.protocolVersion !== undefined && !['auto', 'legacy', '2026-07-28'].includes(server.protocolVersion)) {
+      throw new Error(`Local downstream server ${name} protocolVersion must be one of: auto, legacy, 2026-07-28`);
     }
     if (typeof server.command !== 'string' || !path.isAbsolute(server.command)) {
       throw new Error(`Local downstream server ${name} command must be an absolute path`);
@@ -487,6 +490,7 @@ export async function renderConfig(options) {
   const localInnerAppConfigPath = isLocal ? path.join(localOneMcpDir, 'config.toml') : '';
   const configPath = path.join(oneMcpDir, 'mcp.json');
   const appConfigPath = path.join(oneMcpDir, 'config.toml');
+  const instructionsTemplate = await fs.readFile(path.join(repoRoot, 'config', 'templates', 'instructions-template.md'), 'utf8');
   const bridgeEnvPath = path.join(stateDir, 'bridge.env');
   const appConfig = [
     `port = ${coldStart === '1' ? backendPort : oneMcpPort}`,
@@ -543,8 +547,10 @@ export async function renderConfig(options) {
     if (isPersonal) await atomicWrite(path.join(stateDir, 'owner.env'), renderOwnerRuntimeEnv(ownerEnv));
     if (localRendered) await atomicWrite(localInnerConfigPath, `${JSON.stringify(localRendered, null, 2)}\n`);
     if (localInnerAppConfigPath) await atomicWrite(localInnerAppConfigPath, localInnerAppConfig);
+    if (localOneMcpDir) await atomicWrite(path.join(localOneMcpDir, 'instructions-template.md'), instructionsTemplate);
     await atomicWrite(configPath, `${JSON.stringify(rendered, null, 2)}\n`);
     await atomicWrite(appConfigPath, appConfig);
+    await atomicWrite(path.join(oneMcpDir, 'instructions-template.md'), instructionsTemplate);
     await atomicWrite(bridgeEnvPath, bridgeEnv);
   }
 

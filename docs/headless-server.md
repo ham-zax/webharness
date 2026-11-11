@@ -114,7 +114,7 @@ WantedBy=default.target
 `MCP_LOCAL_SERVERS_FILE` points at a JSON file with absolute paths:
 
 ```json
-{"version":"1.0.0","mcpServers":{"browser-fast":{"type":"stdio","command":"/usr/local/bin/node","args":["/abs/path/webharness/providers/browser-fast/server.mjs"],"env":{"XDG_RUNTIME_DIR":"/run/user/UID"}}}}
+{"version":"1.0.0","mcpServers":{"browser-fast":{"type":"stdio","protocolVersion":"2026-07-28","command":"/usr/local/bin/node","args":["/abs/path/webharness/providers/browser-fast/server.mjs"],"env":{"XDG_RUNTIME_DIR":"/run/user/UID"}}}}
 ```
 
 To also add `browser-devtools`, register `providers/browser/server.mjs` the same way (`command` an absolute `node`, `env` with `XDG_RUNTIME_DIR`, `DISPLAY=:99` and a `PATH` that includes `npx`). With the version 1 config above it attaches to `http://127.0.0.1:9222` instead of launching a browser, so it sees the same tabs as `browser-fast`.

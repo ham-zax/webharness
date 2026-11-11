@@ -12,18 +12,19 @@ try {
   process.exit(2);
 }
 
+const SMOKE_TIMEOUT_MS = 30_000;
 const originalFetch = globalThis.fetch;
 globalThis.fetch = (input, init = {}) => originalFetch(input, {
   ...init,
   redirect: 'error',
-  signal: init.signal ? AbortSignal.any([init.signal, AbortSignal.timeout(5000)]) : AbortSignal.timeout(5000),
+  signal: init.signal ? AbortSignal.any([init.signal, AbortSignal.timeout(SMOKE_TIMEOUT_MS)]) : AbortSignal.timeout(SMOKE_TIMEOUT_MS),
 });
 
 if (mode === '--public') {
   try {
     const ready = await fetch(new URL('/health/ready', url));
     const body = await ready.json();
-    if (ready.status !== 200 || body?.status !== 'ready') throw new Error();
+    if (ready.status !== 200 || (body?.status !== 'ready' && body?.status !== 'available')) throw new Error();
     const response = await fetch(url, {
       method: 'POST',
       headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
@@ -48,10 +49,10 @@ if (mode === '--public') {
       temporary = mkdtempSync(join(tmpdir(), 'webharness-smoke-'));
       copyFileSync(join(stateDir, 'oauth.json'), join(temporary, 'oauth.json'));
       const { connectMcp } = await import('../providers/websession-adapter/mcp-client.mjs');
-      connection = await connectMcp({ mcpUrl: url.href, stateDir: temporary, callbackUrl: 'http://127.0.0.1:9/callback', signal: AbortSignal.timeout(5000) });
-      const listed = await connection.client.listTools(undefined, { timeout: 5000 });
+      connection = await connectMcp({ mcpUrl: url.href, stateDir: temporary, callbackUrl: 'http://127.0.0.1:9/callback', signal: AbortSignal.timeout(SMOKE_TIMEOUT_MS) });
+      const listed = await connection.client.listTools(undefined, { timeout: SMOKE_TIMEOUT_MS });
       if (!listed.tools.some(tool => tool.name === 'dev_read')) throw new Error();
-      const result = await connection.client.callTool({ name: 'dev_read', arguments: { path: readPath, offset: 1, limit: 1 } }, { timeout: 5000 });
+      const result = await connection.client.callTool({ name: 'dev_read', arguments: { path: readPath, offset: 1, limit: 1 } }, { timeout: SMOKE_TIMEOUT_MS });
       if (result.isError === true || !result.content?.some(part => part.type === 'text' && typeof part.text === 'string' && part.text.trim())) throw new Error();
       console.log('Authenticated dev_read succeeded.');
     }
