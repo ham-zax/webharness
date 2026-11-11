@@ -2,6 +2,7 @@
 import { McpServer } from '@modelcontextprotocol/server';
 import { serveStdio } from '@modelcontextprotocol/server/stdio';
 import { z } from 'zod';
+import { createStdioErrorReporter } from './stdio-diagnostics.mjs';
 
 import { runWindowsSleep } from './windows-power.mjs';
 
@@ -29,7 +30,8 @@ function createHostServer() {
     },
   }, async (args, ctx) => {
     try {
-      const text = await runWindowsSleep({ wakeAt: args.wake_at, signal: ctx.mcpReq.signal });
+      const signal = AbortSignal.any([ctx.mcpReq.signal, shutdownController.signal]);
+      const text = await runWindowsSleep({ wakeAt: args.wake_at, signal });
       return { content: [{ type: 'text', text }] };
     } catch (error) {
       return errorResult(error);
@@ -38,4 +40,19 @@ function createHostServer() {
   return server;
 }
 
-serveStdio(createHostServer);
+const shutdownController = new AbortController();
+const handle = serveStdio(createHostServer, {
+  onerror: createStdioErrorReporter('host'),
+});
+let closing = null;
+const shutdown = () => {
+  if (closing) return closing;
+  closing = (async () => {
+    shutdownController.abort();
+    await handle.close();
+  })();
+  return closing;
+};
+process.stdin.once('end', () => { void shutdown(); });
+process.once('SIGTERM', () => { void shutdown().finally(() => process.exit(0)); });
+process.once('SIGINT', () => { void shutdown().finally(() => process.exit(0)); });

@@ -72,9 +72,13 @@ export class ManagedCloakBrowserRuntime {
     this.launch = launch;
     this.runtimes = new Map();
     this.launches = new Map();
+    this.closed = false;
   }
 
   async ensure(backend) {
+    if (this.closed) {
+      throw runtimeError('CLOAKBROWSER_RUNTIME_CLOSED', 'managed CloakBrowser runtime is shut down');
+    }
     if (backend?.browser !== 'cloakbrowser' || backend?.managed !== true) {
       throw runtimeError('CLOAKBROWSER_BACKEND_INVALID', 'managed CloakBrowser backend configuration is required');
     }
@@ -129,7 +133,15 @@ export class ManagedCloakBrowserRuntime {
             '--remote-debugging-address=127.0.0.1'
           ]
         });
+        if (this.closed) {
+          await context.close().catch(() => {});
+          throw runtimeError('CLOAKBROWSER_RUNTIME_CLOSED', 'managed CloakBrowser runtime is shut down');
+        }
         const endpoint = await waitForEndpoint(userDataDir);
+        if (this.closed) {
+          await context.close().catch(() => {});
+          throw runtimeError('CLOAKBROWSER_RUNTIME_CLOSED', 'managed CloakBrowser runtime is shut down');
+        }
         const runtime = {
           key,
           profileName,
@@ -206,6 +218,8 @@ export class ManagedCloakBrowserRuntime {
   }
 
   async close() {
+    this.closed = true;
+    await Promise.allSettled(this.launches.values());
     const profileNames = [...this.runtimes.keys()];
     await Promise.all(profileNames.map(profileName => this.closeProfile(profileName)));
   }

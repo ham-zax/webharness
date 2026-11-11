@@ -6,6 +6,7 @@ import { createHash } from 'node:crypto';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { Server } from '@modelcontextprotocol/server';
 import { StdioServerTransport, serveStdio } from '@modelcontextprotocol/server/stdio';
+import { createStdioErrorReporter } from '../../lib/stdio-diagnostics.mjs';
 import { ensureWindowsChrome } from '../browser/windows-chrome-runtime.mjs';
 import { defaultBrowserTarget, resolveLinuxBrowserBackend } from './browser-backend-config.mjs';
 import { ManagedCloakBrowserRuntime } from './cloakbrowser-runtime.mjs';
@@ -155,6 +156,23 @@ function errorResult(error) {
   };
 }
 
+const activeChildProcesses = new Set();
+
+async function reapActiveChildProcesses() {
+  const children = [...activeChildProcesses];
+  if (children.length === 0) return;
+  await Promise.allSettled(children.map(async child => {
+    if (child.exitCode !== null || child.signalCode !== null) return;
+    const exited = new Promise(resolve => child.once('exit', resolve));
+    try { child.kill('SIGTERM'); } catch {}
+    await Promise.race([exited, new Promise(resolve => setTimeout(resolve, 1500).unref())]);
+    if (child.exitCode === null && child.signalCode === null) {
+      try { child.kill('SIGKILL'); } catch {}
+      await exited;
+    }
+  }));
+}
+
 async function runProcess(command, args, { cwd, env, input, acceptNonZero = false } = {}) {
   return await new Promise((resolve, reject) => {
     const child = spawn(command, args, {
@@ -163,6 +181,8 @@ async function runProcess(command, args, { cwd, env, input, acceptNonZero = fals
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true
     });
+    activeChildProcesses.add(child);
+    const untrack = () => activeChildProcesses.delete(child);
     const stdout = [];
     const stderr = [];
     let stdoutBytes = 0;
@@ -187,11 +207,13 @@ async function runProcess(command, args, { cwd, env, input, acceptNonZero = fals
       stderr.push(chunk);
     });
     child.once('error', error => {
+      untrack();
       if (settled) return;
       settled = true;
       reject(fastError('BROWSER_FAST_PROCESS_FAILED', `failed to start ${command}`, error));
     });
     child.once('close', (code, signal) => {
+      untrack();
       if (settled) return;
       settled = true;
       const result = {
@@ -276,6 +298,7 @@ export class AgentBrowserRunner {
     this.externalDefaultInspected = new Set();
     this.cloakbrowserClaims = new Map();
     this.cloakbrowserAllocationTails = new Map();
+    this.closed = false;
   }
 
   async windowsAgentRuntime(chrome) {
@@ -734,6 +757,7 @@ export class AgentBrowserRunner {
   }
 
   async batch(target, commands, { bail = true, tab, browserBackend, browserProfile, sessionTab } = {}) {
+    if (this.closed) throw fastError('BROWSER_FAST_CLOSED', 'browser-fast runner is shut down');
     if (tab !== undefined) {
       try {
         const requestedTab = requiredString(tab, 'tab');
@@ -776,6 +800,8 @@ export class AgentBrowserRunner {
   }
 
   async close() {
+    this.closed = true;
+    if (this.processRunner === runProcess) await reapActiveChildProcesses();
     const sessions = [...this.linuxSessions];
     this.linuxSessions.clear();
     this.externalPinnedReady.clear();
@@ -1241,7 +1267,10 @@ export async function runBrowserFastStdio() {
   const handle = serveStdio(() => {
     server = createBrowserFastServer({ browser });
     return server;
-  }, { transport });
+  }, {
+    transport,
+    onerror: createStdioErrorReporter('browser-fast')
+  });
   let shutdownPromise = null;
   const shutdown = () => {
     if (shutdownPromise) return shutdownPromise;
@@ -1263,8 +1292,11 @@ export async function runBrowserFastStdio() {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const runtime = await runBrowserFastStdio();
+  let exitStarted = false;
   process.stdin.once('end', () => { void runtime.shutdown(); });
   const shutdownAndExit = () => {
+    if (exitStarted) return;
+    exitStarted = true;
     void runtime.shutdown().then(
       () => process.exit(0),
       error => {

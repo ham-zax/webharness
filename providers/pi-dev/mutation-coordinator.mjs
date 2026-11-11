@@ -1,7 +1,10 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
+import net from 'node:net';
 import path from 'node:path';
 
 const locks = new Map();
+const DEFAULT_KERNEL_LOCK_WAIT_MS = 15_000;
 
 function throwIfAborted(signal) {
   if (!signal?.aborted) return;
@@ -101,7 +104,124 @@ async function acquire(target, signal) {
   return releaseFactory(target, state);
 }
 
-export async function withMutationPaths(targets, fn, { signal } = {}) {
+function kernelLockAddress(canonicalTarget) {
+  const uid = typeof process.getuid === 'function' ? process.getuid() : 'unknown';
+  const digest = crypto.createHash('sha256')
+    .update(`${uid}\0${canonicalTarget}`)
+    .digest('hex');
+  return `\0mcp-dev-mut-${digest}`;
+}
+
+function closeKernelLockServer(server) {
+  if (!server.listening) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    server.close(error => {
+      if (error) reject(error);
+      else resolve();
+    });
+  });
+}
+
+function tryBindKernelLock(address, signal) {
+  throwIfAborted(signal);
+  return new Promise((resolve, reject) => {
+    const server = net.createServer(socket => socket.destroy());
+    let settled = false;
+    let aborted = false;
+
+    const cleanup = () => {
+      signal?.removeEventListener('abort', onAbort);
+      server.removeListener('error', onError);
+      server.removeListener('listening', onListening);
+    };
+    const finish = (fn, value) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      fn(value);
+    };
+    const onAbort = () => {
+      aborted = true;
+      if (server.listening) {
+        void closeKernelLockServer(server).then(
+          () => finish(reject, abortReason(signal)),
+          error => finish(reject, error),
+        );
+      }
+    };
+    const onError = error => {
+      if (aborted || signal?.aborted) {
+        finish(reject, abortReason(signal));
+        return;
+      }
+      if (error?.code === 'EADDRINUSE') {
+        finish(resolve, null);
+        return;
+      }
+      finish(reject, error);
+    };
+    const onListening = () => {
+      if (aborted || signal?.aborted) {
+        void closeKernelLockServer(server).then(
+          () => finish(reject, abortReason(signal)),
+          error => finish(reject, error),
+        );
+        return;
+      }
+      finish(resolve, server);
+    };
+
+    signal?.addEventListener('abort', onAbort, { once: true });
+    server.once('error', onError);
+    server.once('listening', onListening);
+    server.listen(address);
+  });
+}
+
+function abortableDelay(ms, signal) {
+  throwIfAborted(signal);
+  return new Promise((resolve, reject) => {
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(abortReason(signal));
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    timer.unref?.();
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
+async function acquireKernelLock(canonicalTarget, { signal, maxWaitMs = DEFAULT_KERNEL_LOCK_WAIT_MS } = {}) {
+  if (process.platform !== 'linux') return async () => {};
+  const address = kernelLockAddress(canonicalTarget);
+  const deadline = Date.now() + maxWaitMs;
+  let delayMs = 2;
+
+  while (true) {
+    const server = await tryBindKernelLock(address, signal);
+    if (server) {
+      let closed = false;
+      return async () => {
+        if (closed) return;
+        closed = true;
+        await closeKernelLockServer(server);
+      };
+    }
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) {
+      const error = new Error(`timed out waiting for cross-process file mutation lock: ${canonicalTarget}`);
+      error.code = 'MUTATION_LOCK_BUSY';
+      throw error;
+    }
+    await abortableDelay(Math.min(delayMs, remaining), signal);
+    delayMs = Math.min(15, delayMs * 2);
+  }
+}
+
+export async function withMutationPaths(targets, fn, { signal, maxWaitMs = DEFAULT_KERNEL_LOCK_WAIT_MS } = {}) {
   if (!Array.isArray(targets) || targets.length === 0) {
     throw new Error('mutation coordinator requires at least one target path');
   }
@@ -116,14 +236,27 @@ export async function withMutationPaths(targets, fn, { signal } = {}) {
   try {
     for (const target of orderedTargets) {
       throwIfAborted(signal);
-      const release = await acquire(target, signal);
-      releases.push(release);
+      const releaseInProcess = await acquire(target, signal);
+      let releaseKernel;
+      try {
+        releaseKernel = await acquireKernelLock(target, { signal, maxWaitMs });
+      } catch (error) {
+        releaseInProcess();
+        throw error;
+      }
+      releases.push(async () => {
+        try {
+          await releaseKernel();
+        } finally {
+          releaseInProcess();
+        }
+      });
       throwIfAborted(signal);
     }
     throwIfAborted(signal);
     return await fn();
   } finally {
-    for (let i = releases.length - 1; i >= 0; i -= 1) releases[i]();
+    for (let i = releases.length - 1; i >= 0; i -= 1) await releases[i]();
   }
 }
 

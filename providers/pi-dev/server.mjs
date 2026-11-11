@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { McpServer } from '@modelcontextprotocol/server';
 import { StdioServerTransport, serveStdio } from '@modelcontextprotocol/server/stdio';
+import { createStdioErrorReporter } from './stdio-diagnostics.mjs';
 import { z } from 'zod';
 import { canonicalDefaultCwd, canonicalWorkspaceRoot } from './boundary.mjs';
 import { fileURLToPath } from 'node:url';
@@ -545,17 +546,28 @@ if (executionWorker) {
   serveExecutionWorker(executionHandlers);
 } else {
   const transport = new StdioServerTransport();
-  const handle = serveStdio(createPiDevServer, { transport });
-  let closing = false;
-  const shutdown = async () => {
-    if (closing) return;
-    closing = true;
-    shutdownController.abort();
-    await worker.close();
-    await handle.close();
+  const handle = serveStdio(createPiDevServer, {
+    transport,
+    onerror: createStdioErrorReporter('pi-dev'),
+  });
+  let closing = null;
+  const shutdown = () => {
+    if (closing) return closing;
+    closing = (async () => {
+      shutdownController.abort();
+      await worker.close();
+      await handle.close();
+    })();
+    return closing;
   };
-  process.once('SIGTERM', () => void shutdown());
-  process.once('SIGINT', () => void shutdown());
+  let exitStarted = false;
+  const shutdownAndExit = () => {
+    if (exitStarted) return;
+    exitStarted = true;
+    void shutdown().finally(() => process.exit(0));
+  };
+  process.once('SIGTERM', shutdownAndExit);
+  process.once('SIGINT', shutdownAndExit);
   const wireClose = transport.onclose;
   transport.onclose = () => {
     wireClose?.();

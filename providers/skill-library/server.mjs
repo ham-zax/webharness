@@ -2,6 +2,7 @@
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { Server } from '@modelcontextprotocol/server';
 import { serveStdio } from '@modelcontextprotocol/server/stdio';
+import { createStdioErrorReporter } from '../../lib/stdio-diagnostics.mjs';
 import { SkillLibrary } from './library.mjs';
 
 export const DEFAULT_POLICY = fileURLToPath(new URL('../../skill-library/policy.json', import.meta.url));
@@ -56,11 +57,17 @@ export function createSkillServer(library) {
 async function main() {
   const library = await SkillLibrary.open(process.env.MCP_SKILL_POLICY_FILE || DEFAULT_POLICY);
   await library.catalog(); // Validate approved dependencies before advertising tools.
-  const handle = serveStdio(() => createSkillServer(library));
-  const shutdown = () => { void handle.close(); };
-  process.stdin.once('end', shutdown);
-  process.once('SIGINT', shutdown);
-  process.once('SIGTERM', shutdown);
+  const handle = serveStdio(() => createSkillServer(library), {
+    onerror: createStdioErrorReporter('skill-library'),
+  });
+  let closing = null;
+  const shutdown = () => {
+    if (!closing) closing = handle.close();
+    return closing;
+  };
+  process.stdin.once('end', () => { void shutdown(); });
+  process.once('SIGINT', () => { void shutdown().finally(() => process.exit(0)); });
+  process.once('SIGTERM', () => { void shutdown().finally(() => process.exit(0)); });
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

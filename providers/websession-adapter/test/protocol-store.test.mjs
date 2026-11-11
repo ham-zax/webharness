@@ -896,9 +896,8 @@ test('six-session modern 2026-07-28 gateway concurrency, barrier overlap, failur
   const otherEntered = deferred();
   const otherGate = deferred();
   const invocations = new Map();
-  // All six sessions use the read-only fixture tool: OperationCore serializes
-  // mutations on one tail, which would prevent the barrier overlap this test
-  // must prove.
+  // All six sessions exercise the read-only fixture tool here; per-capability
+  // mutation queue overlap is tested separately in capability-queues.test.mjs.
   const { counts, server } = startModernMcpStub(t, SIX_SESSION_TOOLS, async (name, args) => {
     const session = Number(args?.session);
     invocations.set(session, (invocations.get(session) ?? 0) + 1);

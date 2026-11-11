@@ -109,7 +109,7 @@ export class OperationCore {
     this.callbackUrl = callbackUrl;
     this.toolTimeoutMs = toolTimeoutMs;
     this._active = new Map();
-    this._tail = Promise.resolve();
+    this._tails = new Map();
     this._readOnlyTools = new Set([
       'dev_read',
       'dev_list_directory',
@@ -360,7 +360,7 @@ export class OperationCore {
       this._active.set(id, promise);
     }
 
-    const pipeline = this._tail.then(async () => {
+    this._enqueuePrincipal(principalId, async () => {
       try {
         let failedPrior = false;
         for (const op of this.store.getBatchOperations(principalId, batchId)) {
@@ -393,7 +393,25 @@ export class OperationCore {
         }
       }
     });
-    this._tail = pipeline.catch(() => {});
+  }
+
+  _enqueuePrincipal(principalId, taskFn) {
+    const previous = this._tails.get(principalId) ?? Promise.resolve();
+    let current;
+    const cleanup = () => {
+      if (this._tails.get(principalId) === current) this._tails.delete(principalId);
+    };
+    current = previous.then(taskFn).then(
+      value => {
+        cleanup();
+        return value;
+      },
+      () => {
+        cleanup();
+      },
+    );
+    this._tails.set(principalId, current);
+    return current;
   }
 
   confirm(operationId, confirmationCapability, challenge) {
@@ -457,11 +475,10 @@ export class OperationCore {
   _schedule(operationId) {
     if (this._active.has(operationId)) return this._active.get(operationId);
     const operation = this.store.getOperation(operationId);
-    const concurrent = Boolean(operation && this._readOnlyTools.has(operation.tool));
+    const concurrent = !operation || this._readOnlyTools.has(operation.tool);
     const execution = concurrent
       ? Promise.resolve().then(() => this._run(operationId))
-      : this._tail.then(() => this._run(operationId));
-    if (!concurrent) this._tail = execution.catch(() => {});
+      : this._enqueuePrincipal(operation.principal_id, () => this._run(operationId));
     this._active.set(operationId, execution);
     execution.catch(() => {}).finally(() => {
       if (this._active.get(operationId) === execution) this._active.delete(operationId);

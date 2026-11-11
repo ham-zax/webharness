@@ -102,15 +102,21 @@ export class IdleExecutionWorker {
     if (this.stopping) return this.stopping;
     clearTimeout(this.timer);
     const child = this.child;
-    if (!child) return;
+    if (!child || child.exitCode !== null || child.signalCode !== null) return;
+    const ready = !this.starting;
     this.stopping = (async () => {
       await new Promise(resolve => {
+        if (child.exitCode !== null || child.signalCode !== null) { resolve(); return; }
         const kill = setTimeout(() => {
           try { process.kill(-child.pid, 'SIGKILL'); } catch { child.kill('SIGKILL'); }
         }, 5000);
+        kill.unref?.();
         child.once('exit', () => { clearTimeout(kill); resolve(); });
-        if (child.connected) child.send({ type: 'shutdown' }, () => {});
-        else child.kill('SIGTERM');
+        if (ready && child.connected) {
+          child.send({ type: 'shutdown' }, () => {});
+        } else {
+          try { process.kill(-child.pid, 'SIGTERM'); } catch { child.kill('SIGTERM'); }
+        }
       });
     })();
     try { await this.stopping; }
@@ -120,8 +126,8 @@ export class IdleExecutionWorker {
   async close() {
     this.closed = true;
     clearTimeout(this.timer);
-    if (this.starting) await this.starting.catch(() => {});
     await this.stop();
+    if (this.starting) await this.starting.catch(() => {});
   }
 }
 

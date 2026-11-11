@@ -7,6 +7,7 @@ import { Server } from '@modelcontextprotocol/server';
 import { StdioServerTransport, serveStdio } from '@modelcontextprotocol/server/stdio';
 import { hasActiveRuntimeLeases } from '../../lib/runtime-leases.mjs';
 import { reclaimStaleRuntimeOwnership } from '../../lib/one-mcp-runtime-ownership.mjs';
+import { createStdioErrorReporter } from '../../lib/stdio-diagnostics.mjs';
 
 export const INNER_TOOL_SEPARATOR = '_1mcp_';
 export const DEFAULT_LIST_LIMIT = 25;
@@ -239,9 +240,10 @@ export class InnerDirect1Mcp {
     this.peerClosed = false;
   }
 
-  static async start({ configPath, oneMcpEntry } = {}) {
+  static async start({ configPath, oneMcpEntry, signal } = {}) {
     requiredString(configPath, 'configPath');
     requiredString(oneMcpEntry, 'oneMcpEntry');
+    if (signal?.aborted) throw brokerError('INNER_START_FAILED', 'inner 1MCP startup aborted');
     reclaimStaleRuntimeOwnership(path.dirname(configPath));
     const transport = new StdioClientTransport({
       command: process.execPath,
@@ -261,13 +263,18 @@ export class InnerDirect1Mcp {
     const client = new Client({ name: 'mcp-dev-bridge-local-inner', version: '0.1.0' });
     const inner = new InnerDirect1Mcp({ transport, client });
     client.onclose = () => { inner.peerClosed = true; };
+    const onAbort = () => { void transport.close().catch(() => {}); };
+    signal?.addEventListener('abort', onAbort, { once: true });
     try {
+      signal?.throwIfAborted();
       await client.connect(transport);
       return inner;
     } catch (error) {
       inner.closed = true;
       try { await transport.close(); } catch { /* failed startup may already be closed */ }
       throw brokerError('INNER_START_FAILED', 'failed to start inner 1MCP', error);
+    } finally {
+      signal?.removeEventListener('abort', onAbort);
     }
   }
 
@@ -326,6 +333,7 @@ export class LazyInner1Mcp {
     this.idleMs = idleMs;
     this.inner = null;
     this.startPromise = null;
+    this.startAbortController = null;
     this.closePromise = null;
     this.inFlight = 0;
     this.timer = null;
@@ -378,7 +386,14 @@ export class LazyInner1Mcp {
         if (stale) await Promise.resolve().then(() => stale.close()).catch(() => {});
         if (this.closePromise) await this.closePromise;
         if (this.closed) throw brokerError('INNER_UNAVAILABLE', 'inner 1MCP is not running');
-        const inner = await this.startFn();
+        const controller = new AbortController();
+        this.startAbortController = controller;
+        let inner;
+        try {
+          inner = await this.startFn({ signal: controller.signal });
+        } finally {
+          if (this.startAbortController === controller) this.startAbortController = null;
+        }
         if (this.closed) {
           await Promise.resolve().then(() => inner.close()).catch(() => {});
           throw brokerError('INNER_UNAVAILABLE', 'inner 1MCP is not running');
@@ -418,6 +433,7 @@ export class LazyInner1Mcp {
     if (this.closed) return;
     this.closed = true;
     this.clearTimer();
+    this.startAbortController?.abort();
     if (this.startPromise) await this.startPromise.catch(() => {});
     if (this.closePromise) await this.closePromise;
     const inner = this.inner;
@@ -869,7 +885,11 @@ export async function runLocalBrokerStdio({
 } = {}) {
   requiredString(configPath, 'MCP_LOCAL_INNER_CONFIG');
   requiredString(oneMcpEntry, 'MCP_LOCAL_ONE_MCP_ENTRY');
-  const inner = new LazyInner1Mcp({ start: () => InnerDirect1Mcp.start({ configPath, oneMcpEntry }), idleMs, isPinned: () => hasActiveRuntimeLeases(process.env.MCP_LIFECYCLE_LEASE_DIR) });
+  const inner = new LazyInner1Mcp({
+    start: ({ signal } = {}) => InnerDirect1Mcp.start({ configPath, oneMcpEntry, signal }),
+    idleMs,
+    isPinned: () => hasActiveRuntimeLeases(process.env.MCP_LIFECYCLE_LEASE_DIR)
+  });
   const fallbackOnlyServers = (process.env.MCP_LOCAL_FALLBACK_ONLY_SERVERS ?? '')
     .split(',')
     .map(server => server.trim())
@@ -882,7 +902,10 @@ export async function runLocalBrokerStdio({
     handle = serveStdio(() => {
       server = createLocalBrokerServer({ broker });
       return server;
-    }, { transport });
+    }, {
+      transport,
+      onerror: createStdioErrorReporter('local-tools')
+    });
   } catch (error) {
     await broker.shutdown().catch(() => {});
     throw error;

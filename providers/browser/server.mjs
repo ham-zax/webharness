@@ -5,6 +5,7 @@ import { Client } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 import { Server } from '@modelcontextprotocol/server';
 import { StdioServerTransport, serveStdio } from '@modelcontextprotocol/server/stdio';
+import { createStdioErrorReporter } from '../../lib/stdio-diagnostics.mjs';
 import { defaultBrowserTarget, resolveLinuxBrowserBackend } from '../browser-fast/browser-backend-config.mjs';
 import { DEFAULT_CLOAKBROWSER_STATE_ROOT, readCloakBrowserEndpoint } from '../browser-fast/cloakbrowser-runtime.mjs';
 import { ensureWindowsChrome } from './windows-chrome-runtime.mjs';
@@ -204,7 +205,8 @@ export class ChromeChild {
     this.peerClosed = false;
   }
 
-  static async start({ target, env = process.env, config, windowsChromeEnsure = ensureWindowsChrome } = {}) {
+  static async start({ target, env = process.env, config, signal, windowsChromeEnsure = ensureWindowsChrome } = {}) {
+    if (signal?.aborted) throw browserError('BROWSER_CHILD_START_FAILED', `${target} Chrome DevTools MCP startup aborted`);
     let resolvedConfig = config;
     if (!resolvedConfig) {
       if (target === 'windows') {
@@ -218,13 +220,18 @@ export class ChromeChild {
     const client = new Client({ name: `mcp-dev-bridge-browser-${target}`, version: '0.1.0' });
     const child = new ChromeChild({ target, transport, client });
     client.onclose = () => { child.peerClosed = true; };
+    const onAbort = () => { void transport.close().catch(() => {}); };
+    signal?.addEventListener('abort', onAbort, { once: true });
     try {
+      signal?.throwIfAborted();
       await client.connect(transport);
       return child;
     } catch (error) {
       child.closed = true;
       try { await transport.close(); } catch { /* failed startup may already be closed */ }
       throw browserError('BROWSER_CHILD_START_FAILED', `failed to start ${target} Chrome DevTools MCP`, error);
+    } finally {
+      signal?.removeEventListener('abort', onAbort);
     }
   }
 
@@ -255,7 +262,7 @@ export class ChromeChild {
 
 export class BrowserRouter {
   constructor({
-    childFactory = (target, config) => ChromeChild.start({ target, config }),
+    childFactory,
     env = process.env,
     linuxBackendResolve = resolveLinuxBrowserBackend,
     cloakbrowserEndpointResolve = resolveCloakBrowserEndpoint,
@@ -263,8 +270,12 @@ export class BrowserRouter {
     // Resolved once so an invalid MCP_BROWSER_DEFAULT_TARGET fails at startup.
     defaultTarget = defaultBrowserTarget({ env })
   } = {}) {
-    if (typeof childFactory !== 'function') throw new TypeError('childFactory must be a function');
-    this.childFactory = childFactory;
+    if (childFactory !== undefined && typeof childFactory !== 'function') {
+      throw new TypeError('childFactory must be a function');
+    }
+    this.shutdownController = new AbortController();
+    this.childFactory = childFactory
+      ?? ((target, config) => ChromeChild.start({ target, config, signal: this.shutdownController.signal }));
     this.env = env;
     this.defaultTarget = defaultTarget;
     this.linuxBackendResolve = linuxBackendResolve;
@@ -273,6 +284,8 @@ export class BrowserRouter {
     this.children = new Map();
     this.childIdentities = new Map();
     this.starts = new Map();
+    this.ephemeralStarts = new Set();
+    this.ephemeralChildren = new Set();
     this.toolsPromise = null;
     this.closed = false;
   }
@@ -380,12 +393,26 @@ export class BrowserRouter {
   // Schemas come from the upstream catalog, not from a page, so this path needs
   // no live endpoint. The child is closed after use: it must never serve a call.
   async discoverToolsWithoutBrowser() {
+    if (this.closed) throw browserError('BROWSER_ROUTER_CLOSED', 'browser router is shut down');
     const config = childConfig('linux', this.env, [], { browserUrl: SCHEMA_ONLY_BROWSER_URL });
-    const child = await this.childFactory('linux', config);
+    const starting = Promise.resolve().then(() => this.childFactory('linux', config));
+    this.ephemeralStarts.add(starting);
+    let child;
+    try {
+      child = await starting;
+    } finally {
+      this.ephemeralStarts.delete(starting);
+    }
+    if (this.closed) {
+      await child.close().catch(() => {});
+      throw browserError('BROWSER_ROUTER_CLOSED', 'browser router is shut down');
+    }
+    this.ephemeralChildren.add(child);
     try {
       const { tools } = await child.listTools();
       return tools.map(addBrowserTarget);
     } finally {
+      this.ephemeralChildren.delete(child);
       await child.close().catch(() => {});
     }
   }
@@ -423,11 +450,13 @@ export class BrowserRouter {
   async shutdown() {
     if (this.closed) return;
     this.closed = true;
-    const pending = await Promise.allSettled(this.starts.values());
-    const children = new Set(this.children.values());
+    this.shutdownController.abort();
+    const pending = await Promise.allSettled([...this.starts.values(), ...this.ephemeralStarts]);
+    const children = new Set([...this.children.values(), ...this.ephemeralChildren]);
     for (const result of pending) if (result.status === 'fulfilled') children.add(result.value);
     await Promise.allSettled([...children].map(child => child.close()));
     this.children.clear();
+    this.ephemeralChildren.clear();
     this.childIdentities.clear();
   }
 }
@@ -458,7 +487,10 @@ export async function runBrowserFacadeStdio() {
   const handle = serveStdio(() => {
     server = createBrowserFacadeServer({ router });
     return server;
-  }, { transport });
+  }, {
+    transport,
+    onerror: createStdioErrorReporter('browser')
+  });
   let shutdownPromise = null;
   const shutdown = () => {
     if (shutdownPromise) return shutdownPromise;

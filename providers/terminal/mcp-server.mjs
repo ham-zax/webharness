@@ -3,6 +3,7 @@ import { pathToFileURL } from 'node:url';
 
 import { McpServer } from '@modelcontextprotocol/server';
 import { StdioServerTransport, serveStdio } from '@modelcontextprotocol/server/stdio';
+import { createStdioErrorReporter } from '../../lib/stdio-diagnostics.mjs';
 import { z } from 'zod';
 
 import { BrokerClient } from './broker-client.mjs';
@@ -242,7 +243,10 @@ export async function runTerminalMcpStdio({ socketPath = defaultSocketPath() } =
   const handle = serveStdio(() => {
     server = createTerminalMcpServer({ client });
     return server;
-  }, { transport });
+  }, {
+    transport,
+    onerror: createStdioErrorReporter('terminal'),
+  });
   return { get server() { return server; }, handle, transport };
 }
 

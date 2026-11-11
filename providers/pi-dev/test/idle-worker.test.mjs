@@ -144,3 +144,91 @@ test('invalid idle settings fail before MCP discovery instead of silently disabl
     assert.match(stderr,/MCP_DEV_WORKER_IDLE_MS must be an integer/);
   }
 });
+
+test('SIGTERM on pi-dev stdio server exits 0 and reaps execution worker and active child commands', async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'dev-sigterm-'));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const serverPath = new URL('../server.mjs', import.meta.url).pathname;
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: [serverPath],
+    env: {
+      ...process.env,
+      MCP_DEV_SHELL_MODE: 'unrestricted',
+      MCP_DEV_PATH_MODE: 'workspace',
+      MCP_DEV_WORKSPACE_ROOT: root,
+      MCP_DEV_STATE_DIR: root,
+      MCP_DEV_WORKER_IDLE_MS: '60000',
+    },
+    stderr: 'pipe',
+  });
+  const client = new Client({ name: 'sigterm-test', version: '1.0.0' }, { capabilities: {}, versionNegotiation: { pin: '2026-07-28' } });
+  await client.connect(transport);
+  const serverPid = transport.pid;
+  assert.ok(serverPid > 0);
+
+  const cmdPidFile = path.join(root, 'cmd.pid');
+  const pending = client.callTool({ name: 'bash', arguments: { command: 'echo $$ > cmd.pid; sleep 30' } }).catch(() => {});
+  let cmdPid = 0;
+  for (let i = 0; i < 200; i += 1) {
+    try {
+      cmdPid = Number((await fs.readFile(cmdPidFile, 'utf8')).trim());
+      if (cmdPid > 0) break;
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+    }
+    await sleep(25);
+  }
+  assert.ok(cmdPid > 0, 'child command started inside worker');
+  const workerPid = Number((await fs.readFile(`/proc/${serverPid}/task/${serverPid}/children`, 'utf8')).trim());
+  assert.ok(workerPid > 0, 'execution worker child is running');
+
+  process.kill(serverPid, 'SIGTERM');
+  await pending;
+  for (let i = 0; i < 100; i += 1) {
+    let alive = false;
+    for (const pid of [serverPid, workerPid, cmdPid]) {
+      try { process.kill(pid, 0); alive = true; } catch {}
+    }
+    if (!alive) break;
+    await sleep(30);
+  }
+  for (const [label, pid] of [['server', serverPid], ['worker', workerPid], ['command', cmdPid]]) {
+    assert.throws(() => process.kill(pid, 0), err => err.code === 'ESRCH', `${label} (${pid}) was not reaped`);
+  }
+  await transport.close().catch(() => {});
+});
+
+test('closing IdleExecutionWorker during startup before ready immediately terminates and reaps the starting child', async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'dev-abort-startup-'));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const pidFile = path.join(root, 'starting.pid');
+  const slowWorkerPath = path.join(root, 'slow-worker.mjs');
+  await fs.writeFile(
+    slowWorkerPath,
+    `import fs from 'node:fs';
+fs.writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));
+setTimeout(() => {}, 30000);
+`,
+    'utf8',
+  );
+  const worker = new IdleExecutionWorker({ serverPath: slowWorkerPath, idleMs: 60_000 });
+  const callPromise = worker.call('echo', {});
+  let childPid = 0;
+  for (let i = 0; i < 200; i += 1) {
+    try {
+      childPid = Number((await fs.readFile(pidFile, 'utf8')).trim());
+      if (childPid > 0) break;
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+    }
+    await sleep(20);
+  }
+  assert.ok(childPid > 0, 'slow-starting worker spawned');
+  const closeStart = Date.now();
+  await worker.close();
+  const elapsedMs = Date.now() - closeStart;
+  await assert.rejects(callPromise, /exited|closed/i);
+  assert.ok(elapsedMs < 2000, `close() during startup must not stall waiting for ready (took ${elapsedMs}ms)`);
+  assert.throws(() => process.kill(childPid, 0), err => err.code === 'ESRCH');
+});
