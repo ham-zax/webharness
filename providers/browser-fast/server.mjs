@@ -158,17 +158,28 @@ function errorResult(error) {
 
 const activeChildProcesses = new Set();
 
+function signalOwnedProcessGroup(child, signal) {
+  if (!child.pid) return;
+  try {
+    if (process.platform !== 'win32') process.kill(-child.pid, signal);
+    else child.kill(signal);
+  } catch (error) {
+    if (error.code !== 'ESRCH') throw error;
+  }
+}
+
 async function reapActiveChildProcesses() {
-  const children = [...activeChildProcesses];
-  if (children.length === 0) return;
-  await Promise.allSettled(children.map(async child => {
-    if (child.exitCode !== null || child.signalCode !== null) return;
-    const exited = new Promise(resolve => child.once('exit', resolve));
-    try { child.kill('SIGTERM'); } catch {}
-    await Promise.race([exited, new Promise(resolve => setTimeout(resolve, 1500).unref())]);
-    if (child.exitCode === null && child.signalCode === null) {
-      try { child.kill('SIGKILL'); } catch {}
-      await exited;
+  await Promise.allSettled([...activeChildProcesses].map(async child => {
+    const closed = new Promise(resolve => child.once('close', resolve));
+    let timer;
+    try {
+      signalOwnedProcessGroup(child, 'SIGTERM');
+      await Promise.race([closed, new Promise(resolve => { timer = setTimeout(resolve, 1500); })]);
+      // Descendants can retain stdout after the direct child exits.
+      signalOwnedProcessGroup(child, 'SIGKILL');
+      await closed;
+    } finally {
+      clearTimeout(timer);
     }
   }));
 }
@@ -179,7 +190,8 @@ async function runProcess(command, args, { cwd, env, input, acceptNonZero = fals
       cwd,
       env,
       stdio: ['pipe', 'pipe', 'pipe'],
-      windowsHide: true
+      windowsHide: true,
+      detached: process.platform !== 'win32'
     });
     activeChildProcesses.add(child);
     const untrack = () => activeChildProcesses.delete(child);
@@ -192,7 +204,7 @@ async function runProcess(command, args, { cwd, env, input, acceptNonZero = fals
     const overflow = stream => {
       if (settled) return;
       settled = true;
-      child.kill('SIGTERM');
+      signalOwnedProcessGroup(child, 'SIGTERM');
       reject(fastError('BROWSER_FAST_OUTPUT_LIMIT', `${stream} exceeded ${MAX_OUTPUT_BYTES} bytes`));
     };
 

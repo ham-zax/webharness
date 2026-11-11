@@ -184,6 +184,7 @@ test('canceling multi-path acquisition releases earlier keys while waiting for a
   const multi = withMutationPaths([b, a], async () => {
     multiEntered = true;
   }, { signal: controller.signal });
+  const rejected = assert.rejects(multi, /abort/i);
   await delay(10);
 
   let aProbeEntered = false;
@@ -200,7 +201,7 @@ test('canceling multi-path acquisition releases earlier keys while waiting for a
     await bHolder;
   }
 
-  await assert.rejects(multi, /abort/i);
+  await rejected;
   assert.equal(aProbeEntered, true);
   assert.equal(multiEntered, false);
 });

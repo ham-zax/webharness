@@ -67,6 +67,45 @@ exec sleep 30
   await waitReaped([childPid]);
 });
 
+test('closing one runner reaps its subprocess tree without stopping a separate provider', async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'browser-fast-tree-'));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const parentFile = path.join(root, 'parent.pid');
+  const descendantFile = path.join(root, 'descendant.pid');
+  const helper = path.join(root, 'wslpath');
+  await fs.writeFile(helper, `#!${process.execPath}
+const { spawn } = require('node:child_process');
+const { writeFileSync } = require('node:fs');
+const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+process.on('SIGTERM', () => { child.once('exit', () => process.exit(0)); });
+child.once('spawn', () => {
+  writeFileSync(${JSON.stringify(parentFile)}, String(process.pid));
+  writeFileSync(${JSON.stringify(descendantFile)}, String(child.pid));
+});
+`, { mode: 0o755 });
+  const separate = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+  await once(separate, 'spawn');
+  t.after(async () => {
+    if (separate.exitCode !== null || separate.signalCode !== null) return;
+    const exited = once(separate, 'exit');
+    separate.kill('SIGTERM');
+    await exited;
+  });
+  const oldPath = process.env.PATH;
+  process.env.PATH = `${root}:${oldPath}`;
+  t.after(() => { process.env.PATH = oldPath; });
+  const runner = new AgentBrowserRunner({ cloakbrowserRuntime: { close: async () => {} } });
+  const pending = runner.pathForTarget('windows', '/tmp/probe.png').catch(() => null);
+  const parent = await waitPidFile(parentFile);
+  const descendant = await waitPidFile(descendantFile);
+  t.after(() => { for (const pid of [parent, descendant]) { try { process.kill(pid, 'SIGKILL'); } catch {} } });
+  await runner.close();
+  await pending;
+  await waitReaped([parent, descendant]);
+  assert.equal(separate.exitCode, null);
+  assert.equal(separate.signalCode, null);
+});
+
 test('ManagedCloakBrowserRuntime.close awaits in-flight startup launches and closes the resulting context', async t => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'cloak-abort-start-'));
   t.after(() => fs.rm(root, { recursive: true, force: true }));

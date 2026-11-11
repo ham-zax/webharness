@@ -70,17 +70,33 @@ async function waitReady(url, child, stderrChunks, timeoutMs = 25_000) {
 }
 
 async function terminateGroup(child) {
-  if (!child || child.exitCode !== null) return;
-  try { process.kill(-child.pid, 'SIGTERM'); } catch { child.kill('SIGTERM'); }
-  const exited = await Promise.race([
-    once(child, 'exit').then(() => true),
-    new Promise(resolve => setTimeout(() => resolve(false), 4000)),
-  ]);
-  if (!exited && child.exitCode === null) {
-    try { process.kill(-child.pid, 'SIGKILL'); } catch { child.kill('SIGKILL'); }
-    await once(child, 'exit').catch(() => {});
+  if (!child || child.exitCode !== null || child.signalCode !== null) return;
+  const exit = once(child, 'exit');
+  let timer;
+  try {
+    try { process.kill(-child.pid, 'SIGTERM'); } catch { child.kill('SIGTERM'); }
+    const exited = await Promise.race([
+      exit.then(() => true),
+      new Promise(resolve => { timer = setTimeout(() => resolve(false), 4000); }),
+    ]);
+    if (!exited && child.exitCode === null && child.signalCode === null) {
+      try { process.kill(-child.pid, 'SIGKILL'); } catch { child.kill('SIGKILL'); }
+      await exit;
+    }
+  } finally {
+    clearTimeout(timer);
   }
 }
+
+test('gateway cleanup accepts a child that already exited by signal', async () => {
+  const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { detached: true, stdio: 'ignore' });
+  await once(child, 'spawn');
+  const exited = once(child, 'exit');
+  child.kill('SIGTERM');
+  await exited;
+  assert.equal(child.signalCode, 'SIGTERM');
+  await withinMs(terminateGroup(child), 500, 'cleanup waited for an exit that already occurred');
+});
 
 const oneMcpRoot = detectInstalled1McpRoot();
 const requireQualification = process.env.WEBHARNESS_REQUIRE_1MCP_QUALIFICATION === '1';

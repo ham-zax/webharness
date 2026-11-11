@@ -7,6 +7,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { runEdit } from '../files.mjs';
+import { withMutationPath, withMutationPaths } from '../mutation-coordinator.mjs';
 
 const filesModuleUrl = new URL('../files.mjs', import.meta.url).href;
 const coordinatorModuleUrl = new URL('../mutation-coordinator.mjs', import.meta.url).href;
@@ -81,7 +82,7 @@ function waitForMessage(child, predicate, timeoutMs = 10_000) {
   });
 }
 
-test('two separate OS processes editing disjoint hunks of the same file serialize cleanly and preserve inode/hard-link identity', async t => {
+test('two separate OS processes editing disjoint hunks through hard-link aliases serialize and preserve inode identity', async t => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'pi-cross-proc-disjoint-'));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
   const helperPath = await writeWorkerHelper(root);
@@ -97,7 +98,7 @@ test('two separate OS processes editing disjoint hunks of the same file serializ
   await waitForMessage(procA, msg => msg.type === 'at-guard');
 
   // Start Process B in a separate OS process while Process A is paused inside mutatePlannedTarget.
-  const procB = fork(helperPath, ['direct', root, 'shared.txt', 'bottom: v0', 'bottom: UPDATED_BY_PROC_B']);
+  const procB = fork(helperPath, ['direct', root, 'shared-hardlink.txt', 'bottom: v0', 'bottom: UPDATED_BY_PROC_B']);
   t.after(() => { if (procB.exitCode === null) procB.kill('SIGKILL'); });
   const outcomeBPromise = waitForMessage(procB, msg => msg.type === 'ok' || msg.type === 'err');
 
@@ -117,6 +118,35 @@ test('two separate OS processes editing disjoint hunks of the same file serializ
   assert.equal(await fs.readFile(hardLink, 'utf8'), expected, 'hard link sees exact in-place update');
   const afterStat = await fs.stat(sharedFile);
   assert.equal(afterStat.ino, initialStat.ino, 'in-place O_RDWR write preserved inode identity');
+});
+
+test('a held inode lease blocks another process through a hard-link alias and cancellation releases its pathname lease', async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'pi-cross-proc-alias-lock-'));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const helperPath = await writeWorkerHelper(root);
+  const original = path.join(root, 'original.txt');
+  const alias = path.join(root, 'alias.txt');
+  await fs.writeFile(original, 'original');
+  await fs.link(original, alias);
+  const holder = fork(helperPath, ['hold-lock', root, original, '', '']);
+  t.after(async () => {
+    if (holder.exitCode !== null || holder.signalCode !== null) return;
+    const exited = once(holder, 'exit');
+    holder.kill('SIGKILL');
+    await exited;
+  });
+  await waitForMessage(holder, msg => msg.type === 'locked');
+  let entered = false;
+  await assert.rejects(withMutationPath(alias, async () => { entered = true; }, {
+    signal: AbortSignal.timeout(150),
+  }), /timeout|abort/i);
+  assert.equal(entered, false);
+  const exited = once(holder, 'exit');
+  holder.kill('SIGKILL');
+  await exited;
+  // Duplicate inode identities in a multi-path request must not self-deadlock.
+  await withMutationPaths([original, alias], async () => { entered = true; }, { maxWaitMs: 500 });
+  assert.equal(entered, true);
 });
 
 test('two separate OS processes editing the same line never silently clobber each other; one wins and one fails cleanly', async t => {
@@ -148,7 +178,7 @@ test('two separate OS processes editing the same line never silently clobber eac
   assert.equal(await fs.readFile(sharedFile, 'utf8'), 'line: PROC_A\n');
 });
 
-test('SIGKILL of a lock-holding worker process releases the kernel mutation lock immediately and external writes still fail closed', async t => {
+test('SIGKILL releases the kernel mutation lock and snapshot guards detect earlier external writes', async t => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'pi-cross-proc-kill-'));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
   const helperPath = await writeWorkerHelper(root);
@@ -168,7 +198,8 @@ test('SIGKILL of a lock-holding worker process releases the kernel mutation lock
   });
   assert.equal(await fs.readFile(sharedFile, 'utf8'), 'state: recovered\n');
 
-  // Non-cooperating external modification bypassing pi-dev locks still fails closed via O_RDWR snapshot verification.
+  // Snapshot verification detects an external change made before the guard.
+  // External writers do not participate in the advisory mutation locks.
   await assert.rejects(
     () => runEdit(
       {

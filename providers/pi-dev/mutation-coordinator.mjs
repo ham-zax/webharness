@@ -233,8 +233,8 @@ export async function withMutationPaths(targets, fn, { signal, maxWaitMs = DEFAU
   const orderedTargets = [...new Set(canonicalTargets)].sort();
   const releases = [];
 
-  try {
-    for (const target of orderedTargets) {
+  const lockTargets = async targets => {
+    for (const target of targets) {
       throwIfAborted(signal);
       const releaseInProcess = await acquire(target, signal);
       let releaseKernel;
@@ -245,13 +245,34 @@ export async function withMutationPaths(targets, fn, { signal, maxWaitMs = DEFAU
         throw error;
       }
       releases.push(async () => {
-        try {
-          await releaseKernel();
-        } finally {
-          releaseInProcess();
-        }
+        try { await releaseKernel(); }
+        finally { releaseInProcess(); }
       });
       throwIfAborted(signal);
+    }
+  };
+  const identityOf = async target => {
+    try {
+      const stat = await fs.stat(target, { bigint: true });
+      return `inode:${stat.dev}:${stat.ino}`;
+    } catch (error) {
+      if (error.code === 'ENOENT') return null;
+      throw error;
+    }
+  };
+
+  try {
+    // Acquire all pathname leases before inode leases, in the same order in
+    // every process. Existing hard-link aliases then share an inode lease.
+    await lockTargets(orderedTargets);
+    const identities = await Promise.all(orderedTargets.map(identityOf));
+    await lockTargets([...new Set(identities.filter(Boolean))].sort());
+    for (let index = 0; index < orderedTargets.length; index += 1) {
+      if (await identityOf(orderedTargets[index]) !== identities[index]) {
+        const error = new Error('file identity changed while acquiring mutation locks; reread and reconcile');
+        error.code = 'MUTATION_TARGET_CHANGED';
+        throw error;
+      }
     }
     throwIfAborted(signal);
     return await fn();

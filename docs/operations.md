@@ -277,6 +277,34 @@ Isolation is always explicit. Browser Fast does not switch profiles because anot
 
 Managed CloakBrowser owns persistent profiles beneath bridge state and exposes ephemeral debugging endpoints on loopback only. One runtime is kept per active profile; concurrent startup for the same profile is coalesced in-process, while different profiles may remain live concurrently. The maintained `x-main` profile is shared for authentication state, but a blank tab untouched for 10 minutes is reused by the next no-tab observation, and other observations receive separate tab workspaces and tab-specific Agent Browser sessions, so different agents do not wait behind a Linux-wide operation lock. Reuse the returned `active_tab` for continuation; same-tab work still serializes. Agent Browser owns snapshots, refs, and tab IDs; CloakBrowser owns supported humanized input. The Personal bootstrap installs the tracked `cloakbrowser` / `x-main` policy when the file is missing and preserves every existing file; an unsupported backend fails the call with a clear configuration error. Other owner-managed V1 external `cdpPort` configurations remain readable but do not support per-call managed-profile selection. Firefox remains unsupported because the current Agent Browser observation layer is Chromium-CDP-only.
 
+## Browser access from other local harnesses
+
+Local agents can use `scripts/wh-browser.cjs` directly through their shell tool. The CLI starts its own provider daemon and needs neither the WebHarness bridge nor the WebSession adapter. It uses the same installed provider dependencies and browser configuration.
+
+Install the command once:
+
+```bash
+ln -sf "$HOME/repo/webharness/scripts/wh-browser.cjs" "$HOME/.local/bin/wh-browser"
+wh-browser fast tools
+wh-browser fast schema observe
+```
+
+For Linux browser work, use a distinct managed CloakBrowser profile for the local task:
+
+```bash
+wh-browser fast observe '{"browser_target":"linux","browser_backend":"cloakbrowser","browser_profile":"local-agent-task","scope":"compact"}'
+```
+
+Reuse the returned `active_tab` and the same target, backend, and profile on later calls. Close only tabs created by that task. Use one access route per task. Concurrent bridge and standalone tasks need separate browser profiles or explicitly coordinated tab ownership. A different profile name does not isolate a shared Windows CDP browser.
+
+The CLI shares one daemon per tier within its runtime directory. Do not stop a daemon that other tasks use. Provider subprocess cleanup targets only process groups created by that provider, so another harness's independent provider remains outside that cleanup.
+
+## File mutation coordination
+
+Dev serializes cooperating mutations by canonical pathname and existing device/inode identity. Hard-link aliases share the inode lease. Path leases precede sorted inode leases, and Linux abstract sockets coordinate separate Dev processes without lockfiles. Non-Linux hosts use process-local leases.
+
+Editors, Git, and arbitrary shell commands do not participate in these advisory leases. Snapshot checks detect external changes before the mutation guard, but cannot make comparison and writing atomic against external writers. Use separate Git worktrees for independent agents that edit and commit in the same repository.
+
 ## Qualify cold startup
 
 After changing idle policy, rerender configuration and restart only the bridge service; leave the tmux and Terminal broker services running. Verify these boundaries:
