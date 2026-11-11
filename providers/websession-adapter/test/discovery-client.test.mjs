@@ -303,6 +303,114 @@ test('python client reconstructs inline and chunked completions', async (t) => {
     ['/v1/operations/token/op/chunk/1', '/v1/operations/token/op/chunk/2']);
 });
 
+test('python client reuses HTTP keep-alive sockets across submit/poll/chunks and retries transient GET 502/503 without resubmitting POST', async (t) => {
+  const sockets = new Set();
+  let server;
+  let base = '';
+  const requests = [];
+  let transientMode = false;
+  let pollFails = 0;
+  let chunk1Fails = 0;
+
+  await new Promise((resolve) => {
+    server = createServer((req, res) => {
+      const chunks = [];
+      req.on('data', chunk => chunks.push(chunk));
+      req.on('end', () => {
+        const url = new URL(req.url, base);
+        requests.push({ method: req.method, path: url.pathname, query: url.searchParams, headers: req.headers });
+        const sendJson = (status, obj, close = false) => {
+          const raw = Buffer.from(JSON.stringify(obj), 'utf8');
+          res.writeHead(status, {
+            'Content-Type': 'application/json',
+            'Content-Length': raw.length,
+            ...(close ? { Connection: 'close' } : {}),
+          });
+          res.end(raw);
+        };
+        if (req.method === 'POST' && url.pathname === '/v1/calls') {
+          return sendJson(200, {
+            protocol: 'WEBSESSION-MCP-BRIDGE/1',
+            state: 'running',
+            operation_id: 'op-ka',
+            status_url: `${base}/v1/operations/token/op-ka`,
+          });
+        }
+        if (req.method === 'GET' && url.pathname === '/v1/operations/token/op-ka') {
+          if (transientMode && pollFails === 0) {
+            pollFails += 1;
+            return sendJson(502, { error: 'bad_gateway' }, true);
+          }
+          return sendJson(200, {
+            protocol: 'WEBSESSION-MCP-BRIDGE/1',
+            state: 'completed',
+            operation_id: 'op-ka',
+            status_url: `${base}/v1/operations/token/op-ka`,
+            chunk_count: 2,
+            chunk_base_url: `${base}/v1/operations/token/op-ka/chunk/`,
+          });
+        }
+        if (req.method === 'GET' && url.pathname.endsWith('/chunk/1')) {
+          if (transientMode && chunk1Fails === 0) {
+            chunk1Fails += 1;
+            return sendJson(503, { error: 'service_unavailable' }, true);
+          }
+          return sendJson(200, { content: 'keepalive-' });
+        }
+        if (req.method === 'GET' && url.pathname.endsWith('/chunk/2')) {
+          return sendJson(200, { content: 'verified' });
+        }
+        res.statusCode = 404;
+        res.end();
+      });
+    });
+    server.on('connection', sock => sockets.add(sock));
+    server.listen(0, '127.0.0.1', () => {
+      base = `http://127.0.0.1:${server.address().port}`;
+      resolve();
+    });
+  });
+  t.after(() => new Promise(resolve => server.close(resolve)));
+
+  // 1) Clean run: POST + GET status + GET chunk/1 + GET chunk/2 all share 1 TCP connection.
+  const cleanRun = await runPythonInput(['call', 'echo', '{}'], { WS_BASE: base, WS_CAP: capability });
+  assert.equal(cleanRun.status, 0, cleanRun.stderr);
+  assert.equal(cleanRun.stdout, 'keepalive-verified\n');
+  assert.equal(requests.length, 4);
+  assert.equal(sockets.size, 1, 'submit, poll, and chunk reads must reuse one keep-alive TCP connection');
+
+  // 2) Transient gateway 502/503 on GET status/chunk retries cleanly without resubmitting POST.
+  requests.length = 0;
+  transientMode = true;
+  const retryRun = await runPythonInput(['call', 'echo', '{}'], { WS_BASE: base, WS_CAP: capability });
+  assert.equal(retryRun.status, 0, retryRun.stderr);
+  assert.equal(retryRun.stdout, 'keepalive-verified\n');
+  assert.equal(requests.filter(r => r.method === 'POST').length, 1, 'POST submission must never be replayed');
+  assert.equal(pollFails, 1);
+  assert.equal(chunk1Fails, 1);
+  assert.equal(requests.filter(r => r.method === 'GET').length, 5);
+});
+
+
+test('python client honors a port-specific NO_PROXY entry', async t => {
+  let proxyRequests = 0;
+  const proxy = createServer((req, res) => { proxyRequests += 1; res.writeHead(502).end(); });
+  await new Promise(resolve => proxy.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => { proxy.closeAllConnections(); proxy.close(resolve); }));
+  const { base, requests } = await pythonFixture(t, () => ({ state: 'completed', result: 'bypassed' }));
+  const authority = new URL(base).host;
+  const run = await runPython(['call', 'echo', '{}'], {
+    WS_BASE: base,
+    http_proxy: `http://127.0.0.1:${proxy.address().port}`,
+    no_proxy: authority,
+    NO_PROXY: authority,
+  });
+  assert.equal(run.status, 0, run.stderr);
+  assert.equal(run.stdout, 'bypassed\n');
+  assert.equal(requests.length, 1);
+  assert.equal(proxyRequests, 0);
+});
+
 test('python client long-polls queued status with one initiator and no 1.5s sleep', async (t) => {
   let polls = 0;
   const { base, requests } = await pythonFixture(t, (entry) => {

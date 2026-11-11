@@ -30,11 +30,14 @@ Usage:
   client.py sh COMMAND... | sh - | sh < script.sh
 """
 
+import base64
 import http.client
 import json
 import os
 import posixpath
 import re
+import select
+import ssl
 import sys
 import tempfile
 import time
@@ -335,35 +338,195 @@ def with_wait(url, seconds):
     return urllib.parse.urlunsplit(parts._replace(query=urllib.parse.urlencode(query)))
 
 
-def request(url, cap=None, method="GET", body=None, idempotent_submission=True, accept="application/json"):
-    headers = {"Accept": accept, "User-Agent": USER_AGENT}
-    if cap:
-        headers["Authorization"] = "Bearer " + cap
-    payload = None
-    if body is not None:
-        payload = json.dumps(body).encode("utf-8")
-        headers["Content-Type"] = "application/json"
-        if idempotent_submission:
-            headers["Idempotency-Key"] = uuid.uuid4().hex
-            if os.environ.get("WS_TURN_ID") is not None:
-                headers["X-Turn-Id"] = os.environ["WS_TURN_ID"]
-    req = urllib.request.Request(url, data=payload, headers=headers, method=method)
-    try:
-        with urllib.request.urlopen(req, timeout=TIMEOUT_SECONDS) as response:
-            return response.headers.get("content-type", ""), response.read()
-    except urllib.error.HTTPError as error:
-        if method == "POST" and idempotent_submission and error.code >= 500:
-            submission_unknown("HTTP %d from %s" % (error.code, url))
+POOL_IDLE_TTL_SECONDS = 4.0
+GET_RETRY_STATUSES = (502, 503, 504)
+GET_MAX_ATTEMPTS = 3
+
+
+class _KeepAlivePool:
+    def __init__(self):
+        self._entries = {}
+
+    def _proxy_for(self, scheme, authority):
+        if urllib.request.proxy_bypass(authority):
+            return None
+        return urllib.request.getproxies().get(scheme)
+
+    def _close_entry(self, key):
+        entry = self._entries.pop(key, None)
+        if entry is not None:
+            try:
+                entry[0].close()
+            except Exception:
+                pass
+
+    def _socket_alive(self, conn, last_used):
+        if conn.sock is None or (time.perf_counter() - last_used) > POOL_IDLE_TTL_SECONDS:
+            return False
         try:
-            raw = error.read()[:300].decode("utf-8", "replace")
-        except (http.client.HTTPException, OSError):
-            raw = "unreadable error response"
-        fail("HTTP %d from %s: %s" % (error.code, url, raw))
-    except (urllib.error.URLError, TimeoutError, ConnectionError, http.client.HTTPException) as error:
-        message = "request failed for %s: %s" % (url, getattr(error, "reason", error))
-        if method == "POST" and idempotent_submission:
-            submission_unknown(message)
-        fail(message)
+            readable, _, _ = select.select([conn.sock], [], [], 0)
+            return not readable
+        except (OSError, ValueError):
+            return False
+
+    def _open_conn(self, scheme, host, port, proxy_url):
+        ctx = ssl.create_default_context() if scheme == "https" or (proxy_url and proxy_url.startswith("https://")) else None
+        if not proxy_url:
+            if scheme == "https":
+                return http.client.HTTPSConnection(host, port, timeout=TIMEOUT_SECONDS, context=ctx), False, None
+            return http.client.HTTPConnection(host, port, timeout=TIMEOUT_SECONDS), False, None
+        parsed_proxy = urllib.parse.urlsplit(proxy_url if "://" in proxy_url else ("http://" + proxy_url))
+        phost = parsed_proxy.hostname
+        pport = parsed_proxy.port or (443 if parsed_proxy.scheme == "https" else 80)
+        if not phost:
+            raise urllib.error.URLError("invalid proxy URL: %s" % proxy_url)
+        proxy_auth = None
+        if parsed_proxy.username is not None:
+            creds = "%s:%s" % (
+                urllib.parse.unquote(parsed_proxy.username),
+                urllib.parse.unquote(parsed_proxy.password or ""),
+            )
+            proxy_auth = "Basic " + base64.b64encode(creds.encode("utf-8")).decode("ascii")
+        if scheme == "https":
+            conn = http.client.HTTPSConnection(phost, pport, timeout=TIMEOUT_SECONDS, context=ctx)
+            tunnel_headers = {"Proxy-Authorization": proxy_auth} if proxy_auth else None
+            conn.set_tunnel(host, port, headers=tunnel_headers)
+            return conn, False, None
+        if parsed_proxy.scheme == "https":
+            conn = http.client.HTTPSConnection(phost, pport, timeout=TIMEOUT_SECONDS, context=ctx)
+        else:
+            conn = http.client.HTTPConnection(phost, pport, timeout=TIMEOUT_SECONDS)
+        return conn, True, proxy_auth
+
+    def request(self, url, cap=None, method="GET", body=None, idempotent_submission=True, accept="application/json"):
+        parts = urllib.parse.urlsplit(url)
+        scheme = parts.scheme.lower()
+        host = parts.hostname
+        try:
+            port = parts.port or (443 if scheme == "https" else 80)
+        except ValueError as error:
+            fail("request failed for %s: %s" % (url, error))
+        if scheme not in ("http", "https") or not host:
+            fail("request failed for %s: unsupported URL" % url)
+
+        headers = {"Accept": accept, "User-Agent": USER_AGENT, "Connection": "keep-alive"}
+        if cap:
+            headers["Authorization"] = "Bearer " + cap
+        payload = None
+        if body is not None:
+            payload = json.dumps(body).encode("utf-8")
+            headers["Content-Type"] = "application/json"
+            headers["Content-Length"] = str(len(payload))
+            if idempotent_submission:
+                headers["Idempotency-Key"] = uuid.uuid4().hex
+                if os.environ.get("WS_TURN_ID") is not None:
+                    headers["X-Turn-Id"] = os.environ["WS_TURN_ID"]
+
+        proxy_url = self._proxy_for(scheme, parts.netloc.rsplit("@", 1)[-1])
+        key = (scheme, host, port, proxy_url or "")
+        attempt = 0
+        while True:
+            attempt += 1
+            entry = self._entries.get(key)
+            reused = False
+            if entry is not None:
+                if self._socket_alive(entry[0], entry[3]):
+                    conn, use_abs_target, proxy_auth, _ = entry
+                    reused = True
+                else:
+                    self._close_entry(key)
+                    entry = None
+            if entry is None:
+                try:
+                    conn, use_abs_target, proxy_auth = self._open_conn(scheme, host, port, proxy_url)
+                except (OSError, ValueError, urllib.error.URLError, http.client.HTTPException) as error:
+                    message = "request failed for %s: %s" % (url, getattr(error, "reason", error))
+                    if method == "POST" and idempotent_submission:
+                        submission_unknown(message)
+                    fail(message)
+
+            req_headers = dict(headers)
+            if use_abs_target and proxy_auth and "Proxy-Authorization" not in req_headers:
+                req_headers["Proxy-Authorization"] = proxy_auth
+            target = url if use_abs_target else ((parts.path or "/") + (("?" + parts.query) if parts.query else ""))
+            conn.timeout = TIMEOUT_SECONDS
+
+            try:
+                conn.request(method, target, body=payload, headers=req_headers)
+                response = conn.getresponse()
+            except (urllib.error.URLError, TimeoutError, ConnectionError, OSError, http.client.HTTPException) as error:
+                self._close_entry(key)
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+                if method == "GET" and reused:
+                    attempt -= 1
+                    continue
+                message = "request failed for %s: %s" % (url, getattr(error, "reason", error))
+                if method == "POST" and idempotent_submission:
+                    submission_unknown(message)
+                fail(message)
+
+            if response.status >= 400:
+                # Detach from the pool without closing the unread error response.
+                self._entries.pop(key, None)
+                if method == "GET" and response.status in GET_RETRY_STATUSES and attempt < GET_MAX_ATTEMPTS:
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+                    time.sleep(0.15 * attempt)
+                    continue
+                if method == "POST" and idempotent_submission and response.status >= 500:
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+                    submission_unknown("HTTP %d from %s" % (response.status, url))
+                try:
+                    raw_err = response.read()[:300].decode("utf-8", "replace")
+                except (http.client.HTTPException, OSError, TimeoutError, ConnectionError):
+                    raw_err = "unreadable error response"
+                finally:
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+                fail("HTTP %d from %s: %s" % (response.status, url, raw_err))
+
+            try:
+                raw = response.read()
+            except (urllib.error.URLError, TimeoutError, ConnectionError, OSError, http.client.HTTPException) as error:
+                self._close_entry(key)
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+                message = "request failed for %s: %s" % (url, getattr(error, "reason", error))
+                if method == "POST" and idempotent_submission:
+                    submission_unknown(message)
+                fail(message)
+
+            content_type = response.getheader("Content-Type", "")
+            if response.will_close:
+                self._close_entry(key)
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+            else:
+                self._entries[key] = (conn, use_abs_target, proxy_auth, time.perf_counter())
+            return content_type, raw
+
+
+_HTTP_POOL = _KeepAlivePool()
+
+
+def request(url, cap=None, method="GET", body=None, idempotent_submission=True, accept="application/json"):
+    return _HTTP_POOL.request(
+        url, cap=cap, method=method, body=body, idempotent_submission=idempotent_submission, accept=accept
+    )
 
 
 def request_json(url, cap=None, method="GET", body=None, idempotent_submission=True):
@@ -1028,7 +1191,7 @@ def cmd_batch(args, default_sequential=False):
         if not isinstance(item_args, dict):
             fail("batch[%d].arguments must be an object" % index)
         validated.append((item["tool"], prepare_batch_arguments(item["tool"], item_args)))
-    initial_wait = preferred_slow_wait(10) if sequential else effective_wait()
+    initial_wait = preferred_slow_wait(10)
     deadline = time.monotonic() + POLL_SECONDS
     batch_payload = {
         "version": 1,
