@@ -7,8 +7,10 @@ const CAPACITY_RETRY_MAX_MS = 250;
 
 function isInteractionCapacityExceeded(error) {
   const message = typeof error?.message === 'string' ? error.message : '';
-  if (!message.includes('interaction_capacity_exceeded')) return false;
-  return error?.code === -32000 || message.includes('-32000');
+  return error?.code === -32000 && (
+    message === 'interaction_capacity_exceeded' ||
+    message === 'MCP error -32000: interaction_capacity_exceeded'
+  );
 }
 
 function sleepMs(ms) {

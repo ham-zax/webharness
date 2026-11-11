@@ -635,6 +635,54 @@ test('overlapping calls retry pre-dispatch 1MCP interaction_capacity_exceeded wi
   }
 });
 
+test('backend errors mentioning capacity are not replayed or marked safe to retry', async t => {
+  const stateDir = mkdtempSync(join(tmpdir(), 'websession-backend-error-'));
+  let calls = 0;
+  const server = createServer(async (req, res) => {
+    if (req.method !== 'POST') { res.writeHead(200).end(); return; }
+    let body = '';
+    for await (const chunk of req) body += chunk;
+    const message = JSON.parse(body);
+    if (message.id === undefined) { res.writeHead(202).end(); return; }
+    let result = {};
+    if (message.method === 'initialize') {
+      result = { protocolVersion: message.params.protocolVersion, capabilities: { tools: {} }, serverInfo: { name: 'fixture', version: '1' } };
+    } else if (message.method === 'tools/list') {
+      result = { tools: CONCURRENCY_TOOLS };
+    } else if (message.method === 'tools/call') {
+      calls += 1;
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ jsonrpc: '2.0', id: message.id, error: {
+        code: -32000, message: 'backend already wrote data, then interaction_capacity_exceeded',
+      } }));
+      return;
+    }
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ jsonrpc: '2.0', id: message.id, result }));
+  });
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  t.after(() => { server.closeAllConnections(); server.close(); });
+  const core = new OperationCore({
+    stateDir, mcpUrl: `http://127.0.0.1:${server.address().port}/mcp`,
+    callbackUrl: 'http://127.0.0.1:9/callback', toolTimeoutMs: 100,
+  });
+  try {
+    const issued = core.store.issueMainCapability(120);
+    await core.permittedTools(issued.token);
+    const batch = core.submitBatch(issued.token, 'backend-error', [
+      parseRequest({ version: 1, tool: 'fixture_write', arguments: {} }),
+    ]);
+    const id = batch.submissions[0].operation.id;
+    await core.waitForOperation(id, 5000);
+    assert.equal(calls, 1);
+    assert.equal(core.store.getOperation(id).state, 'unknown_outcome');
+  } finally {
+    await core.close();
+    rmSync(stateDir, { recursive: true, force: true });
+  }
+});
+
 test('a capability default cwd resolves missing cwd and relative paths across Dev tools', async t => {
   const stateDir = mkdtempSync(join(tmpdir(), 'websession-default-cwd-'));
   const calls = [];
