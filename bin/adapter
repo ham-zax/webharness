@@ -48,7 +48,18 @@ adapter_systemd_available() {
   systemctl --user show-environment >/dev/null 2>&1
 }
 
+adapter_custom_instance() {
+  [ "$ADAPTER_HOST" != "127.0.0.1" ] || \
+  [ "$ADAPTER_PORT" != "3051" ] || \
+  [ -n "${WEBSESSION_ADAPTER_STATE_DIR:-}" ] || \
+  [ -n "${WEBSESSION_ADAPTER_MCP_URL:-}" ] || \
+  [ -n "${WEBSESSION_ADAPTER_LOG_FILE:-}" ]
+}
+
 adapter_unit_managed() {
+  if [ -z "${WEBSESSION_ADAPTER_UNIT_FILE:-}" ] && [ -z "${WEBSESSION_ADAPTER_UNIT_NAME:-}" ] && adapter_custom_instance; then
+    return 1
+  fi
   [ -f "$ADAPTER_UNIT_FILE" ] && adapter_systemd_available
 }
 

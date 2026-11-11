@@ -65,6 +65,7 @@ test_explicit_profile_contract() {
 test_profiles_are_distinct() {
   grep -Fqx 'MCP_SHELL_MODE=allowlist' "$ROOT/config/profiles/restricted.env" || return 1
   grep -Fqx 'MCP_SHELL_MODE=unrestricted' "$ROOT/config/profiles/trusted-dev.env" || return 1
+  grep -Fq "(profile === 'restricted' || profile === 'trusted-dev') ? ['dev']" "$ROOT/scripts/doctor.sh" || return 1
   ! grep -Eq '^MCP_SHELL_ALLOW_' "$ROOT/config/profiles/restricted.env" && \
   ! grep -Eq '^MCP_SHELL_ALLOW_' "$ROOT/config/profiles/trusted-dev.env"
 }
@@ -102,6 +103,9 @@ test_public_classifier_matches_reference_boundary() {
     extensions/job-application/extension.json \
     skills/example/SKILL.md \
     providers/websession-adapter/server.mjs \
+    scripts/install-websession-adapter-user.sh \
+    systemd/websession-adapter.service.in \
+    tests/fixtures/adapter-mcp-stub.mjs \
     bin/adapter \
     bin/websession-call \
     docs/websession-clients.md \

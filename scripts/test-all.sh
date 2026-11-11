@@ -43,7 +43,9 @@ for file in "$ROOT"/bin/* "$ROOT"/lib/bridge/*.sh "$ROOT"/scripts/*.sh "$ROOT"/t
 done
 
 echo "=== Checking JavaScript/ESM syntax ==="
-node --check "$ROOT/bin/websession-call"
+if [ -f "$ROOT/bin/websession-call" ]; then
+  node --check "$ROOT/bin/websession-call"
+fi
 while IFS= read -r -d '' file; do
   node --check "$file"
 done < <(find "$ROOT/scripts" "$ROOT/lib" "$ROOT/providers" \

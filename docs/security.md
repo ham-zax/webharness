@@ -7,8 +7,7 @@ The effective security boundary is the selected profile plus the Linux account r
 Use when conservative workspace-bounded authority is required.
 
 - Files are confined to the configured workspace.
-- Dev does not expose unrestricted `exec` or Bash.
-- A separate legacy shell provider enforces an allowlist policy.
+- Dev does not expose `exec` or Bash.
 - Local is not present, so Terminal, Host, and Browser logical servers are absent.
 
 ## `trusted-dev`

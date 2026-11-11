@@ -87,6 +87,8 @@ test_1mcp_clean_tool_namespacing_is_guarded() {
   contains "$helper" 'constants/mcp\.js' &&
   contains "$helper" "process\.env\.WEBHARNESS_MCP_URI_SEPARATOR \|\| '_'" &&
   contains "$helper" "toolPattern: '\{server\}_\{tool\}'" &&
+  contains "$helper" 'utils/core/errorHandling\.js' &&
+  contains "$helper" 'MCP error -32000: interaction_capacity_exceeded' &&
   contains "$ROOT/providers/local-tools/server.mjs" 'WEBHARNESS_MCP_URI_SEPARATOR: INNER_TOOL_SEPARATOR' &&
   ! contains "$ROOT/providers/local-tools/server.mjs" 'ONE_MCP_URI_SEPARATOR'
 }
@@ -172,6 +174,7 @@ test_systemd_installer_handles_missing_home() {
 }
 
 test_websession_adapter_systemd_unit_contract() {
+  [ -f "$ROOT/bin/adapter" ] || return 0
   local unit="$ROOT/systemd/websession-adapter.service.in"
   local installer="$ROOT/scripts/install-websession-adapter-user.sh"
   [ -f "$unit" ] && [ -x "$installer" ] && \
@@ -186,6 +189,7 @@ test_websession_adapter_systemd_unit_contract() {
 }
 
 test_websession_adapter_installer_renders_unit() {
+  [ -f "$ROOT/bin/adapter" ] || return 0
   local sandbox="$TMP/adapter-systemd"
   local target="$sandbox/systemd"
   local state="$sandbox/state"

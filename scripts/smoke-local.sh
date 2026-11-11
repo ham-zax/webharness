@@ -44,6 +44,10 @@ if (local) {
     if (!oneMcpConstants.includes("process.env.WEBHARNESS_MCP_URI_SEPARATOR || '_'")) {
       throw new Error('installed 1MCP is missing the WebHarness clean tool namespacing patch');
     }
+    const oneMcpErrorHandling = fs.readFileSync(path.join(oneMcpRoot, 'build', 'utils', 'core', 'errorHandling.js'), 'utf8');
+    if (!oneMcpErrorHandling.includes("MCP error -32000: interaction_capacity_exceeded")) {
+      throw new Error('installed 1MCP is missing the WebHarness capacity error passthrough patch');
+    }
   }
   if (JSON.stringify(local.tags ?? []) !== JSON.stringify(['local'])) throw new Error('Local broker must use only the local tag');
   const pkg = JSON.parse(fs.readFileSync(path.join(repoRoot, 'providers', 'local-tools', 'package.json'), 'utf8'));

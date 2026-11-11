@@ -83,6 +83,31 @@ if (source.includes(upstream)) {
 NODE
 echo "  patched restart-stable tailable rotation"
 
+echo "== applying pinned 1MCP legacy capacity error passthrough =="
+ERROR_HANDLING="$(npm root -g)/@1mcp/agent/build/utils/core/errorHandling.js"
+node --input-type=module - "$ERROR_HANDLING" <<'NODE'
+import fs from 'node:fs';
+const [errorHandlingPath] = process.argv.slice(2);
+const upstream = `            // Rethrow MCPErrors as is
+            if (error instanceof MCPError) {
+                throw error;
+            }`;
+const patched = `            // Rethrow MCPErrors and 1MCP's own legacy admission capacity errors as is
+            if (error instanceof MCPError ||
+                (error?.name === 'McpError' && error?.code === -32000 && error?.message === 'MCP error -32000: interaction_capacity_exceeded')) {
+                throw error;
+            }`;
+
+let source = fs.readFileSync(errorHandlingPath, 'utf8');
+if (source.includes(upstream)) {
+  source = source.replace(upstream, patched);
+  fs.writeFileSync(errorHandlingPath, source);
+} else if (!source.includes(patched)) {
+  throw new Error('pinned 1MCP errorHandling.js source shape changed; refusing an unsafe capacity error patch');
+}
+NODE
+echo "  patched pre-dispatch interaction_capacity_exceeded error passthrough"
+
 echo "== verifying pinned 1MCP supervised-restart capability preservation =="
 SUPERVISOR_IMPL="$(npm root -g)/@1mcp/agent/build/core/server/backendStdioSupervisor.js"
 node --input-type=module - "$SUPERVISOR_IMPL" <<'NODE'

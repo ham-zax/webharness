@@ -64,7 +64,7 @@ Linux `browser-fast` reads the current-user-owned `~/.config/mcp-dev-bridge/brow
 ### `restricted`
 
 - Dev Files: workspace-bounded `read`, `edit`, `write`.
-- Shell: separate allowlisted legacy shell.
+- Dev execution: disabled (`exec` and `bash` are omitted).
 - No Local provider, so Terminal, Host, and Browser logical servers are absent.
 
 ### `trusted-dev`
@@ -121,7 +121,7 @@ node scripts/render-config.mjs \
   --env-file .env
 ```
 
-The renderer accepts `restricted`, `trusted-dev`, and `personal`.
+The renderer accepts `restricted`, `trusted-dev`, `personal`, and `server`.
 
 Useful options:
 

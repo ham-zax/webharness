@@ -4,7 +4,7 @@ WebHarness exposes development capabilities to ChatGPT and other MCP clients. Th
 
 ## Profiles
 
-- `restricted` keeps Files workspace-bounded and uses a separate allowlisted shell.
+- `restricted` keeps Files workspace-bounded and omits shell execution.
 - `trusted-dev` keeps Files workspace-bounded but gives native Bash the authority of the Linux service user.
 - `personal` is the full Personal Workstation reference profile with WSL-user Files/Bash authority plus Code, persistent Terminal, waits, and Local/Browser capabilities.
 

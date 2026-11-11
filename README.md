@@ -71,7 +71,7 @@ There is no silent default. Pick the authority you intend to give the agent.
 | Profile | Authority | Reference role |
 |---|---|---|
 | `personal` | WSL-user Dev primitives plus Local logical servers for persistent Terminal, Browser, host sleep, and owner-added MCPs | maintained full Personal Workstation reference |
-| `restricted` | workspace-bounded files plus an allowlisted legacy shell | conservative smaller example |
+| `restricted` | workspace-bounded file tools without shell execution | conservative smaller example |
 | `trusted-dev` | workspace-bounded files plus unrestricted structured argv execution and Bash as the Linux service user | smaller trusted-development example; use only on a dedicated host |
 
 `trusted-dev` and `personal` can act with the Linux account's authority. The `personal` Local domain can additionally control its dedicated Windows MCP Chrome profile after explicit `tag:local` authorization. Read [Security](docs/security.md) before enabling either powerful profile.

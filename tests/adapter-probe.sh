@@ -6,6 +6,7 @@ TMP="$(mktemp -d)"
 PORT="$((41000 + ($$ % 1000)))"
 BASE="http://127.0.0.1:$PORT"
 STUB_PID=''
+HEALTH_PID=''
 MCP_URL=''
 
 mkdir -p "$TMP/home" "$TMP/state" "$TMP/run"
@@ -13,6 +14,7 @@ mkdir -p "$TMP/home" "$TMP/state" "$TMP/run"
 adapter() {
   env \
     HOME="$TMP/home" \
+    XDG_CONFIG_HOME="$TMP/home/.config" \
     XDG_STATE_HOME="$TMP/state" \
     XDG_RUNTIME_DIR="$TMP/run" \
     WEBSESSION_ADAPTER_PORT="$PORT" \
@@ -23,7 +25,12 @@ adapter() {
 }
 
 cleanup() {
+  rm -f "$TMP/home/.config/systemd/user/websession-adapter.service"
   adapter stop >/dev/null 2>&1 || true
+  if [[ -n $HEALTH_PID ]]; then
+    kill "$HEALTH_PID" 2>/dev/null || true
+    wait "$HEALTH_PID" 2>/dev/null || true
+  fi
   if [[ -n $STUB_PID ]]; then
     kill "$STUB_PID" 2>/dev/null || true
     wait "$STUB_PID" 2>/dev/null || true
@@ -232,6 +239,7 @@ adapter_systemd() {
     XDG_CONFIG_HOME="$TMP/home/.config" \
     XDG_STATE_HOME="$TMP/state" \
     XDG_RUNTIME_DIR="$TMP/run" \
+    WEBSESSION_ADAPTER_UNIT_FILE="$TMP/home/.config/systemd/user/websession-adapter.service" \
     WEBSESSION_ADAPTER_PORT="$PORT" \
     WEBSESSION_ADAPTER_MCP_URL="$MCP_URL" \
     WEBSESSION_ADAPTER_LOG_FILE="$TMP/adapter.log" \
@@ -260,5 +268,7 @@ grep -Fq -- '--user stop websession-adapter.service' "$SYSTEMCTL_LOG"
 
 kill "$HEALTH_PID" 2>/dev/null || true
 wait "$HEALTH_PID" 2>/dev/null || true
+HEALTH_PID=''
+rm -f "$TMP/home/.config/systemd/user/websession-adapter.service"
 
 echo "adapter probe isolation OK"

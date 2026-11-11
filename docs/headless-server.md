@@ -4,7 +4,7 @@ Use the `server` profile for a trusted owner's Linux server. It publishes the sa
 
 ## Install
 
-Prerequisites: Linux with systemd user services, Node.js 24+, npm, tmux, git, curl, flock, and cloudflared. Install a native binary for the host architecture. The server profile does not need the legacy shell provider or uv.
+Prerequisites: Linux with systemd user services, Node.js 24+, npm, tmux, git, curl, flock, and cloudflared. Install a native binary for the host architecture.
 
 Clone the same WebHarness revision used on the workstation. Copy `.env.example` to a private `.env` and set a separate public HTTPS origin, tunnel name, and existing workspace directory. Use a separate machine account and retain that account's state across upgrades.
 

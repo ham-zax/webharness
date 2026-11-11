@@ -137,4 +137,4 @@ The destination must be a clean existing Git repository. Staging preserves its `
 
 ## Dependency upgrades
 
-Treat 1MCP, Pi coding primitives, MCP SDK/Zod, tmux behavior, and the legacy restricted-shell dependency as qualified pins. Upgrade intentionally and rerun the relevant provider, lifecycle, OAuth, and product-path acceptance.
+Treat 1MCP, Pi coding primitives, MCP SDK/Zod, and tmux behavior as qualified pins. Upgrade intentionally and rerun the relevant provider, lifecycle, OAuth, and product-path acceptance.

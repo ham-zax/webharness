@@ -8,7 +8,7 @@ usage() {
 Usage: scripts/setup.sh --profile <restricted|trusted-dev> [options]
 
 Required:
-  --profile restricted   Conservative shell policy for general installs
+  --profile restricted   Workspace-bounded file tools without shell execution
   --profile trusted-dev  Unrestricted agentic shell as the Linux service user
 
 Options:

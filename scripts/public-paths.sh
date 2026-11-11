@@ -16,10 +16,14 @@ is_public_path() {
     bin/adapter | \
     bin/websession-call | \
     providers/websession-adapter/* | \
+    scripts/install-websession-adapter-user.sh | \
+    systemd/websession-adapter.service.in | \
     docs/websession-clients.md | \
     docs/websession-master-bearer.md | \
     docs/migration-from-local-bridge.md | \
     tests/adapter-probe.sh | \
+    tests/fixtures/adapter-mcp-stub.mjs | \
+    tests/fixtures/adapter-client-cases.sh | \
     scripts/export-personal-wsl-state.sh | \
     scripts/import-personal-wsl-state.sh | \
     docs/personal/wsl-migration.md | \
@@ -41,7 +45,7 @@ is_public_path() {
 
 public_tracked_files() {
   local root="$1" path
-  git -C "$root" ls-files | while IFS= read -r path; do
+  git -C "$root" -c core.quotepath=false ls-files | while IFS= read -r path; do
     is_public_path "$path" || continue
     printf '%s\n' "$path"
   done

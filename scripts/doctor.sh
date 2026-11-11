@@ -176,7 +176,7 @@ const fs = require('fs');
 const [profile, outerFile, innerFile, ownerLocalServers] = process.argv.slice(2);
 const keys = value => Object.keys(value?.mcpServers ?? {}).sort();
 const outer = JSON.parse(fs.readFileSync(outerFile, 'utf8'));
-const expectedOuter = profile === 'restricted' ? ['dev', 'shell'] : profile === 'trusted-dev' ? ['dev'] : ['dev', 'local'];
+const expectedOuter = (profile === 'restricted' || profile === 'trusted-dev') ? ['dev'] : ['dev', 'local'];
 if (JSON.stringify(keys(outer)) !== JSON.stringify(expectedOuter)) process.exit(1);
 if (profile === 'personal') {
   const inner = JSON.parse(fs.readFileSync(innerFile, 'utf8'));
