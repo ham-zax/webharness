@@ -26,6 +26,7 @@ const TRANSCRIPT_FINALIZER_HOOK = 'pane-died[100]';
 const TRANSCRIPT_FINALIZED_OPTION = '@wsl_agent_transcript_finalized';
 const ORIGINAL_DEAD_PID_OPTION = '@wsl_agent_original_dead_pid';
 const ORIGINAL_DEAD_STATUS_OPTION = '@wsl_agent_original_dead_status';
+const ORIGINAL_DEAD_SIGNAL_OPTION = '@wsl_agent_original_dead_signal';
 const COLLAB_CLIENT_PID_OPTION = '@wsl_agent_collab_client_pid';
 const COLLAB_CLIENT_TTY_OPTION = '@wsl_agent_collab_client_tty';
 const COLLAB_CLIENT_CREATED_OPTION = '@wsl_agent_collab_client_created';
@@ -64,6 +65,30 @@ function parseStatus(value) {
   if (value === '' || value === undefined) return null;
   const number = Number(value);
   return Number.isInteger(number) ? number : null;
+}
+
+// tmux 3.4 withholds pane_dead_status while a pipe-pane job is still attached,
+// leaving the pane child unreaped as a zombie. /proc/<pid>/stat field 52 keeps
+// the encoded wait status, so the exit code stays recoverable until tmux reaps.
+async function readProcExitStatus(pid) {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return null;
+  let raw;
+  try {
+    raw = await readFile(`/proc/${pid}/stat`, 'utf8');
+  } catch {
+    return null;
+  }
+  const close = raw.lastIndexOf(')');
+  if (close === -1) return null;
+  const fields = raw.slice(close + 2).trim().split(/\s+/);
+  if (fields[0] !== 'Z' && fields[0] !== 'X') return null;
+  const encoded = Number(fields[49]);
+  if (!Number.isInteger(encoded) || encoded < 0) return null;
+  const signal = encoded & 0x7f;
+  const status = (encoded >> 8) & 0xff;
+  return signal === 0
+    ? { status: String(status), signal: '' }
+    : { status: '', signal: String(signal) };
 }
 
 function sessionInfoFromFields(fields) {
@@ -159,6 +184,19 @@ export class TmuxBackend {
     }
   }
 
+  async runShell(script, args = [], { maxBuffer = 4 * 1024 * 1024 } = {}) {
+    try {
+      return await execFileAsync('/bin/sh', [script, ...args], { encoding: 'utf8', maxBuffer });
+    } catch (error) {
+      const stderr = String(error?.stderr || '').trim();
+      const message = stderr || error?.message || 'transcript finalizer failed';
+      throw new TerminalError('TMUX_ERROR', message, {
+        command: 'transcript-finalizer',
+        exitCode: Number.isInteger(error?.code) ? error.code : undefined,
+      });
+    }
+  }
+
   async ensureStateRoot() {
     await mkdir(this.sessionsRoot, { recursive: true, mode: 0o700 });
     await chmod(this.stateRoot, 0o700);
@@ -246,7 +284,14 @@ export class TmuxBackend {
     const { stdout } = await this.run([
       'display-message', '-p', '-t', `${name}:0.0`, SESSION_INFO_FORMAT_FIELDS.join('|'),
     ]);
-    return sessionInfoFromFields(stdout.trimEnd().split('|'));
+    const info = sessionInfoFromFields(stdout.trimEnd().split('|'));
+    // tmux 3.4 can withhold the exit status until the transcript pipe closes.
+    // Read it from the unreaped child so observers see it at pane death.
+    if (info.paneDead && info.paneDeadStatus === null) {
+      const resolved = await readProcExitStatus(info.panePid);
+      if (resolved && resolved.status !== '') info.paneDeadStatus = Number(resolved.status);
+    }
+    return info;
   }
 
   async listClients() {
@@ -438,8 +483,11 @@ export class TmuxBackend {
     };
   }
 
-  transcriptFinalizerArgs({ paneId, panePid, paneDeadStatus, paneDeadSignal }) {
-    const screenBuffer = `wsl-agent-transcript-finalizer-${paneId}`;
+  // The finalizer resolves the dead status itself: tmux may fire pane-died
+  // before the status is readable, so an empty status falls back to the
+  // unreaped child's /proc entry. The script lives in a file because a tmux
+  // hook argument is re-parsed and would expand its shell variables.
+  transcriptFinalizerScript() {
     const tmuxCommand = [
       shellQuote(this.tmuxBin),
       ...this.baseArgs().map(shellQuote),
@@ -448,43 +496,82 @@ export class TmuxBackend {
       'stty -echo;',
       'read -r _;',
       'stty echo;',
-      `${tmuxCommand} save-buffer -b ${shellQuote(screenBuffer)} - | sed '$d';`,
-      `${tmuxCommand} delete-buffer -b ${shellQuote(screenBuffer)};`,
-      `if [ -n "${paneDeadSignal}" ]; then`,
-      `kill -s "${paneDeadSignal}" "$$";`,
+      `${tmuxCommand} save-buffer -b wsl-agent-transcript-finalizer-$pane - | sed '\\$d';`,
+      `${tmuxCommand} delete-buffer -b wsl-agent-transcript-finalizer-$pane;`,
+      'if [ -n \\"$signal\\" ]; then',
+      'kill -s \\"$signal\\" \\"\\$\\$\\";',
       'else',
-      `exit "${paneDeadStatus}";`,
+      'exit \\"$status\\";',
       'fi',
     ].join(' ');
+    const commandList = [
+      'capture-pane -t "$pane" -b "$buf"',
+      `set-option -p -t "$pane" ${ORIGINAL_DEAD_PID_OPTION} "$pid"`,
+      `set-option -p -t "$pane" ${ORIGINAL_DEAD_STATUS_OPTION} "$status"`,
+      `set-option -p -t "$pane" ${ORIGINAL_DEAD_SIGNAL_OPTION} "$signal"`,
+      `set-option -p -t "$pane" ${TRANSCRIPT_FINALIZED_OPTION} 1`,
+      'respawn-pane -k -t "$pane" "$term"',
+      'pipe-pane -t "$pane"',
+      `set-hook -p -u -t "$pane" ${shellQuote(TRANSCRIPT_FINALIZER_HOOK)}`,
+      'send-keys -t "$pane" Enter',
+    ].join(" ';' ");
     return [
-      'capture-pane', '-t', paneId, '-b', screenBuffer, ';',
-      'set-option', '-p', '-t', paneId, ORIGINAL_DEAD_PID_OPTION, panePid, ';',
-      'set-option', '-p', '-t', paneId, ORIGINAL_DEAD_STATUS_OPTION, paneDeadStatus, ';',
-      'set-option', '-p', '-t', paneId, TRANSCRIPT_FINALIZED_OPTION, '1', ';',
-      'respawn-pane', '-k', '-t', paneId, terminationCommand, ';',
-      'pipe-pane', '-t', paneId, ';',
-      'set-hook', '-p', '-u', '-t', paneId, TRANSCRIPT_FINALIZER_HOOK, ';',
-      'send-keys', '-t', paneId, 'Enter',
-    ];
+      '#!/bin/sh',
+      'pane=$1',
+      'status=$2',
+      'signal=$3',
+      'state_dir=$(dirname "$0")',
+      'if [ -z "$pane" ]; then exit 0; fi',
+      `info=$(${tmuxCommand} display-message -p -t "$pane" '#{pane_pid}|#{pane_dead}|#{pane_dead_status}|#{pane_dead_signal}|#{${TRANSCRIPT_FINALIZED_OPTION}}' 2>/dev/null) || exit 0`,
+      'pid=${info%%|*}',
+      'rest=${info#*|}',
+      'dead=${rest%%|*}',
+      'rest=${rest#*|}',
+      'tmux_status=${rest%%|*}',
+      'rest=${rest#*|}',
+      'tmux_signal=${rest%%|*}',
+      'finalized=${rest#*|}',
+      'if [ -z "$status" ] && [ -z "$signal" ]; then',
+      '  status=$tmux_status',
+      '  signal=$tmux_signal',
+      'fi',
+      'if [ "$finalized" = "1" ] || [ "$dead" != "1" ]; then exit 0; fi',
+      'if [ -z "$status" ] && [ -z "$signal" ]; then',
+      '  raw=$(sed \'s/.*) //\' "/proc/$pid/stat" 2>/dev/null | awk \'{print $50}\')',
+      '  case "$raw" in \'\'|*[!0-9]*) ;; *) sig=$((raw & 127)); if [ "$sig" -ne 0 ]; then signal=$sig; else status=$((raw >> 8)); fi ;; esac',
+      'fi',
+      'if [ -z "$status" ] && [ -z "$signal" ]; then exit 0; fi',
+      'lock="$state_dir/.finalizer-$pid.lock"',
+      'mkdir "$lock" 2>/dev/null || exit 0',
+      'trap \'rmdir "$lock" 2>/dev/null\' EXIT',
+      'buf="wsl-agent-transcript-finalizer-$pane"',
+      `term="${terminationCommand}"`,
+      `${tmuxCommand} ${commandList}`,
+      // tmux 3.4 can miss the respawned pane's SIGCHLD, leaving its exit status
+      // unrecorded. Nudge the server a few times after the pane dies.
+      `server=$(${tmuxCommand} display-message -p '#{pid}' 2>/dev/null)`,
+      'if [ -n "$server" ]; then',
+      '  ( i=0; while [ "$i" -lt 10 ]; do sleep 0.2; kill -s CHLD "$server" 2>/dev/null; i=$((i+1)); done ) >/dev/null 2>&1 &',
+      'fi',
+    ].join('\n');
+  }
+
+  async ensureTranscriptFinalizerScript() {
+    if (this.finalizerScriptPath) return this.finalizerScriptPath;
+    await this.ensureStateRoot();
+    const scriptPath = path.join(this.stateRoot, 'transcript-finalizer.sh');
+    await writeFile(scriptPath, `${this.transcriptFinalizerScript()}\n`, { mode: 0o700 });
+    await chmod(scriptPath, 0o700);
+    this.finalizerScriptPath = scriptPath;
+    return scriptPath;
   }
 
   async installTranscriptFinalizer(name) {
     validateSessionName(name);
-    const args = this.transcriptFinalizerArgs({
-      paneId: '#{pane_id}',
-      panePid: '#{pane_pid}',
-      paneDeadStatus: '#{pane_dead_status}',
-      paneDeadSignal: '#{pane_dead_signal}',
-    });
-    const shellCommand = [
-      shellQuote(this.tmuxBin),
-      ...this.baseArgs().map(shellQuote),
-      ...args.map(shellQuote),
-    ].join(' ');
-    const guardedCommand = `if [ -n "#{pane_dead_status}#{pane_dead_signal}" ]; then ${shellCommand}; fi`;
+    const scriptPath = await this.ensureTranscriptFinalizerScript();
     await this.run([
       'set-hook', '-p', '-t', `${name}:0.0`, TRANSCRIPT_FINALIZER_HOOK,
-      `run-shell -b ${shellQuote(guardedCommand)}`,
+      `run-shell -b ${shellQuote(`sh ${shellQuote(scriptPath)} #{pane_id}`)}`,
     ]);
   }
 
@@ -492,9 +579,13 @@ export class TmuxBackend {
     validateSessionName(name);
     const original = state ?? await this.transcriptFinalizerState(name);
     if (!original.paneDead || !original.panePipe || original.finalized) return false;
-    if (original.paneDeadStatus === '' && original.paneDeadSignal === '') return false;
+    const resolved = original.paneDeadStatus !== '' || original.paneDeadSignal !== ''
+      ? { status: original.paneDeadStatus, signal: original.paneDeadSignal }
+      : await readProcExitStatus(Number(original.panePid));
+    if (!resolved) return false;
 
-    await this.run(this.transcriptFinalizerArgs(original));
+    const scriptPath = await this.ensureTranscriptFinalizerScript();
+    await this.runShell(scriptPath, [original.paneId, resolved.status, resolved.signal]);
     const deadline = Date.now() + 3000;
     while (Date.now() < deadline) {
       const current = await this.transcriptFinalizerState(name);
@@ -506,11 +597,18 @@ export class TmuxBackend {
 
   async installTranscriptPipe(name, sessionDir = this.sessionDir(name)) {
     await ensureTranscript(sessionDir, { budgetBytes: this.transcriptBudgetBytes });
+    const finalizerPath = await this.ensureTranscriptFinalizerScript();
     const pipeCommand = [
       shellQuote(this.nodeBin),
       shellQuote(TRANSCRIPT_WRITER),
       shellQuote(sessionDir),
       shellQuote(String(this.transcriptBudgetBytes)),
+      shellQuote(this.tmuxBin),
+      shellQuote(this.socketPath ?? ''),
+      shellQuote(this.socketPath ? '' : this.socketName),
+      shellQuote('#{pane_id}'),
+      shellQuote(finalizerPath),
+      shellQuote('#{pane_pid}'),
     ].join(' ');
     await this.run(['pipe-pane', '-o', '-t', `${name}:0.0`, pipeCommand]);
   }
