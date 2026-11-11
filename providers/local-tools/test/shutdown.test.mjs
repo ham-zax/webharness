@@ -121,7 +121,7 @@ for (const mode of ['eof', 'sigterm']) {
     });
     const client = new Client(
       { name: 'local-shutdown-test', version: '1.0.0' },
-      { capabilities: {}, versionNegotiation: { pin: '2026-07-28' } },
+      { capabilities: {}, versionNegotiation: { mode: { pin: '2026-07-28' } } },
     );
     await client.connect(transport);
     const brokerPid = transport.pid;
@@ -195,7 +195,7 @@ test('local-tools idle eviction reaps an idle downstream server and its process 
   });
   const client = new Client(
     { name: 'local-idle-test', version: '1.0.0' },
-    { capabilities: {}, versionNegotiation: { pin: '2026-07-28' } },
+    { capabilities: {}, versionNegotiation: { mode: { pin: '2026-07-28' } } },
   );
   t.after(() => transport.close().catch(() => {}));
   await client.connect(transport);

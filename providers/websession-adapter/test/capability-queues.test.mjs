@@ -353,7 +353,7 @@ test('real pi-dev coordinates concurrent same-file dev_edit calls across two Web
   });
   const piClient = new Client(
     { name: 'pidev-bridge-test', version: '1.0.0' },
-    { capabilities: {}, versionNegotiation: { pin: '2026-07-28' } },
+    { capabilities: {}, versionNegotiation: { mode: { pin: '2026-07-28' } } },
   );
   await piClient.connect(stdioTransport);
   t.after(async () => {

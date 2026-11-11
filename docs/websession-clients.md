@@ -146,7 +146,7 @@ Client environment overrides:
 
 - `WS_BASE` and `WS_CAP` select an explicit host/capability. With `WS_CAP`, the saved client cwd is ignored unless `WS_CWD` is set.
 - `WS_CWD` overrides the saved cwd; an empty value disables client-side cwd injection.
-- `WS_WAIT` selects the initial POST hold in whole seconds (`0..90`, default `2`). `0` returns the operation recovery URL promptly; later status reads long-poll it.
+- `WS_WAIT` selects the initial POST hold in whole seconds (`0..90`, default `2`; `batch`, `pipe`, and `l*` commands floor to `10` when `WS_WAIT` is unset). `0` returns the operation recovery URL promptly; later status reads long-poll it over the same keep-alive HTTP connection.
 - `WS_TURN_ID` enables the existing cooperative turn fence. Assign increasing turn numbers when several requests share a capability.
 - `WS_MAX_OUTPUT` caps displayed UTF-8 payload bytes (default `4096`; `0` prints everything).
 

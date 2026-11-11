@@ -847,6 +847,7 @@ export class LazyInner1Mcp {
     this.closePromise = null;
     this.inFlight = 0;
     this.timer = null;
+    this.shutdownPromise = null;
     this.closed = false;
   }
 
@@ -949,10 +950,11 @@ export class LazyInner1Mcp {
     if (active) await Promise.resolve().then(() => active.close()).catch(() => {});
   }
 
-  async close() {
-    if (this.closed) return;
+  close() {
+    if (this.shutdownPromise) return this.shutdownPromise;
     this.closed = true;
-    await this.evict();
+    this.shutdownPromise = this.evict();
+    return this.shutdownPromise;
   }
 }
 

@@ -696,6 +696,31 @@ test('lazy inner close waits for a pending start and closes the started inner', 
   assert.equal(created[0].closeCount, 1);
 });
 
+test('concurrent lazy inner close calls both wait for in-flight eviction', async () => {
+  let releaseClose;
+  const closeGate = new Promise(resolve => { releaseClose = resolve; });
+  let closeFinished = false;
+  const lazy = new LazyInner1Mcp({
+    idleMs: 0,
+    start: async () => ({
+      alive: true,
+      async listTools() { return { tools: [] }; },
+      async callTool() { return { content: [] }; },
+      async close() { await closeGate; closeFinished = true; }
+    })
+  });
+  await lazy.listTools();
+  const firstClose = lazy.close();
+  const secondClose = lazy.close();
+  let secondSettledEarly = false;
+  secondClose.then(() => { if (!closeFinished) secondSettledEarly = true; });
+  await sleep(30);
+  assert.equal(secondSettledEarly, false, 'concurrent close caller must not resolve before eviction finishes');
+  releaseClose();
+  await Promise.all([firstClose, secondClose]);
+  assert.equal(closeFinished, true);
+});
+
 test('broker works through the lazy inner wrapper without starting it on construction', async t => {
   const { created, start } = fakeInnerFactory();
   const lazy = new LazyInner1Mcp({ start, idleMs: 0 });

@@ -162,7 +162,7 @@ test('SIGTERM on pi-dev stdio server exits 0 and reaps execution worker and acti
     },
     stderr: 'pipe',
   });
-  const client = new Client({ name: 'sigterm-test', version: '1.0.0' }, { capabilities: {}, versionNegotiation: { pin: '2026-07-28' } });
+  const client = new Client({ name: 'sigterm-test', version: '1.0.0' }, { capabilities: {}, versionNegotiation: { mode: { pin: '2026-07-28' } } });
   await client.connect(transport);
   const serverPid = transport.pid;
   assert.ok(serverPid > 0);

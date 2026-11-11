@@ -125,7 +125,7 @@ for (const mode of ['eof', 'sigterm']) {
     });
     const client = new Client(
       { name: 'browser-shutdown-test', version: '1.0.0' },
-      { capabilities: {}, versionNegotiation: { pin: '2026-07-28' } },
+      { capabilities: {}, versionNegotiation: { mode: { pin: '2026-07-28' } } },
     );
     await client.connect(transport);
     const facadePid = transport.pid;

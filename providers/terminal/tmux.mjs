@@ -84,7 +84,7 @@ function sessionInfoFromFields(fields) {
   const finalized = parseBoolean(transcriptFinalized);
   const preservedPid = Number(originalDeadPid);
   const preservedStatus = parseStatus(originalDeadStatus);
-  const isDead = parseBoolean(paneDead);
+  const isDead = parseBoolean(paneDead) || finalized;
   return {
     name: sessionName,
     serverPid: Number(serverPid),
@@ -92,9 +92,9 @@ function sessionInfoFromFields(fields) {
       ? preservedPid
       : Number(panePid),
     paneDead: isDead,
-    paneDeadStatus: isDead
-      ? (finalized && preservedStatus !== null ? preservedStatus : parseStatus(paneDeadStatus))
-      : null,
+    paneDeadStatus: finalized
+      ? preservedStatus
+      : (isDead ? parseStatus(paneDeadStatus) : null),
     cols: Number(width),
     rows: Number(height),
     attachedClients: Number(attachedClients),
@@ -603,7 +603,7 @@ export class TmuxBackend {
     const finalizer = await this.transcriptFinalizerState(name);
     if (finalizer.paneDead) {
       await this.finalizeDeadTranscriptPipe(name, finalizer);
-    } else {
+    } else if (!finalizer.finalized) {
       if (!finalizer.panePipe) await this.installTranscriptPipe(name, dataDir);
       await this.installTranscriptFinalizer(name);
     }
