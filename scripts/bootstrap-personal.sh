@@ -77,6 +77,7 @@ if [ "${PERSONAL_BOOTSTRAP_SKIP_INSTALL:-0}" != "1" ]; then
   npm --prefix "$ROOT/providers/browser-fast" ci --omit=dev
   npm --prefix "$ROOT/providers/local-tools" ci --omit=dev
   npm --prefix "$ROOT/providers/skill-library" ci --omit=dev
+  npm --prefix "$ROOT/providers/websession-adapter" ci --omit=dev
 
   echo "== installing pinned Personal Workstation native runtimes =="
   "$ROOT/scripts/setup-cloakbrowser.sh"

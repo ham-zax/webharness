@@ -75,3 +75,13 @@ the proxy already owns.
 **Do it when** a future incident shows a name-search need that repeated bounded
 listings cannot meet, or when a gateway rejection must be attributed to a
 specific layer and `bin/status` plus the 1MCP log no longer suffice.
+
+## Report WebSession adapter health in `bin/status`
+
+**Status:** proposal after the 2026-11-11 `/v1/*` 502 incident. The adapter now has its own unit, but nothing reports it.
+
+**Today.** `bin/status` reports the bridge, the wake proxy, 1MCP, and the terminal broker. It does not mention the adapter. The watchdog probes the public `/mcp` path only. When the adapter stops, `/health` still answers 200, so the deployment looks healthy while `/v1/*` returns 502 after about 30 s.
+
+**Proposal.** Add one read-only line to `bin/status` when the adapter unit is installed or the adapter port answers: unit state, `MainPID`, and `/health/ready`. Report it as informational, not as a bridge failure, because the adapter stays optional. Do not add adapter recovery to the bridge watchdog: the unit already restarts it.
+
+**Do it when** an operator must check `/v1/*` separately from `/mcp`, or when a second silent adapter stop costs an outage.

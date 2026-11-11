@@ -32,14 +32,33 @@ Omitting `--enable-startup` prepares dependencies/configuration and the user-loc
 
 ## Optional WebSession HTTP compatibility adapter
 
-WebSession is intentionally **manual/on-demand** and is separate from the main bridge lifecycle. Neither `webharness start` nor the personal user-systemd units start or supervise it.
+WebSession is separate from the main bridge lifecycle. Neither `webharness start` nor the `mcp-dev-bridge` service starts or supervises it. Choose one of two modes.
 
-Start it only for an HTTP compatibility window:
+### Supervised mode
+
+Install the adapter's own user unit once:
+
+```bash
+scripts/install-websession-adapter-user.sh
+```
+
+The installer renders `websession-adapter.service`, enables it for user-session startup, and starts it. The unit runs `bin/adapter run`, restarts the adapter after a crash, and appends the request log to the state log directory. While the unit is installed, `bin/adapter start`, `bin/adapter stop` and `bin/adapter status` delegate to `systemctl --user`. See [WebSession adapter lifetime](designs/websession-adapter-lifetime.md) for the lifetime model and the cgroup rules.
+
+```bash
+bin/adapter status
+journalctl --user -u websession-adapter.service -f
+```
+
+### Manual mode
+
+Without the unit, start the adapter for one HTTP compatibility window:
 
 ```bash
 bin/adapter start
 bin/adapter status
 ```
+
+A manual start inherits the systemd scope cgroup of the caller. `setsid` detaches the process from the terminal, but not from that cgroup, so systemd stops the adapter when the calling scope stops. An adapter that an agent session starts therefore ends with that session. Use the supervised unit for long-lived access.
 
 While it is running, the configured tunnel routes `/v1/*` to the adapter. Programmable HTTP clients can use the enhanced POST/JSON profile; constrained GET/open/fetch-only clients can use the universal GET profile. The adapter discovers the current authenticated 1MCP tool catalog dynamically, so it does not require per-tool maintenance when the MCP surface changes.
 
@@ -47,6 +66,12 @@ When finished:
 
 ```bash
 bin/adapter stop
+```
+
+A supervised adapter restarts after a crash and after the next host start. Stop the unit instead when the access window is over:
+
+```bash
+systemctl --user disable --now websession-adapter.service
 ```
 
 Stopping WebSession does not stop the main `/mcp` endpoint. See [WebSession client bootstrap prompts](websession-clients.md) for client-specific connection prompts and capability handling.

@@ -175,6 +175,38 @@ test_systemd_installer_handles_missing_home() {
   contains "$ROOT/scripts/install-systemd-user.sh" 'getent passwd'
 }
 
+test_websession_adapter_systemd_unit_contract() {
+  local unit="$ROOT/systemd/websession-adapter.service.in"
+  local installer="$ROOT/scripts/install-websession-adapter-user.sh"
+  [ -f "$unit" ] && [ -x "$installer" ] && \
+  contains "$unit" 'ExecStart=@REPO_ROOT@/bin/adapter run' && \
+  contains "$unit" 'Restart=always' && \
+  contains "$unit" 'StandardOutput=append:@STATE_DIR@/logs/websession-adapter\.log' && \
+  contains "$unit" 'WantedBy=default\.target' && \
+  contains "$installer" 'UNIT_NAME="websession-adapter\.service"' && \
+  contains "$installer" 'systemctl --user enable "\$UNIT_NAME"' && \
+  contains "$ROOT/bin/adapter" 'systemctl --user start "\$ADAPTER_UNIT_NAME"' && \
+  contains "$ROOT/bin/adapter" '^  run\) adapter_run ;;'
+}
+
+test_websession_adapter_installer_renders_unit() {
+  local sandbox="$TMP/adapter-systemd"
+  local target="$sandbox/systemd"
+  local state="$sandbox/state"
+  local unit="$target/websession-adapter.service"
+  mkdir -p "$sandbox/home" "$target"
+  HOME="$sandbox/home" BRIDGE_STATE_DIR="$state" WEBSESSION_ADAPTER_SYSTEMD_TARGET_DIR="$target" \
+    WEBSESSION_ADAPTER_SYSTEMD_DRY_RUN=1 "$ROOT/scripts/install-websession-adapter-user.sh" >/dev/null || return 1
+  [ -f "$unit" ] || return 1
+  ! grep -q '@[A-Z_][A-Z_]*@' "$unit" || return 1
+  grep -Fq "ExecStart=$ROOT/bin/adapter run" "$unit" || return 1
+  grep -Fq "StandardOutput=append:$state/logs/websession-adapter.log" "$unit" || return 1
+  grep -Fq "Environment=HOME=$sandbox/home" "$unit" || return 1
+  if command -v systemd-analyze >/dev/null 2>&1; then
+    systemd-analyze verify "$unit" >/dev/null 2>&1 || return 1
+  fi
+}
+
 test_terminal_systemd_owner_env_handoff() {
   local sandbox="$TMP/terminal-owner-env"
   local target="$sandbox/systemd"
@@ -273,6 +305,8 @@ run_test 'restart --wait blocks until the new unit invocation is active' test_re
 run_test 'status keeps duplicate and PID/listener diagnostics' test_status_has_core_diagnostics
 run_test 'systemd user unit autostarts the canonical bridge' test_systemd_user_autostart_contract
 run_test 'systemd installer derives user home when HOME is missing' test_systemd_installer_handles_missing_home
+run_test 'WebSession adapter unit restarts and delegates to bin/adapter' test_websession_adapter_systemd_unit_contract
+run_test 'WebSession adapter installer renders a verified unit' test_websession_adapter_installer_renders_unit
 run_test 'Terminal systemd units consume the rendered owner environment' test_terminal_systemd_owner_env_handoff
 run_test 'personal bootstrap keeps startup behind explicit consent' test_personal_bootstrap_startup_consent_contract
 run_test 'server bootstrap keeps startup behind explicit consent' test_server_bootstrap_startup_consent_contract

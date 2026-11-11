@@ -123,7 +123,7 @@ These are client-side actions, not recurring WSL service-start commands.
 There are two supported HTTP-oriented paths, depending on what the AI environment can actually do:
 
 - **Direct standards-native MCP:** if the environment can run a real MCP client or Python SDK, use the copy/paste bootstrap prompt in [`non-native-ai-mcp-python.md`](non-native-ai-mcp-python.md). It connects directly to `/mcp` through normal MCP OAuth/PKCE and Streamable HTTP.
-- **On-demand WebSession compatibility:** if the environment has only generic HTTPS capabilities, start `bin/adapter start` manually and use [`websession-clients.md`](../websession-clients.md). Programmable HTTP agents with POST/custom headers use the enhanced JSON profile; constrained GET/open/fetch-only agents use the universal GET profile with a finite capability and confirmation step.
+- **WebSession compatibility:** if the environment has only generic HTTPS capabilities, run the adapter with `bin/adapter start`, or install the supervised unit with `scripts/install-websession-adapter-user.sh`, and use [`websession-clients.md`](../websession-clients.md). Programmable HTTP agents with POST/custom headers use the enhanced JSON profile; constrained GET/open/fetch-only agents use the universal GET profile with a finite capability and confirmation step.
 
 The WebSession adapter is deliberately not part of Personal Workstation automatic startup and is not supervised by `webharness start`/`stop`. Once running, it mirrors the live authenticated 1MCP tool catalog rather than maintaining model-specific or per-tool adapters. Stop it explicitly with `bin/adapter stop` when that compatibility access is no longer needed.
 

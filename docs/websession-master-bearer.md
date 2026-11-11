@@ -2,7 +2,7 @@
 
 The WebSession master bearer is an optional password-equivalent bootstrap secret for richer HTTP clients. It is useful for any AI environment that can make HTTPS POST requests with a custom `Authorization` header; it is not tied to a particular model, SDK, or programming language. It is not an ordinary WebSession submission capability and is never accepted by `/v1/calls` or any URL-based universal GET route.
 
-WebSession itself is manual/on-demand. The operator must explicitly start `bin/adapter start` before the public `/v1/*` routes are usable and may stop it with `bin/adapter stop` when the access window is over. The main WebHarness `/mcp` lifecycle does not supervise the adapter.
+WebSession itself is separate from the main bridge. The adapter must run before the public `/v1/*` routes are usable. Start it with `bin/adapter start`, or install the supervised unit with `scripts/install-websession-adapter-user.sh` so it starts at user-session startup and restarts after a crash. The main WebHarness `/mcp` lifecycle does not supervise the adapter.
 
 ## Lifetime
 

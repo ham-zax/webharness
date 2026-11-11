@@ -200,4 +200,65 @@ if curl -fsS -m 1 "$BASE/health/ready" >/dev/null 2>&1; then
   exit 1
 fi
 
+# An installed unit owns the lifetime: lifecycle commands must delegate to systemd
+# instead of spawning a process inside the caller's cgroup.
+mkdir -p "$TMP/fakebin" "$TMP/home/.config/systemd/user"
+: > "$TMP/home/.config/systemd/user/websession-adapter.service"
+cat > "$TMP/fakebin/systemctl" <<'FAKE'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$SYSTEMCTL_LOG"
+cmd=''
+for arg in "$@"; do
+  case "$arg" in
+    is-active|show-environment|start|stop|show) cmd="$arg"; break ;;
+  esac
+done
+case "$cmd" in
+  is-active) [ -f "$SYSTEMCTL_ACTIVE" ] && exit 0 || exit 3 ;;
+  start) : > "$SYSTEMCTL_ACTIVE" ;;
+  stop) rm -f "$SYSTEMCTL_ACTIVE" ;;
+  show) printf '4242\n' ;;
+  *) : ;;
+esac
+exit 0
+FAKE
+chmod +x "$TMP/fakebin/systemctl"
+export SYSTEMCTL_LOG="$TMP/systemctl.log"
+export SYSTEMCTL_ACTIVE="$TMP/systemctl.active"
+
+adapter_systemd() {
+  env PATH="$TMP/fakebin:$PATH" \
+    HOME="$TMP/home" \
+    XDG_CONFIG_HOME="$TMP/home/.config" \
+    XDG_STATE_HOME="$TMP/state" \
+    XDG_RUNTIME_DIR="$TMP/run" \
+    WEBSESSION_ADAPTER_PORT="$PORT" \
+    WEBSESSION_ADAPTER_MCP_URL="$MCP_URL" \
+    WEBSESSION_ADAPTER_LOG_FILE="$TMP/adapter.log" \
+    WEBSESSION_ADAPTER_PUBLIC_URL="$BASE" \
+    "$ROOT/bin/adapter" "$@"
+}
+
+if adapter_systemd status >/dev/null 2>&1; then
+  echo "status reported running without an active unit" >&2
+  exit 1
+fi
+grep -Fq -- '--user is-active --quiet websession-adapter.service' "$SYSTEMCTL_LOG"
+
+node -e 'require("node:http").createServer((req, res) => { res.writeHead(200); res.end("state: ready\n"); }).listen(process.argv[1], "127.0.0.1")' "$PORT" &
+HEALTH_PID=$!
+for _ in {1..50}; do
+  curl -fsS -m 1 "$BASE/health/ready" >/dev/null 2>&1 && break
+  sleep 0.1
+done
+
+adapter_systemd start >/dev/null
+grep -Fq -- '--user start websession-adapter.service' "$SYSTEMCTL_LOG"
+adapter_systemd status >/dev/null || { echo "delegated status did not report running" >&2; exit 1; }
+adapter_systemd stop >/dev/null
+grep -Fq -- '--user stop websession-adapter.service' "$SYSTEMCTL_LOG"
+
+kill "$HEALTH_PID" 2>/dev/null || true
+wait "$HEALTH_PID" 2>/dev/null || true
+
 echo "adapter probe isolation OK"

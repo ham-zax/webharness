@@ -62,6 +62,24 @@ If the config points at a removed checkout, rerender from the canonical reposito
 
 Inspect cloudflared and the configured public URL. Verify the tunnel hostname reaches the local 1MCP origin and OAuth remains enabled.
 
+## `/v1/*` returns 502 after about 30 seconds
+
+Cloudflare reached the tunnel, but the adapter origin listener on port 3051 was not there. `/health` still answers because the wake proxy and 1MCP serve it. Check the adapter first:
+
+```bash
+bin/adapter status
+systemctl --user status websession-adapter.service
+```
+
+A manual `bin/adapter start` inherits the systemd scope cgroup of the caller. The adapter then stops, without an error line in its log, when that scope stops. An adapter that an agent session started ends with that session. Install the supervised unit so the adapter survives the caller and restarts after a crash:
+
+```bash
+scripts/install-websession-adapter-user.sh
+bin/adapter status
+```
+
+See [WebSession adapter lifetime](designs/websession-adapter-lifetime.md) for the ownership model.
+
 ## `systemctl --user` says it cannot connect to the bus
 
 A non-login process may be missing environment variables. Try:

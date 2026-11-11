@@ -1,0 +1,20 @@
+[Unit]
+Description=WebHarness WebSession HTTP adapter
+Documentation=file://@REPO_ROOT@/docs/operations.md
+ConditionPathExists=@REPO_ROOT@/bin/adapter
+After=network-online.target mcp-dev-bridge.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=@REPO_ROOT@
+Environment=HOME=@USER_HOME@
+Environment=PATH=@PATH@
+ExecStart=@REPO_ROOT@/bin/adapter run
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+StandardOutput=append:@STATE_DIR@/logs/websession-adapter.log
+
+[Install]
+WantedBy=default.target

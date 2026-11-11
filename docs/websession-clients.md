@@ -35,7 +35,9 @@ bin/adapter status
 
 The main `/mcp` endpoint is independent. The public `/v1/*` WebSession routes are available only while the adapter is running; when it is stopped those routes are intentionally unavailable (typically surfaced by the tunnel as an upstream error).
 
-The adapter lifecycle is manual. Nothing starts it: not `webharness setup --enable-startup`, the `mcp-dev-bridge` service, the watchdog, or a reboot. Nothing stops it either: it has no idle timer, and it keeps serving after every capability has expired or been revoked. It runs from `bin/adapter start` until `bin/adapter stop` or until the host or WSL session ends, and it is not restarted afterwards. A capability expiring ends that client's access only.
+The adapter lifecycle is separate from the main bridge. `webharness setup --enable-startup`, the `mcp-dev-bridge` service and the watchdog never start it. Nothing stops it either: it has no idle timer, and it keeps serving after every capability has expired or been revoked. A capability expiring ends that client's access only.
+
+A manual `bin/adapter start` inherits the systemd scope cgroup of the caller, so the adapter stops when that scope stops. For long-lived access, install the adapter's own unit with `scripts/install-websession-adapter-user.sh`. The unit starts at user-session startup and restarts the adapter after a crash. See [operations](operations.md#optional-websession-http-compatibility-adapter).
 
 For a finite client capability:
 

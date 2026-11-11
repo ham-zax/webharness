@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+while IFS= read -r _inherited; do unset "$_inherited"; done < <(compgen -e | grep -E '^(MCP|BRIDGE)_')
+unset _inherited
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 echo "=== Running harness integration suite ==="

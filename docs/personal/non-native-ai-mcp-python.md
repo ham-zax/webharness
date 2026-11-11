@@ -2,7 +2,7 @@
 
 Use this when an AI environment can execute Python and make outbound HTTPS requests but does not provide a native MCP client/integration **and you want it to connect directly to the standards-native `/mcp` endpoint**. Prefer the official MCP Python SDK when it is available. If package installation is blocked, use the package-free standard-library fallback in this document instead of giving up or reverting to an ad-hoc one-shot HTTP call.
 
-If the environment only needs generic HTTP access rather than a full MCP client implementation, the optional WebSession path is simpler and more broadly compatible. The operator starts it manually with `bin/adapter start`, then the agent follows [`../websession-clients.md`](../websession-clients.md): POST/header-capable agents use the enhanced JSON profile, while GET/open/fetch-only agents use the universal GET profile. WebSession is not automatically started with the main bridge and should be stopped explicitly when no longer needed.
+If the environment only needs generic HTTP access rather than a full MCP client implementation, the optional WebSession path is simpler and more broadly compatible. The operator starts it with `bin/adapter start`, or installs the supervised unit with `scripts/install-websession-adapter-user.sh` so it starts at user-session startup and restarts after a crash. Then the agent follows [`../websession-clients.md`](../websession-clients.md): POST/header-capable agents use the enhanced JSON profile, while GET/open/fetch-only agents use the universal GET profile. The main bridge never starts WebSession, and a manual start ends with the systemd scope of the caller.
 
 ## Copy/paste prompt
 
