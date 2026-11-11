@@ -147,7 +147,7 @@ adapter_start() {
     echo "adapter server is missing: $ADAPTER_SERVER" >&2
     exit 1
   }
-  [ -d "$DIR/providers/websession-adapter/node_modules/@modelcontextprotocol/sdk" ] || {
+  [ -d "$DIR/providers/websession-adapter/node_modules/@modelcontextprotocol/client" ] || {
     echo "adapter dependencies are missing; run npm ci in providers/websession-adapter" >&2
     exit 1
   }
@@ -263,7 +263,7 @@ adapter_auth_command() {
     echo "adapter OAuth helper is missing: $ADAPTER_AUTH" >&2
     exit 1
   }
-  [ -d "$DIR/providers/websession-adapter/node_modules/@modelcontextprotocol/sdk" ] || {
+  [ -d "$DIR/providers/websession-adapter/node_modules/@modelcontextprotocol/client" ] || {
     echo "adapter dependencies are missing; run npm ci in providers/websession-adapter" >&2
     exit 1
   }

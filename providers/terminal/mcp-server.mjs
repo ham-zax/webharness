@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 import { pathToFileURL } from 'node:url';
 
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { McpServer } from '@modelcontextprotocol/server';
+import { StdioServerTransport } from '@modelcontextprotocol/server/stdio';
 import { z } from 'zod';
 
 import { BrokerClient } from './broker-client.mjs';
@@ -111,14 +111,14 @@ export function createTerminalMcpServer({ client, frontend } = {}) {
 
   server.registerTool('terminal_open', {
     description: 'Open one durable model-owned tmux PTY/process in the WebHarness namespace. Sessions survive MCP and broker restarts. This is the required command path when runtime is uncertain, may approach/exceed the model-facing connector request window, must persist, or needs a PTY. After opening long-running work, observe it with Dev wait using terminal_exit or terminal_output across short RPCs; use terminal_read for incremental/final output. Prefer direct Dev exec for bounded work expected comfortably inside the short-RPC window; use Dev bash when that bounded work needs shell syntax. Omit command for an interactive shell. Headless is the default; set present=true only when the human should see the PTY from the start.',
-    inputSchema: {
+    inputSchema: z.object({
       name,
       command: z.string().optional(),
       cwd: z.string().min(1).optional(),
       cols: dimension.optional(),
       rows: dimension.optional(),
       present: z.boolean().optional(),
-    },
+    }),
   }, async (args) => invoke(async () => {
     const { present = false, ...openArgs } = args;
     const result = await client.request('session.open', compactParams(openArgs));
@@ -139,12 +139,12 @@ export function createTerminalMcpServer({ client, frontend } = {}) {
 
   server.registerTool('terminal_read', {
     description: 'Read from the persisted unread cursor, advancing only past returned bytes. Explicit cursor replays/repositions. max_bytes defaults to 16384 (max 65536); repeat reads when more output remains. snapshot=true captures a bounded screen without advancing the cursor.',
-    inputSchema: {
+    inputSchema: z.object({
       name,
       cursor: z.number().int().nonnegative().optional(),
       snapshot: z.boolean().optional(),
       max_bytes: z.number().int().positive().max(65536).optional(),
-    },
+    }),
   }, async (args) => invoke(async () => {
     if (args.snapshot === true) {
       const result = await client.request('model.read', { name: args.name, snapshot: true });
@@ -189,7 +189,7 @@ export function createTerminalMcpServer({ client, frontend } = {}) {
 
   server.registerTool('terminal_resize', {
     description: 'Resize an existing WebHarness PTY while the model owns it; changing dimensions may cause terminal applications to observe resize/SIGWINCH behavior. Writable human control blocks model resize.',
-    inputSchema: { name, cols: dimension, rows: dimension },
+    inputSchema: z.object({ name, cols: dimension, rows: dimension }),
   }, async (args) => invoke(async () => {
     const result = await client.request('session.resize', args);
     return textResult(`resized ${result.name} ${result.cols}x${result.rows}`);
@@ -197,7 +197,7 @@ export function createTerminalMcpServer({ client, frontend } = {}) {
 
   server.registerTool('terminal_list', {
     description: 'List durable sessions in the WebHarness tmux namespace, including dead exit status, dimensions, and whether writable human control currently blocks model mutation; use this to resolve session identity and state before mutation.',
-    inputSchema: {},
+    inputSchema: z.object({}),
     annotations: {
       readOnlyHint: true,
       destructiveHint: false,
@@ -211,7 +211,7 @@ export function createTerminalMcpServer({ client, frontend } = {}) {
 
   server.registerTool('terminal_yield', {
     description: 'Yield a model-owned collaborative Terminal session to human control. Reuse an already attached designated human frontend when present; if none is attached, ensure the configured personal frontend for the exact tmux PTY and then yield. After success, model send/resize/ordinary close is blocked until the human gives control back.',
-    inputSchema: { name },
+    inputSchema: z.object({ name }),
   }, async (args) => invoke(async () => {
     let result;
     try {
@@ -226,7 +226,7 @@ export function createTerminalMcpServer({ client, frontend } = {}) {
 
   server.registerTool('terminal_close', {
     description: 'Destructively close a WebHarness Terminal session by killing its tmux session, which destroys that session\'s PTY/process lifetime. Ordinary close is blocked while a human owns the session; force=true explicitly overrides human ownership and destroys the session anyway.',
-    inputSchema: { name, force: z.boolean().optional() },
+    inputSchema: z.object({ name, force: z.boolean().optional() }),
   }, async (args) => invoke(async () => {
     const result = await client.request('session.close', compactParams(args));
     return textResult(`closed ${result.name}`);

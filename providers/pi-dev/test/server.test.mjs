@@ -8,8 +8,8 @@ import path from 'node:path';
 import { execFile, spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { Client } from '@modelcontextprotocol/client';
+import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 import { BrokerClient } from '../../terminal/broker-client.mjs';
 import { makeSandbox, onceExit, startBroker } from '../../terminal/test/helpers.mjs';
 import { DEFAULT_MAX_OUTPUT_BYTES } from '../output-limits.mjs';
@@ -524,7 +524,6 @@ test('aborting a personal wait MCP call leaves its durable record pending', asyn
     const controller = new AbortController();
     const pending = client.callTool(
       { name: 'wait', arguments: { name: 'abort-file', hold_seconds: 15 } },
-      undefined,
       { signal: controller.signal, timeout: 20000 },
     );
     setTimeout(() => controller.abort(), 60);
@@ -679,7 +678,6 @@ test('caller abort beats positive hold during initial Terminal arm and creates n
           hold_seconds: 10,
         },
       },
-      undefined,
       { signal: controller.signal, timeout: 15000 },
     );
     setTimeout(() => controller.abort(), 50);
@@ -801,7 +799,6 @@ test('armed personal Terminal wait survives broker outage abort and restart with
     const started = Date.now();
     const aborted = client.callTool(
       { name: 'wait', arguments: { name: 'broker-recovery', hold_seconds: 5 } },
-      undefined,
       { signal: controller.signal, timeout: 10000 },
     );
     setTimeout(() => controller.abort(), 50);

@@ -509,7 +509,7 @@ export class OperationCore {
         },
       );
     } catch (error) {
-      if (dispatchStarted) this.store.markUnknownOutcome(operationId);
+      if (dispatchStarted && !error?.beforeBackendDispatch) this.store.markUnknownOutcome(operationId);
       else if (error?.message === 'superseded_by_newer_turn') this.store.rejectOperation(operationId, error.message);
       else this.store.failOperation(operationId, boundedError(error));
       return;

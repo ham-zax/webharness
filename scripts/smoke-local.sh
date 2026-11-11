@@ -46,9 +46,13 @@ if (local) {
   }
   if (JSON.stringify(local.tags ?? []) !== JSON.stringify(['local'])) throw new Error('Local broker must use only the local tag');
   const pkg = JSON.parse(fs.readFileSync(path.join(repoRoot, 'providers', 'local-tools', 'package.json'), 'utf8'));
-  if (pkg.dependencies?.['@modelcontextprotocol/sdk'] !== '1.30.0') throw new Error('unexpected Local broker MCP SDK pin');
-  const installedSdk = JSON.parse(fs.readFileSync(path.join(repoRoot, 'providers', 'local-tools', 'node_modules', '@modelcontextprotocol', 'sdk', 'package.json'), 'utf8'));
-  if (installedSdk.version !== '1.30.0') throw new Error(`unexpected installed Local broker MCP SDK version: ${installedSdk.version}`);
+  if (pkg.dependencies?.['@modelcontextprotocol/client'] !== '2.4.0' || pkg.dependencies?.['@modelcontextprotocol/server'] !== '2.4.0') {
+    throw new Error('unexpected Local broker MCP SDK pin');
+  }
+  for (const subpkg of ['client', 'server']) {
+    const installedSdk = JSON.parse(fs.readFileSync(path.join(repoRoot, 'providers', 'local-tools', 'node_modules', '@modelcontextprotocol', subpkg, 'package.json'), 'utf8'));
+    if (installedSdk.version !== '2.4.0') throw new Error(`unexpected installed Local broker MCP ${subpkg} version: ${installedSdk.version}`);
+  }
 
   const inner = JSON.parse(fs.readFileSync(env.MCP_LOCAL_INNER_CONFIG, 'utf8'));
   const innerNames = Object.keys(inner.mcpServers ?? {}).sort();
@@ -82,7 +86,7 @@ if (local) {
   if (browserEnv.WAYLAND_DISPLAY !== 'wayland-0' || browserEnv.DISPLAY !== ':0' || browserEnv.PULSE_SERVER !== 'unix:/mnt/wslg/PulseServer') throw new Error('unexpected Browser WSLg environment');
   if (browser.tags !== undefined) throw new Error('inner Browser provider must not carry an outer OAuth tag');
   const browserPkg = JSON.parse(fs.readFileSync(path.join(repoRoot, 'providers', 'browser', 'package.json'), 'utf8'));
-  if (browserPkg.dependencies?.['@modelcontextprotocol/sdk'] !== '1.30.0') throw new Error('unexpected Browser MCP SDK pin');
+  if (browserPkg.dependencies?.['@modelcontextprotocol/client'] !== '2.4.0' || browserPkg.dependencies?.['@modelcontextprotocol/server'] !== '2.4.0') throw new Error('unexpected Browser MCP SDK pin');
   if (browserPkg.dependencies?.zod !== '4.4.3') throw new Error('unexpected Browser zod pin');
 
   const fast = inner.mcpServers['browser-fast'];
@@ -94,7 +98,7 @@ if (local) {
   if (fastEnv.WAYLAND_DISPLAY !== 'wayland-0' || fastEnv.DISPLAY !== ':0' || fastEnv.PULSE_SERVER !== 'unix:/mnt/wslg/PulseServer') throw new Error('unexpected Browser Fast WSLg environment');
   if (fast.tags !== undefined) throw new Error('inner Browser Fast provider must not carry an outer OAuth tag');
   const fastPkg = JSON.parse(fs.readFileSync(path.join(repoRoot, 'providers', 'browser-fast', 'package.json'), 'utf8'));
-  if (fastPkg.dependencies?.['@modelcontextprotocol/sdk'] !== '1.30.0') throw new Error('unexpected Browser Fast MCP SDK pin');
+  if (fastPkg.dependencies?.['@modelcontextprotocol/client'] !== '2.4.0' || fastPkg.dependencies?.['@modelcontextprotocol/server'] !== '2.4.0') throw new Error('unexpected Browser Fast MCP SDK pin');
   if (fastPkg.dependencies?.['agent-browser'] !== '0.39.0') throw new Error('unexpected Browser Fast Agent Browser pin');
   if (fastPkg.dependencies?.zod !== '4.4.3') throw new Error('unexpected Browser Fast zod pin');
 }

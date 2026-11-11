@@ -1,6 +1,6 @@
 import { createServer } from 'node:http';
 import { createInterface } from 'node:readline';
-import { auth } from '@modelcontextprotocol/sdk/client/auth.js';
+import { auth } from '@modelcontextprotocol/client';
 import { PersistentOAuthProvider } from './oauth.mjs';
 import { listMcpTools } from './mcp-client.mjs';
 
@@ -53,7 +53,7 @@ function callbackListener(url, provider) {
 
       res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' });
       res.end('WebSession adapter authorization received. You may close this window.\n');
-      resolveCallback({ code });
+      resolveCallback({ code, iss: callbackIssuer ?? undefined });
     } catch (error) {
       res.writeHead(400, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' });
       res.end('WebSession adapter authorization failed. Return to the terminal.\n');
@@ -115,9 +115,10 @@ async function authorize() {
             }
             const code = pasted.searchParams.get('code');
             const state = pasted.searchParams.get('state');
+            const iss = pasted.searchParams.get('iss') ?? undefined;
             if (!code) throw new Error('pasted callback URL does not include an authorization code');
             if (!state || state !== provider.expectedState()) throw new Error('pasted callback state mismatch');
-            resolve({ code });
+            resolve({ code, iss });
           } catch (error) {
             reject(error);
           }
@@ -125,8 +126,8 @@ async function authorize() {
       });
 
       try {
-        const { code } = await Promise.race([listener.callback, pastedCallback]);
-        const finished = await auth(provider, { serverUrl: mcpUrl, authorizationCode: code });
+        const { code, iss } = await Promise.race([listener.callback, pastedCallback]);
+        const finished = await auth(provider, { serverUrl: mcpUrl, authorizationCode: code, ...(iss ? { iss } : {}) });
         if (finished !== 'AUTHORIZED') throw new Error('OAuth token exchange did not complete');
       } finally {
         input.close();

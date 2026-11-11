@@ -1,9 +1,19 @@
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import { ToolListChangedNotificationSchema } from '@modelcontextprotocol/sdk/types.js';
+import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { PersistentOAuthProvider } from './oauth.mjs';
 
 const TOOL_NAME_TTL_MS = 60_000;
+const CAPACITY_RETRY_INITIAL_MS = 20;
+const CAPACITY_RETRY_MAX_MS = 250;
+
+function isInteractionCapacityExceeded(error) {
+  const message = typeof error?.message === 'string' ? error.message : '';
+  if (!message.includes('interaction_capacity_exceeded')) return false;
+  return error?.code === -32000 || message.includes('-32000');
+}
+
+function sleepMs(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
 
 // Execution connections stay open so repeated tool calls skip the MCP handshake.
 // Discovery (listMcpTools) always reconnects: initialize instructions are only
@@ -45,6 +55,8 @@ export async function connectMcp({ mcpUrl, stateDir, callbackUrl, signal }) {
 
   return {
     client,
+    inFlight: 0,
+    evicted: false,
     async close() {
       signal?.removeEventListener('abort', onAbort);
       await client.close().catch(() => transport.close().catch(() => {}));
@@ -87,7 +99,7 @@ async function ensureConnection(entry, options) {
         await connection.close().catch(() => {});
         throw new Error('MCP connection was replaced while connecting');
       }
-      connection.client.setNotificationHandler(ToolListChangedNotificationSchema, () => {
+      connection.client.setNotificationHandler('notifications/tools/list_changed', () => {
         if (entry.connection === connection) {
           entry.toolNames = undefined;
           entry.toolNamesAt = 0;
@@ -117,7 +129,10 @@ async function refreshConnection(entry, options) {
   entry.generation = (entry.generation ?? 0) + 1;
   entry.toolNames = undefined;
   entry.toolNamesAt = 0;
-  if (previous) await previous.close().catch(() => {});
+  if (previous) {
+    previous.evicted = true;
+    if (!previous.inFlight) await previous.close().catch(() => {});
+  }
   return ensureConnection(entry, options);
 }
 
@@ -166,19 +181,45 @@ export async function callMcpTool(options, name, args, hooks = {}) {
       continue;
     }
     if (hooks.onBeforeDispatch) await hooks.onBeforeDispatch();
-    // Dispatch is never retried: the caller has already persisted dispatch intent.
-    // If callTool fails, evict the pooled connection so subsequent calls reconnect cleanly.
+    // Real backend failures are never retried once dispatch intent is persisted.
+    // Upstream 1MCP 0.39+ rejects concurrent legacy-era calls to the same backend
+    // provider at gateway admission (-32000 interaction_capacity_exceeded) before
+    // invoking the backend tool; wait briefly on the healthy pooled connection.
+    const totalTimeoutMs = options.timeoutMs ?? 120_000;
+    const deadline = Date.now() + totalTimeoutMs;
+    let backoffMs = CAPACITY_RETRY_INITIAL_MS;
+    connection.inFlight = (connection.inFlight ?? 0) + 1;
     try {
-      return await connection.client.callTool({ name, arguments: args }, undefined, { timeout: options.timeoutMs ?? 120_000 });
-    } catch (error) {
-      if (entry.connection === connection) {
-        entry.connection = undefined;
-        entry.connecting = undefined;
-        entry.toolNames = undefined;
-        entry.toolNamesAt = 0;
+      for (;;) {
+        const remainingMs = Math.max(1, deadline - Date.now());
+        try {
+          return await connection.client.callTool({ name, arguments: args }, { timeout: remainingMs });
+        } catch (error) {
+          if (isInteractionCapacityExceeded(error)) {
+            const waitMs = Math.min(backoffMs, deadline - Date.now());
+            if (waitMs > 5) {
+              backoffMs = Math.min(CAPACITY_RETRY_MAX_MS, backoffMs * 2);
+              await sleepMs(waitMs);
+              continue;
+            }
+            error.beforeBackendDispatch = true;
+            throw error;
+          }
+          if (entry.connection === connection) {
+            entry.connection = undefined;
+            entry.connecting = undefined;
+            entry.toolNames = undefined;
+            entry.toolNamesAt = 0;
+          }
+          connection.evicted = true;
+          throw error;
+        }
+      }
+    } finally {
+      connection.inFlight = Math.max(0, (connection.inFlight ?? 1) - 1);
+      if (connection.evicted && connection.inFlight === 0) {
         connection.close().catch(() => {});
       }
-      throw error;
     }
   }
 }

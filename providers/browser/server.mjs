@@ -1,11 +1,10 @@
 import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
-import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import { Client } from '@modelcontextprotocol/client';
+import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
+import { Server } from '@modelcontextprotocol/server';
+import { StdioServerTransport } from '@modelcontextprotocol/server/stdio';
 import { defaultBrowserTarget, resolveLinuxBrowserBackend } from '../browser-fast/browser-backend-config.mjs';
 import { DEFAULT_CLOAKBROWSER_STATE_ROOT, readCloakBrowserEndpoint } from '../browser-fast/cloakbrowser-runtime.mjs';
 import { ensureWindowsChrome } from './windows-chrome-runtime.mjs';
@@ -444,8 +443,8 @@ export function createBrowserFacadeServer({ router } = {}) {
       instructions: 'One resource-local DevTools surface. On WSL, tools default to the dedicated persistent Windows MCP Chrome profile; on other hosts they default to the configured Linux browser. Pass browser_target to choose explicitly; browser_backend and browser_profile select the same Linux identity used by browser-fast. Managed CloakBrowser is attached through its live CDP endpoint. Path arguments are OS-temp-only.'
     }
   );
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: await router.listTools() }));
-  server.setRequestHandler(CallToolRequestSchema, async request => router.call({
+  server.setRequestHandler('tools/list', async () => ({ tools: await router.listTools() }));
+  server.setRequestHandler('tools/call', async request => router.call({
     tool: request.params.name,
     arguments: request.params.arguments ?? {}
   }));

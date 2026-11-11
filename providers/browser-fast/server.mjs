@@ -4,9 +4,8 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import { Server } from '@modelcontextprotocol/server';
+import { StdioServerTransport } from '@modelcontextprotocol/server/stdio';
 import { ensureWindowsChrome } from '../browser/windows-chrome-runtime.mjs';
 import { defaultBrowserTarget, resolveLinuxBrowserBackend } from './browser-backend-config.mjs';
 import { ManagedCloakBrowserRuntime } from './cloakbrowser-runtime.mjs';
@@ -1185,7 +1184,7 @@ export function createBrowserFastServer({ browser } = {}) {
       instructions: 'Fast resource-local browser interaction. On managed Linux CloakBrowser, an observe without tab allocates an independent tab workspace; reuse the returned active_tab for that task. Observe for stable refs/tabs plus bounded local site memory, execute mechanical sequences locally, and never assume failed or partial batches are safe to replay.'
     }
   );
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: [
+  server.setRequestHandler('tools/list', async () => ({ tools: [
     {
       name: 'observe',
       description: 'Return compact interactive browser state with stable tab IDs, element refs, and bounded read-only local policy/site/platform memory for the current URL when available. On managed Linux CloakBrowser, omitting tab allocates an independent tab workspace; pass a prior active_tab to continue that workspace. Unknown sites remain valid with empty memory.',
@@ -1223,7 +1222,7 @@ export function createBrowserFastServer({ browser } = {}) {
       }
     }
   ] }));
-  server.setRequestHandler(CallToolRequestSchema, async request => {
+  server.setRequestHandler('tools/call', async request => {
     try {
       if (request.params.name === 'observe') return jsonResult(await browser.observe(request.params.arguments ?? {}));
       if (request.params.name === 'execute') return jsonResult(await browser.execute(request.params.arguments ?? {}));

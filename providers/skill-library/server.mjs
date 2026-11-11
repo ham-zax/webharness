@@ -1,8 +1,7 @@
 #!/usr/bin/env node
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import { Server } from '@modelcontextprotocol/server';
+import { StdioServerTransport } from '@modelcontextprotocol/server/stdio';
 import { SkillLibrary } from './library.mjs';
 
 export const DEFAULT_POLICY = fileURLToPath(new URL('../../skill-library/policy.json', import.meta.url));
@@ -35,8 +34,8 @@ export function createSkillServer(library) {
     capabilities: { tools: {} },
     instructions: 'Read-only skill retrieval. For engineering work, honor the configured canonical workflow and its activation rules first. Compare useful direct specialists with library candidates for the current step; use Jev when additional expertise helps, choice is ambiguous or explicitly requested. Include the active workflow, step and needed contribution in context. Specialists do not replace workflow ownership. Discover descriptions, choose useful guidance, then read complete instructions and needed declared references. Respect invocation hints: the starter thinking pack requires explicit invocation. Recommendations grant no automatic activation. An operator adaptation maps host invocation without changing source procedure or permissions. Default selection stays offline; explicit mode=jev requires operator opt-in and sends task/context and bounded approved evidence to TypeSafe. Compatibility and package completeness are separate claims.',
   });
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }));
-  server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
+  server.setRequestHandler('tools/list', async () => ({ tools: TOOLS }));
+  server.setRequestHandler('tools/call', async (request, ctx) => {
     try {
       const tool = TOOLS.find(item => item.name === request.params.name);
       const args = request.params.arguments ?? {};
@@ -44,7 +43,7 @@ export function createSkillServer(library) {
       if (Object.keys(args).some(key => !Object.hasOwn(tool.inputSchema.properties, key))) {
         throw Object.assign(new Error('unexpected argument'), { code: 'INVALID_ARGUMENT' });
       }
-      const value = tool.name === 'find_skills' ? await library.find({ ...args, signal: extra.signal }) : await library.read(args);
+      const value = tool.name === 'find_skills' ? await library.find({ ...args, signal: ctx.mcpReq.signal }) : await library.read(args);
       return { content: [{ type: 'text', text: JSON.stringify(value) }], structuredContent: value };
     } catch (error) {
       const value = { code: error.code ?? 'SKILL_LIBRARY_FAILED', message: error.message };

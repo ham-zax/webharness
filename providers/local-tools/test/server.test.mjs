@@ -3,8 +3,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
 import {
   BROKER_TOOL_NAMES,
   DEFAULT_INNER_IDLE_MS,
@@ -531,7 +530,7 @@ test('tool_batch cancellation stops queued dispatches', async t => {
       concurrency: 2,
       calls: [{ arguments: {} }, { arguments: {} }, { arguments: {} }, { arguments: {} }]
     }
-  }, undefined, { signal: controller.signal });
+  }, { signal: controller.signal });
   setTimeout(() => controller.abort(new Error('review-cancel')), 20);
 
   await assert.rejects(() => pending, /review-cancel/);

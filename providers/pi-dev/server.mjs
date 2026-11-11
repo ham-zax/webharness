@@ -1,8 +1,8 @@
 import { constants as fsConstants } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { McpServer } from '@modelcontextprotocol/server';
+import { StdioServerTransport } from '@modelcontextprotocol/server/stdio';
 import { z } from 'zod';
 import { canonicalDefaultCwd, canonicalWorkspaceRoot } from './boundary.mjs';
 import { fileURLToPath } from 'node:url';
@@ -225,8 +225,8 @@ const shutdownController = new AbortController();
 function registerTool(name, config, handler) {
   if (executionWorker) executionHandlers.set(name, handler);
   else server.registerTool(name, config, name === 'wait'
-    ? (args, extra) => handler(args, { ...extra, signal: AbortSignal.any([extra.signal, shutdownController.signal]) })
-    : (args, extra) => worker.call(name, args, extra.signal));
+    ? (args, ctx) => handler(args, { signal: AbortSignal.any([ctx.mcpReq.signal, shutdownController.signal]) })
+    : (args, ctx) => worker.call(name, args, ctx.mcpReq.signal));
 }
 const modelPath = pathMode === 'user'
   ? z.string().min(1).describe('Path; relative paths resolve from the configured default cwd and absolute paths are accepted')
@@ -281,7 +281,7 @@ function renderWaitResult(result) {
 
 registerTool('read', {
   description: 'Read UTF-8 text in pages of at most 16 KiB. offset is a 1-based line; limit is a line count. Truncated results give the next offset. mode "outline" returns compact structural landmarks (L<line>: <symbol>) instead of full lines; targets reads up to 20 files in one call. A directory path is refused with EISDIR; use list_directory instead.' + (readDefaultLines ? ` Without limit, at most ${readDefaultLines} lines.` : ''),
-  inputSchema: {
+  inputSchema: z.object({
     path: modelPath.optional(),
     offset: z.number().int().positive().optional(),
     limit: z.number().int().positive().optional(),
@@ -292,7 +292,7 @@ registerTool('read', {
       limit: z.number().int().positive().optional(),
       mode: z.enum(['lines', 'outline']).optional(),
     })).min(1).max(20).optional().describe('Read several files in one call; give either path or targets, not both')
-  },
+  }),
   annotations: {
     readOnlyHint: true,
     destructiveHint: false,
@@ -317,12 +317,12 @@ registerTool('read', {
 
 registerTool('list_directory', {
   description: `List one directory (or bounded tree when depth=2..${MAX_LIST_DEPTH}) as entries: kind (dir, file, link, other) and name, plus bytes for regular files. Sorted by name. Symlinks are listed and never followed; depth>1 skips .git, node_modules, third_party, and skill-library/packs unless include_vendor=true. Use this to map a folder or resolve names before reading, instead of exec or bash. Omit path to list the authority root. limit defaults to ${DEFAULT_LIST_LIMIT} entries, maximum ${MAX_LIST_LIMIT}.`,
-  inputSchema: {
+  inputSchema: z.object({
     path: listPath.optional(),
     limit: z.number().int().positive().max(MAX_LIST_LIMIT).optional().describe(`Maximum entries to return; default ${DEFAULT_LIST_LIMIT}`),
     depth: z.number().int().min(1).max(MAX_LIST_DEPTH).optional().describe(`Directory tree depth from 1 to ${MAX_LIST_DEPTH}; default 1`),
     include_vendor: z.boolean().optional().describe('Expand .git/vendor subdirectories when depth > 1')
-  },
+  }),
   annotations: {
     readOnlyHint: true,
     destructiveHint: false,
@@ -342,7 +342,7 @@ registerTool('list_directory', {
 
 registerTool('search', {
   description: `Search text across files with ripgrep and return compact path:line:match results without shell quoting. Excludes vendored trees (skill-library/packs, third_party, node_modules, .git) unless include_vendor=true. Defaults to smart-case, ${DEFAULT_SEARCH_MAX_RESULTS} total matches (max ${MAX_SEARCH_MAX_RESULTS}), and ${DEFAULT_SEARCH_MAX_PER_FILE} matches per file (max ${MAX_SEARCH_MAX_PER_FILE}).`,
-  inputSchema: {
+  inputSchema: z.object({
     pattern: z.string().min(1).max(4096).describe('Regex pattern (or exact string when literal=true)'),
     path: listPath.optional().describe('Optional directory or file to search; omit to search the authority root'),
     globs: z.array(z.string().min(1).max(256)).max(32).optional().describe('Optional ripgrep file globs, e.g. ["*.mjs", "!test/**"]'),
@@ -351,7 +351,7 @@ registerTool('search', {
     max_results: z.number().int().positive().max(MAX_SEARCH_MAX_RESULTS).optional().describe(`Maximum matches to return; default ${DEFAULT_SEARCH_MAX_RESULTS}`),
     max_per_file: z.number().int().positive().max(MAX_SEARCH_MAX_PER_FILE).optional().describe(`Maximum matches per file; default ${DEFAULT_SEARCH_MAX_PER_FILE}`),
     include_vendor: z.boolean().optional().describe('Include vendored directories (skill-library/packs, third_party, node_modules)'),
-  },
+  }),
   annotations: {
     readOnlyHint: true,
     destructiveHint: false,
@@ -368,13 +368,13 @@ registerTool('search', {
 
 registerTool('edit', {
   description: 'Apply unique, disjoint oldText replacements in existing files. Exact oldText always wins; fallback tolerates line endings, trailing whitespace and common Unicode punctuation/spaces. Merge edits sharing a line. Multi-file batches may partially apply; failures report affected paths. Returns +/- counts; diff=true returns diffs.',
-  inputSchema: {
+  inputSchema: z.object({
     targets: z.array(z.object({
       path: modelPath,
       edits: z.array(z.object({ oldText: z.string().min(1), newText: z.string() })).min(1)
     })).min(1),
     diff: z.boolean().optional().describe('Return unified diffs instead of per-file +/- counts')
-  }
+  })
 }, async (args, extra) => invoke(async () => {
   const result = await runEdit({ ...pathPolicy, targets: args.targets }, extra.signal);
   const text = args.diff
@@ -385,14 +385,14 @@ registerTool('edit', {
 
 registerTool('write', {
   description: 'Create-only write; parent must exist unless mkdir_parents=true. overwrite=true atomically replaces an existing regular file. Symlinks and directories are refused. encoding=base64 writes binary content; for many files, write one base64 tar archive and extract it with exec. Content passes through model context, so keep it to small files.',
-  inputSchema: {
+  inputSchema: z.object({
     path: modelPath,
     content: z.string(),
     overwrite: z.boolean().optional().describe('Atomically replace an existing regular file'),
     encoding: z.enum(['utf8', 'base64']).optional().describe('Content encoding: utf8 (default) or base64 for binary'),
     mode: z.string().regex(/^0?[0-7]{3}$/).optional().describe('Octal permissions such as "755"; default keeps the replaced file mode or uses the umask'),
     mkdir_parents: z.boolean().optional().describe('Create missing parent directories')
-  }
+  })
 }, async (args, extra) => invoke(async () => {
   const result = await runWrite({ ...pathPolicy, ...args }, extra.signal);
   return { content: [{ type: 'text', text: renderWriteText(args.path, { replaced: result?.replaced === true }) }] };
@@ -401,7 +401,7 @@ registerTool('write', {
 if (pathMode === 'user') {
   registerTool('import_file', {
     description: 'Import one ChatGPT-native attached or generated file into the WSL filesystem. This is create-only: the destination parent must already exist and an existing destination is never overwritten. Use this for binary or external file ingress instead of base64, shell downloads, or invented host paths. The source must be a native ChatGPT file value from a trusted OpenAI file host. Relative destinations resolve from the configured default cwd; absolute paths are accepted.',
-    inputSchema: {
+    inputSchema: z.object({
       file: z.object({
         download_url: z.string(),
         file_id: z.string().min(1),
@@ -411,7 +411,7 @@ if (pathMode === 'user') {
         size: z.number().int().nonnegative().nullable().optional(),
       }).describe('Native file value supplied by ChatGPT'),
       path: modelPath.describe('Create-only destination path; parent directory must already exist'),
-    },
+    }),
     _meta: { 'openai/fileParams': ['file'] },
     annotations: {
       readOnlyHint: false,
@@ -429,10 +429,10 @@ if (pathMode === 'user') {
 
   registerTool('review_changes', {
     description: 'Return one bounded aggregate review of the current Git working-tree changes: status, tracked line counts, and a unified patch including untracked file contents when they fit the shared patch budget. Use this once after the final related file mutation instead of repeatedly calling Git status/diff. cwd selects the repository; optional paths narrow review to literal files or directories and are useful when unrelated dirty work is present. This tool is read-only and creates no Git refs, commits, or temporary index state.',
-    inputSchema: {
+    inputSchema: z.object({
       cwd: cwdPath.optional(),
       paths: z.array(z.string().min(1)).min(1).max(256).optional().describe('Optional literal paths relative to cwd, or absolute paths inside the selected repository'),
-    },
+    }),
     annotations: {
       readOnlyHint: true,
       destructiveHint: false,
@@ -463,7 +463,7 @@ if (pathMode === 'user') {
 
   registerTool('file_ops', {
     description: 'Move or delete existing regular files without following final-component symlinks. Batches are preflighted together but are not transactional; a later failure may leave earlier operations applied and is reported as partial or uncertain. Moves are same-filesystem hard-link plus guarded source unlink, never overwrite an existing destination, and do not fall back to copying across filesystems.',
-    inputSchema: {
+    inputSchema: z.object({
       operations: z.array(z.discriminatedUnion('kind', [
         z.object({
           kind: z.literal('move'),
@@ -476,7 +476,7 @@ if (pathMode === 'user') {
         }),
       ])).min(1),
       cwd: cwdPath.optional(),
-    },
+    }),
   }, async (args, extra) => invoke(async () => {
     const result = await runFileOps({ ...pathPolicy, ...args }, extra.signal);
     return { content: [{ type: 'text', text: renderFileOpsText(result) }] };
@@ -486,14 +486,14 @@ if (pathMode === 'user') {
 if (mode === 'unrestricted') {
   registerTool('exec', {
     description: 'Run structured argv with no shell parsing; arguments are passed literally. Prefer for ordinary commands. Use only when runtime is known and comfortably below 45s. For longer noninteractive work (installs, builds) pass detach=true: it returns at once with a log path and an exit file to wait on with Dev wait file_exists, then read the log. For interactive or human-watched work use Local terminal_open, Dev wait, then terminal_read. Output is bounded; truncated output has a retained-file path.',
-  inputSchema: {
+  inputSchema: z.object({
       argv: z.array(z.string()).min(1).max(256).describe('Executable name/path followed by literal arguments. Do not add shell quoting around individual elements.'),
       cwd: cwdPath.optional(),
       timeout_seconds: z.number().positive().max(300, {
         message: 'timeout_seconds must be from 1 to 300. A larger deadline is rejected because it cannot extend the connector window: start long work with Local terminal_open, observe it with Dev wait, then read output with terminal_read.'
       }).optional().describe('Execution deadline: default 30s, max 300s; does not extend the connector window. Not allowed with detach.'),
       detach: z.boolean().optional().describe('Start in the background with stdin closed and output to a log; returns job_id, pid, log_path and exit_path. Survives the call but not a WebHarness service restart.')
-    }
+    })
   }, async (args, extra) => invoke(async () => {
     if (args.detach) {
       const result = await runExec({ ...pathPolicy, ...args, spoolTtlSeconds, stateDir }, extra.signal);
@@ -513,13 +513,13 @@ if (mode === 'unrestricted') {
 
   registerTool('bash', {
     description: 'Run a noninteractive Bash program for pipes, redirects or other shell syntax; otherwise prefer exec. Use only when runtime is known and comfortably below 45s. For uncertain, longer or persistent work use Local terminal_open, Dev wait, then terminal_read. Output is bounded; never bypass Terminal human ownership.',
-  inputSchema: {
+  inputSchema: z.object({
       command: z.string().min(1),
       cwd: cwdPath.optional(),
       timeout_seconds: z.number().positive().max(300, {
         message: 'timeout_seconds must be from 1 to 300. A larger deadline is rejected because it cannot extend the connector window: start long work with Local terminal_open, observe it with Dev wait, then read output with terminal_read.'
       }).optional().describe('Execution deadline: default 30s, max 300s; does not extend the connector window.')
-    }
+    })
   }, async (args, extra) => invoke(async () => {
     const result = await runBash({
       ...pathPolicy,

@@ -636,7 +636,8 @@ const fs = require('fs');
 const pkg = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 const expected = {
   '@earendil-works/pi-coding-agent': '0.84.1',
-  '@modelcontextprotocol/sdk': '1.30.0',
+  '@modelcontextprotocol/client': '2.4.0',
+  '@modelcontextprotocol/server': '2.4.0',
   zod: '4.4.3',
 };
 for (const [name, version] of Object.entries(expected)) {

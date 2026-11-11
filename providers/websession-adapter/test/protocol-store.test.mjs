@@ -557,6 +557,84 @@ test('read-only tools run during slow mutations while mutations stay serialized'
   }
 });
 
+test('overlapping calls retry pre-dispatch 1MCP interaction_capacity_exceeded without evicting the pool', async t => {
+  const stateDir = mkdtempSync(join(tmpdir(), 'websession-capacity-'));
+  let activeBackendCalls = 0;
+  let capacityRejections = 0;
+  let initializations = 0;
+  const server = createServer(async (req, res) => {
+    if (req.method !== 'POST') { res.writeHead(200).end(); return; }
+    let body = '';
+    for await (const chunk of req) body += chunk;
+    const message = JSON.parse(body);
+    if (message.id === undefined) { res.writeHead(202).end(); return; }
+    if (message.method === 'initialize') {
+      initializations += 1;
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({
+        jsonrpc: '2.0',
+        id: message.id,
+        result: { protocolVersion: message.params.protocolVersion, capabilities: { tools: {} }, serverInfo: { name: '1mcp-sim', version: '0.39.8' } },
+      }));
+      return;
+    }
+    if (message.method === 'tools/list') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ jsonrpc: '2.0', id: message.id, result: { tools: CONCURRENCY_TOOLS } }));
+      return;
+    }
+    if (message.method === 'tools/call') {
+      if (activeBackendCalls > 0) {
+        capacityRejections += 1;
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ jsonrpc: '2.0', id: message.id, error: { code: -32000, message: 'interaction_capacity_exceeded' } }));
+        return;
+      }
+      activeBackendCalls += 1;
+      try {
+        await new Promise(resolve => setTimeout(resolve, 45));
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ jsonrpc: '2.0', id: message.id, result: { content: [{ type: 'text', text: `${message.params.name} ok` }] } }));
+      } finally {
+        activeBackendCalls -= 1;
+      }
+      return;
+    }
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ jsonrpc: '2.0', id: message.id, result: {} }));
+  });
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  t.after(() => {
+    server.closeAllConnections();
+    server.close();
+  });
+  const core = new OperationCore({
+    stateDir,
+    mcpUrl: `http://127.0.0.1:${server.address().port}/mcp`,
+    callbackUrl: 'http://127.0.0.1:9/callback',
+    toolTimeoutMs: 5000,
+  });
+  try {
+    const issued = core.store.issueMainCapability(120);
+    await core.permittedTools(issued.token);
+    const batch = core.submitBatch(issued.token, 'batch-cap-test', [
+      parseRequest({ version: 1, tool: 'fixture_read', arguments: {} }),
+      parseRequest({ version: 1, tool: 'fixture_read', arguments: {} }),
+      parseRequest({ version: 1, tool: 'fixture_write', arguments: {} }),
+    ]);
+    await Promise.all(batch.submissions.map(item => core.waitForOperation(item.operation.id, 5000)));
+    for (const item of batch.submissions) {
+      assert.equal(core.store.getOperation(item.operation.id).state, 'completed');
+    }
+    assert.ok(capacityRejections >= 1, 'simulated 1MCP capacity rejection occurred');
+    assert.equal(initializations, 2, 'execution connection stayed pooled across capacity retries');
+  } finally {
+    await core.close();
+    rmSync(stateDir, { recursive: true, force: true });
+  }
+});
+
 test('a capability default cwd resolves missing cwd and relative paths across Dev tools', async t => {
   const stateDir = mkdtempSync(join(tmpdir(), 'websession-default-cwd-'));
   const calls = [];

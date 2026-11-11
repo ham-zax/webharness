@@ -1,9 +1,11 @@
 import { writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { pathToFileURL } from 'node:url';
-import { Server } from '../../providers/websession-adapter/node_modules/@modelcontextprotocol/sdk/dist/esm/server/index.js';
-import { StreamableHTTPServerTransport } from '../../providers/websession-adapter/node_modules/@modelcontextprotocol/sdk/dist/esm/server/streamableHttp.js';
-import { CallToolRequestSchema, ListToolsRequestSchema } from '../../providers/websession-adapter/node_modules/@modelcontextprotocol/sdk/dist/esm/types.js';
+import { createRequire } from 'node:module';
+
+const adapterRequire = createRequire(new URL('../../providers/websession-adapter/package.json', import.meta.url));
+const { Server } = adapterRequire('@modelcontextprotocol/server');
+const { NodeStreamableHTTPServerTransport } = adapterRequire('@modelcontextprotocol/node');
 
 const pattern = 'héllo🌍\n';
 const size = 100 * 1024;
@@ -26,8 +28,8 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
     const server = new Server({ name: 'adapter-test-stub', version: '1' }, {
       capabilities: { tools: {} }, instructions: 'Adapter integration test instructions.',
     });
-    server.setRequestHandler(ListToolsRequestSchema, () => ({ tools }));
-    server.setRequestHandler(CallToolRequestSchema, async ({ params }) => {
+    server.setRequestHandler('tools/list', () => ({ tools }));
+    server.setRequestHandler('tools/call', async ({ params }) => {
       const args = params.arguments || {};
       switch (params.name) {
         case 'echo': return { content: [{ type: 'text', text: args.text }] };
@@ -42,7 +44,7 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
         default: throw new Error('unknown test tool');
       }
     });
-    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
+    const transport = new NodeStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
     res.on('close', () => { void server.close(); });
     try {
       await server.connect(transport);

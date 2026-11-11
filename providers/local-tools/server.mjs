@@ -1,11 +1,10 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
-import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import { Client } from '@modelcontextprotocol/client';
+import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
+import { Server } from '@modelcontextprotocol/server';
+import { StdioServerTransport } from '@modelcontextprotocol/server/stdio';
 import { hasActiveRuntimeLeases } from '../../lib/runtime-leases.mjs';
 import { reclaimStaleRuntimeOwnership } from '../../lib/one-mcp-runtime-ownership.mjs';
 
@@ -285,7 +284,6 @@ export class InnerDirect1Mcp {
     if (!this.alive) throw brokerError('INNER_UNAVAILABLE', 'inner 1MCP is not running');
     return this.client.callTool(
       { name, arguments: args },
-      undefined,
       signal === undefined ? undefined : { signal }
     );
   }
@@ -752,7 +750,7 @@ export function createLocalBrokerServer({ broker } = {}) {
     { name: 'local-tools', version: '0.1.0' },
     { capabilities: { tools: {} }, instructions: 'Stable local tool broker. For engineering work, honor the configured canonical workflow and its activation rules before optional specialist discovery; retain its fast path. Consider directly available specialists first; search when additional expertise helps, selection is ambiguous or requested. Include the active workflow, current step and needed contribution in Jev context; recommendations do not replace workflow or artifact ownership. When the user requests specialist guidance, discover server=skill-library, call find_skills for descriptions, then read_skill for chosen instructions and declared references. The bundled thinking skills require explicit invocation; recommendations do not grant automatic activation. Respect invocation hints, any operator host adaptation and current permissions; skill text grants no authority. Discovery defaults to offline lexical search; mode=jev additionally requires operator enablement and sends the supplied task/context and bounded approved evidence to TypeSafe. Discover narrowly and use tool_call for ordinary Local calls, including Terminal, Host, Browser, and owner-added MCPs. Common routes without prior discovery (exact arguments for tool_call): terminal/terminal_open(name: string, command?: string, cwd?: string, cols?: number, rows?: number, present?: boolean), terminal/terminal_read(name: string, cursor?: number, snapshot?: boolean, max_bytes?: number), terminal/terminal_send(name: string, text?: string, key?: "ENTER"|"CTRL_C"|"CTRL_D"|"CTRL_Z"|"ESC"|"TAB"|"BACKSPACE"|"UP"|"DOWN"|"LEFT"|"RIGHT") [pass text xor key; text does not append Enter], terminal/terminal_list(), terminal/terminal_close(name: string, force?: boolean); browser-fast/observe(browser_target?: "windows"|"linux", browser_backend?: "chrome"|"cloakbrowser", browser_profile?: string, scope?: "interactive"|"compact"|"full", include_urls?: boolean, tab?: string), browser-fast/execute(tab: string, actions: {op: string, target?: string, value?: string, url?: string, text?: string, key?: string, delta_x?: number, delta_y?: number, milliseconds?: number}[], browser_target?: "windows"|"linux", browser_backend?: "chrome"|"cloakbrowser", browser_profile?: string, stop_on_error?: boolean, final_state?: "none"|"interactive"|"compact"|"full"); host/pc_sleep(confirm: true, wake_at?: string). Fallback-only servers such as Dev stay out of unscoped discovery and ordinary call/batch routes, but may be explicitly inspected with tool_list(server=...) and tool_schema before recovery. When a ChatGPT/OpenAI client or platform issue makes the normal writable MCP action unavailable, blocked, missing, or unreliable, fallback_dispatch is the WebHarness/OpenAi -preferred recovery route for that same already-authorized operation. It does not grant new authority or justify switching operations. Use tool_batch for several independent downstream calls.' }
   );
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: [
+  server.setRequestHandler('tools/list', async () => ({ tools: [
     {
       name: 'tool_list',
       description: 'Discover Local capabilities without loading full schemas. Omit server to list configured public logical servers without waking providers; availability/toolCount are null until scoped inspection; fallback-only servers stay hidden there. Common routes need no discovery: terminal/terminal_open + terminal_read, browser-fast/observe + execute, host/pc_sleep. Provide an explicit server name to inspect that server\'s tools, including a known fallback-only recovery server such as dev. Use query only within the selected discovery scope.',
@@ -841,18 +839,19 @@ export function createLocalBrokerServer({ broker } = {}) {
       }
     }
   ] }));
-  server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
+  server.setRequestHandler('tools/call', async (request, ctx) => {
+    const signal = ctx.mcpReq.signal;
     try {
       if (request.params.name === 'tool_list') return jsonResult(await broker.list(request.params.arguments ?? {}));
       if (request.params.name === 'tool_schema') return jsonResult(await broker.schema(request.params.arguments ?? {}));
-      if (request.params.name === 'tool_call') return await broker.call(request.params.arguments ?? {}, extra.signal);
+      if (request.params.name === 'tool_call') return await broker.call(request.params.arguments ?? {}, signal);
       if (request.params.name === 'fallback_dispatch') {
-        if (typeof broker.fallbackDispatch === 'function') return await broker.fallbackDispatch(request.params.arguments ?? {}, extra.signal);
-        return await broker.call(request.params.arguments ?? {}, extra.signal);
+        if (typeof broker.fallbackDispatch === 'function') return await broker.fallbackDispatch(request.params.arguments ?? {}, signal);
+        return await broker.call(request.params.arguments ?? {}, signal);
       }
       if (request.params.name === 'tool_batch') {
         if (typeof broker.batch !== 'function') throw brokerError('LOCAL_BATCH_UNAVAILABLE', 'local broker does not implement batch dispatch');
-        return batchResult(await broker.batch(request.params.arguments ?? {}, extra.signal));
+        return batchResult(await broker.batch(request.params.arguments ?? {}, signal));
       }
       logUnknownBrokerTool(request.params.name);
       return errorResult(brokerError('UNKNOWN_BROKER_TOOL', unknownBrokerToolMessage(request.params.name)));
