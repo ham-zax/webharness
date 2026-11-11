@@ -2,7 +2,7 @@ import { constants as fsConstants } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { McpServer } from '@modelcontextprotocol/server';
-import { StdioServerTransport } from '@modelcontextprotocol/server/stdio';
+import { StdioServerTransport, serveStdio } from '@modelcontextprotocol/server/stdio';
 import { z } from 'zod';
 import { canonicalDefaultCwd, canonicalWorkspaceRoot } from './boundary.mjs';
 import { fileURLToPath } from 'node:url';
@@ -207,10 +207,6 @@ try {
   process.exit(2);
 }
 
-const server = new McpServer(
-  { name: 'pi-dev', version: '0.1.0' },
-  { instructions: serverInstructions(ownerContext) },
-);
 const idleValue = process.env.MCP_DEV_WORKER_IDLE_MS ?? '600000';
 const idleMs = Number(idleValue);
 if (!/^\d+$/.test(idleValue) || !Number.isSafeInteger(idleMs) || idleMs < 0 || idleMs > 2147483647) {
@@ -221,12 +217,23 @@ const worker = executionWorker ? null : new IdleExecutionWorker({
   serverPath: fileURLToPath(import.meta.url), idleMs,
 });
 const executionHandlers = new Map();
+const toolRegistrations = [];
 const shutdownController = new AbortController();
 function registerTool(name, config, handler) {
   if (executionWorker) executionHandlers.set(name, handler);
-  else server.registerTool(name, config, name === 'wait'
+  else toolRegistrations.push([name, config, name === 'wait'
     ? (args, ctx) => handler(args, { signal: AbortSignal.any([ctx.mcpReq.signal, shutdownController.signal]) })
-    : (args, ctx) => worker.call(name, args, ctx.mcpReq.signal));
+    : (args, ctx) => worker.call(name, args, ctx.mcpReq.signal)]);
+}
+function createPiDevServer() {
+  const server = new McpServer(
+    { name: 'pi-dev', version: '0.1.0' },
+    { instructions: serverInstructions(ownerContext) },
+  );
+  for (const [name, config, handler] of toolRegistrations) {
+    server.registerTool(name, config, handler);
+  }
+  return server;
 }
 const modelPath = pathMode === 'user'
   ? z.string().min(1).describe('Path; relative paths resolve from the configured default cwd and absolute paths are accepted')
@@ -537,19 +544,23 @@ if (mode === 'unrestricted') {
 if (executionWorker) {
   serveExecutionWorker(executionHandlers);
 } else {
+  const transport = new StdioServerTransport();
+  const handle = serveStdio(createPiDevServer, { transport });
   let closing = false;
   const shutdown = async () => {
     if (closing) return;
     closing = true;
     shutdownController.abort();
     await worker.close();
-    await server.close();
+    await handle.close();
   };
   process.once('SIGTERM', () => void shutdown());
   process.once('SIGINT', () => void shutdown());
-  const transport = new StdioServerTransport();
-  transport.onclose = () => void shutdown();
-  await server.connect(transport);
+  const wireClose = transport.onclose;
+  transport.onclose = () => {
+    wireClose?.();
+    void shutdown();
+  };
   // SDK owns transport.onclose; EOF must independently close the execution child.
   process.stdin.once('end', () => void shutdown());
 }

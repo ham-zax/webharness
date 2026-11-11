@@ -4,7 +4,7 @@ import { pathToFileURL } from 'node:url';
 import { Client } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 import { Server } from '@modelcontextprotocol/server';
-import { StdioServerTransport } from '@modelcontextprotocol/server/stdio';
+import { StdioServerTransport, serveStdio } from '@modelcontextprotocol/server/stdio';
 import { defaultBrowserTarget, resolveLinuxBrowserBackend } from '../browser-fast/browser-backend-config.mjs';
 import { DEFAULT_CLOAKBROWSER_STATE_ROOT, readCloakBrowserEndpoint } from '../browser-fast/cloakbrowser-runtime.mjs';
 import { ensureWindowsChrome } from './windows-chrome-runtime.mjs';
@@ -453,26 +453,29 @@ export function createBrowserFacadeServer({ router } = {}) {
 
 export async function runBrowserFacadeStdio() {
   const router = new BrowserRouter();
-  const server = createBrowserFacadeServer({ router });
   const transport = new StdioServerTransport();
+  let server = null;
+  const handle = serveStdio(() => {
+    server = createBrowserFacadeServer({ router });
+    return server;
+  }, { transport });
   let shutdownPromise = null;
   const shutdown = () => {
     if (shutdownPromise) return shutdownPromise;
     shutdownPromise = (async () => {
       await router.shutdown();
-      await server.close();
+      await handle.close();
     })();
     return shutdownPromise;
   };
 
-  await server.connect(transport);
   const serverClose = transport.onclose;
   transport.onclose = () => {
     serverClose?.();
     void shutdown();
   };
 
-  return { router, server, transport, shutdown };
+  return { router, get server() { return server; }, handle, transport, shutdown };
 }
 
 async function main() {

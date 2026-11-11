@@ -37,6 +37,29 @@ test('real standalone stdio server exposes only two read-only tools and complete
   }
 });
 
+test('standalone stdio server negotiates modern 2026-07-28 and serves concurrent calls', async t => {
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: [serverPath],
+    env: { PATH: process.env.PATH },
+    stderr: 'pipe',
+  });
+  const client = new Client(
+    { name: 'skill-library-modern-test', version: '1.0.0' },
+    { capabilities: {}, versionNegotiation: { mode: { pin: '2026-07-28' } } },
+  );
+  t.after(() => client.close());
+  await client.connect(transport);
+  const [first, second] = await Promise.all([
+    client.callTool({ name: 'find_skills', arguments: { query: 'using-aegis' } }),
+    client.callTool({ name: 'find_skills', arguments: { query: 'thinking-first-principles' } }),
+  ]);
+  assert.equal(first.isError, undefined);
+  assert.equal(second.isError, undefined);
+  assert.ok(first.structuredContent.candidates.length >= 1);
+  assert.ok(second.structuredContent.candidates.length >= 1);
+});
+
 test('Local maintains its five-tool ABI and routes skill discovery, schema and reads', async t => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'skills-local-'));
   t.after(() => fs.rm(directory, { recursive: true, force: true }));

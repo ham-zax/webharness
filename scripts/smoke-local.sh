@@ -29,6 +29,7 @@ if (profile === 'personal' && (code || terminal)) throw new Error('Code and Term
 if (local) {
   if (profile !== 'personal') throw new Error('Local broker is private to the personal profile');
   if (local.command !== 'node') throw new Error('Local broker must run with node');
+  if (local.protocolVersion !== '2026-07-28') throw new Error('Local broker must negotiate MCP 2026-07-28');
   const expectedServer = path.join(repoRoot, 'providers', 'local-tools', 'server.mjs');
   if (JSON.stringify(local.args ?? []) !== JSON.stringify([expectedServer])) throw new Error('unexpected Local broker server path');
   const env = local.env ?? {};
@@ -58,6 +59,9 @@ if (local) {
   const innerNames = Object.keys(inner.mcpServers ?? {}).sort();
   for (const required of ['browser-devtools', 'browser-fast', 'terminal', 'host', 'dev', 'skill-library']) {
     if (!innerNames.includes(required)) throw new Error(`Local inner provider set is missing required server: ${required}`);
+    if (inner.mcpServers[required]?.protocolVersion !== '2026-07-28') {
+      throw new Error(`Local inner provider ${required} must negotiate MCP 2026-07-28`);
+    }
   }
   if (env.MCP_LOCAL_FALLBACK_ONLY_SERVERS !== 'dev') throw new Error('only Dev may be fallback-only in personal Local');
 
@@ -103,6 +107,7 @@ if (local) {
   if (fastPkg.dependencies?.zod !== '4.4.3') throw new Error('unexpected Browser Fast zod pin');
 }
 if (dev) {
+  if (dev.protocolVersion !== '2026-07-28') throw new Error('Dev provider must negotiate MCP 2026-07-28');
   const pkgFile = path.join(repoRoot, 'providers', 'pi-dev', 'node_modules', '@earendil-works', 'pi-coding-agent', 'package.json');
   const pkg = JSON.parse(fs.readFileSync(pkgFile, 'utf8'));
   if (pkg.version !== '0.84.1') throw new Error(`unexpected Pi version: ${pkg.version}`);

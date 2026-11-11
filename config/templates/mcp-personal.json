@@ -4,6 +4,7 @@
   "mcpServers": {
     "dev": {
       "command": "node",
+      "protocolVersion": "2026-07-28",
       "args": [
         "__REPO_ROOT__/providers/pi-dev/server.mjs"
       ],
@@ -28,6 +29,7 @@
     },
     "local": {
       "command": "node",
+      "protocolVersion": "2026-07-28",
       "args": [
         "__REPO_ROOT__/providers/local-tools/server.mjs"
       ],

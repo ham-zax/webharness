@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { Server } from '@modelcontextprotocol/server';
-import { StdioServerTransport } from '@modelcontextprotocol/server/stdio';
+import { serveStdio } from '@modelcontextprotocol/server/stdio';
 import { SkillLibrary } from './library.mjs';
 
 export const DEFAULT_POLICY = fileURLToPath(new URL('../../skill-library/policy.json', import.meta.url));
@@ -56,9 +56,8 @@ export function createSkillServer(library) {
 async function main() {
   const library = await SkillLibrary.open(process.env.MCP_SKILL_POLICY_FILE || DEFAULT_POLICY);
   await library.catalog(); // Validate approved dependencies before advertising tools.
-  const server = createSkillServer(library);
-  await server.connect(new StdioServerTransport());
-  const shutdown = () => { void server.close(); };
+  const handle = serveStdio(() => createSkillServer(library));
+  const shutdown = () => { void handle.close(); };
   process.stdin.once('end', shutdown);
   process.once('SIGINT', shutdown);
   process.once('SIGTERM', shutdown);

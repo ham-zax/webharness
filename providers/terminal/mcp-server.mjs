@@ -2,7 +2,7 @@
 import { pathToFileURL } from 'node:url';
 
 import { McpServer } from '@modelcontextprotocol/server';
-import { StdioServerTransport } from '@modelcontextprotocol/server/stdio';
+import { StdioServerTransport, serveStdio } from '@modelcontextprotocol/server/stdio';
 import { z } from 'zod';
 
 import { BrokerClient } from './broker-client.mjs';
@@ -237,10 +237,13 @@ export function createTerminalMcpServer({ client, frontend } = {}) {
 
 export async function runTerminalMcpStdio({ socketPath = defaultSocketPath() } = {}) {
   const client = new BrokerClient({ socketPath });
-  const server = createTerminalMcpServer({ client });
   const transport = new StdioServerTransport();
-  await server.connect(transport);
-  return { server, transport };
+  let server = null;
+  const handle = serveStdio(() => {
+    server = createTerminalMcpServer({ client });
+    return server;
+  }, { transport });
+  return { get server() { return server; }, handle, transport };
 }
 
 async function main() {
@@ -249,7 +252,7 @@ async function main() {
   const shutdown = async () => {
     if (closing) return;
     closing = true;
-    await runtime.server.close();
+    await runtime.handle.close();
   };
   process.stdin.once('end', () => { void shutdown(); });
   process.once('SIGTERM', () => { void shutdown().finally(() => process.exit(0)); });

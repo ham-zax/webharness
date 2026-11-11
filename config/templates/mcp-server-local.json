@@ -3,6 +3,7 @@
   "mcpServers": {
     "skill-library": {
       "command": "node",
+      "protocolVersion": "2026-07-28",
       "args": ["__REPO_ROOT__/providers/skill-library/server.mjs"],
       "env": {
         "MCP_SKILL_POLICY_FILE": "__SKILL_POLICY_FILE__",
@@ -12,6 +13,7 @@
     },
     "terminal": {
       "command": "node",
+      "protocolVersion": "2026-07-28",
       "args": [
         "__REPO_ROOT__/providers/terminal/mcp-server.mjs"
       ],

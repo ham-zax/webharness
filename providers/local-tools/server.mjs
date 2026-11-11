@@ -4,7 +4,7 @@ import { pathToFileURL } from 'node:url';
 import { Client } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 import { Server } from '@modelcontextprotocol/server';
-import { StdioServerTransport } from '@modelcontextprotocol/server/stdio';
+import { StdioServerTransport, serveStdio } from '@modelcontextprotocol/server/stdio';
 import { hasActiveRuntimeLeases } from '../../lib/runtime-leases.mjs';
 import { reclaimStaleRuntimeOwnership } from '../../lib/one-mcp-runtime-ownership.mjs';
 
@@ -875,29 +875,33 @@ export async function runLocalBrokerStdio({
     .map(server => server.trim())
     .filter(Boolean);
   const broker = new LocalToolBroker({ inner, configPath, fallbackOnlyServers });
-  const server = createLocalBrokerServer({ broker });
   const transport = new StdioServerTransport();
+  let server = null;
+  let handle;
+  try {
+    handle = serveStdio(() => {
+      server = createLocalBrokerServer({ broker });
+      return server;
+    }, { transport });
+  } catch (error) {
+    await broker.shutdown().catch(() => {});
+    throw error;
+  }
   let shutdownPromise = null;
   const shutdown = () => {
     if (shutdownPromise) return shutdownPromise;
     shutdownPromise = (async () => {
       await broker.shutdown();
-      await server.close();
+      await handle.close();
     })();
     return shutdownPromise;
   };
-  try {
-    await server.connect(transport);
-  } catch (error) {
-    await broker.shutdown().catch(() => {});
-    throw error;
-  }
   const serverClose = transport.onclose;
   transport.onclose = () => {
     serverClose?.();
     void shutdown();
   };
-  return { inner, broker, server, transport, shutdown };
+  return { inner, broker, get server() { return server; }, handle, transport, shutdown };
 }
 
 async function main() {

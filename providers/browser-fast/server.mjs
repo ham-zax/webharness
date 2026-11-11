@@ -5,7 +5,7 @@ import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { Server } from '@modelcontextprotocol/server';
-import { StdioServerTransport } from '@modelcontextprotocol/server/stdio';
+import { StdioServerTransport, serveStdio } from '@modelcontextprotocol/server/stdio';
 import { ensureWindowsChrome } from '../browser/windows-chrome-runtime.mjs';
 import { defaultBrowserTarget, resolveLinuxBrowserBackend } from './browser-backend-config.mjs';
 import { ManagedCloakBrowserRuntime } from './cloakbrowser-runtime.mjs';
@@ -1236,26 +1236,29 @@ export function createBrowserFastServer({ browser } = {}) {
 
 export async function runBrowserFastStdio() {
   const browser = new FastBrowser();
-  const server = createBrowserFastServer({ browser });
   const transport = new StdioServerTransport();
+  let server = null;
+  const handle = serveStdio(() => {
+    server = createBrowserFastServer({ browser });
+    return server;
+  }, { transport });
   let shutdownPromise = null;
   const shutdown = () => {
     if (shutdownPromise) return shutdownPromise;
     shutdownPromise = (async () => {
       await browser.close();
-      await server.close();
+      await handle.close();
     })();
     return shutdownPromise;
   };
 
-  await server.connect(transport);
   const serverClose = transport.onclose;
   transport.onclose = () => {
     serverClose?.();
     void shutdown();
   };
 
-  return { browser, server, transport, shutdown };
+  return { browser, get server() { return server; }, handle, transport, shutdown };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
