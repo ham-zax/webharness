@@ -397,3 +397,13 @@ CONNECTED
 REMOTE_CWD: <actual result>
 TOOLS_AVAILABLE: <actual tool_count>
 ```
+
+## Troubleshooting custom sandbox clients
+
+Use `urllib.request` when the sandbox requires environment-configured HTTP/HTTPS proxies; raw `http.client.HTTPSConnection` does not automatically use them. Poll the operation's `state`, not `status`.
+
+A completed operation with `chunk_count > 1` deliberately omits `result`. Fetch every numbered URL formed by appending `1` through `chunk_count` to `chunk_base_url`, then concatenate the JSON responses' `content` fields in order. Do not use `snapshot.get("result", "")` as a general completion handler: it silently drops chunked output. The assembled string can itself be an MCP JSON result with text blocks in `content` and data in `structuredContent`. The supplied Python client handles both forms.
+
+For example, the reported empty `dev_review_changes` response on 2026-11-12 was retained in 16 chunks (123,362 UTF-8 bytes). Reassembly recovered a valid review of 17 files, including two untracked files. The server had produced the review; the missing inline result was not evidence of an empty working tree.
+
+Use `/health/ready` for the deployed bridge readiness probe. `/` and `/health` are not documented health endpoints. Configure Cloudflare Tunnel's final catch-all as `service: http_status:404` so unmatched paths return 404 rather than a misleading 502 from a nonexistent upstream. Preserve explicit `/v1/*`, MCP, OAuth, SSH, and other application routes above the catch-all.
