@@ -22,7 +22,12 @@ own Dev authority and no Local, Terminal, Browser, Host, or owner-MCP reach. It 
 advertised as mutating (`readOnlyHint: false`, `destructiveHint: true`) because it
 can call `edit`, `write`, `file_ops`, `exec`, and Bash. Nested calls are real and
 are not rolled back if the script later fails; the result lists every call with
-its status. `store()` and `load()` do not persist across calls.
+its status. `store()` and `load()` do not persist across calls. Nested calls are
+validated against the same input schema `tools/call` enforces, so a script cannot
+exceed a bound such as `exec`'s 300-second `timeout_seconds`. A WebSession
+capability's `default_cwd` applies only to the top-level call, so relative paths
+inside a script resolve against the provider's configured default; pass explicit
+paths or `cwd` inside the script when a capability default is active.
 
 Local is one authorization domain. Its five broker tools address downstream MCPs by logical `{server, tool}` identity. The maintained Personal Workstation composes public Local servers for `terminal`, `host`, `browser-fast`, `browser-devtools`, and owner-added MCPs, plus one fallback-only mirror of outer Dev.
 

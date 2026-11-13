@@ -6,6 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
+import { z } from 'zod';
 import { renderScriptText } from '../render.mjs';
 import { runScript, scriptToolTable, truncateScriptText } from '../run-script.mjs';
 import { SCRIPT_EXCLUDED_TOOLS } from '../script-limits.mjs';
@@ -85,6 +86,77 @@ test('max_calls rejects the next call without dispatching it', async () => {
   assert.equal(result.status, 'completed');
   assert.equal(dispatched, 3);
   assert.match(result.output, /SCRIPT_CALL_LIMIT/);
+});
+
+test('nested calls enforce the same input schema as tools/call', async () => {
+  const stateDir = await tempDir('pi-dev-script-');
+  let dispatched = 0;
+  const result = await runScript({
+    ...scriptFixture({
+      bash: async () => { dispatched += 1; return textResult('ok'); },
+    }, { stateDir }),
+    configs: new Map([['bash', {
+      inputSchema: z.object({
+        command: z.string().min(1),
+        timeout_seconds: z.number().positive().max(300).optional(),
+      }),
+    }]]),
+    script: `
+      const outcomes = [];
+      for (const args of [{ command: 'ls', timeout_seconds: 9999 }, { command: '' }, null]) {
+        try { await tools.bash(args); outcomes.push('accepted'); }
+        catch (error) { outcomes.push(error.message.split(':')[0]); }
+      }
+      return outcomes;
+    `,
+  });
+  assert.equal(result.status, 'completed');
+  assert.equal(dispatched, 0);
+  assert.equal(result.output, '["INVALID_ARGUMENTS","INVALID_ARGUMENTS","INVALID_ARGUMENTS"]');
+});
+
+test('nested calls dispatch the parsed value, not the raw arguments', async () => {
+  const stateDir = await tempDir('pi-dev-script-');
+  let received;
+  const result = await runScript({
+    ...scriptFixture({
+      read: async args => { received = args; return textResult('ok'); },
+    }, { stateDir }),
+    configs: new Map([['read', {
+      inputSchema: z.object({ path: z.string().optional(), limit: z.number().int().positive().optional() }),
+    }]]),
+    script: `await tools.read({ path: 'a.txt', bogus: 1 });`,
+  });
+  assert.equal(result.status, 'completed');
+  assert.deepEqual(received, { path: 'a.txt' });
+});
+
+test('a small timeout_ms bounds the wait for a free slot', async () => {
+  const stateDir = await tempDir('pi-dev-script-');
+  const handlers = {
+    read: async (_args, { signal }) => new Promise((_resolve, reject) => {
+      signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
+    }),
+  };
+  const blocker = () => runScript({
+    ...scriptFixture(handlers, { stateDir }),
+    timeout_ms: 1500,
+    script: 'await tools.read({});',
+  });
+  const first = blocker();
+  const second = blocker();
+  const started = Date.now();
+  const third = await runScript({
+    ...scriptFixture(handlers, { stateDir }),
+    timeout_ms: 300,
+    script: 'return 1;',
+  });
+  const wall = Date.now() - started;
+  assert.equal(third.status, 'failed');
+  assert.equal(third.error_kind, 'timeout');
+  assert.match(third.error_message, /while waiting for a free script slot/);
+  assert.ok(wall < 1200, `slot wait ignored timeout_ms: ${wall}ms`);
+  await Promise.allSettled([first, second]);
 });
 
 test('read-only calls overlap and a mutation waits for them', async () => {
@@ -392,5 +464,24 @@ test('a failed script reports a bounded diagnostic error code', async () => {
     });
     assert.equal(result.isError, true);
     assert.equal(result._meta?.['webharness/error-code'], 'SCRIPT_FAILED');
+  });
+});
+
+test('a script cannot exceed the exec timeout bound that tools/call enforces', async () => {
+  const { env } = await fixture();
+  await withClient(env, async client => {
+    const result = await client.callTool({
+      name: 'run_script',
+      arguments: {
+        script: `
+          try { await tools.exec({ argv: ['true'], timeout_seconds: 9999 }); return 'accepted'; }
+          catch (error) { return error.message; }
+        `,
+      },
+    });
+    assert.notEqual(result.isError, true);
+    const text = result.content.map(block => block.text).join('\n');
+    assert.match(text, /INVALID_ARGUMENTS: exec: timeout_seconds/);
+    assert.doesNotMatch(text, /accepted/);
   });
 });

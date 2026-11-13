@@ -66,6 +66,10 @@ calls may overlap up to four; a mutating call waits for them and runs alone. The
 adapter bounds nested calls (default and maximum 32), the overall deadline
 (default 30s, maximum 120s), and the model-facing output (the deployment's
 `MCP_DEV_MAX_OUTPUT_BYTES`, with the complete text retained on the remote host).
+Each nested call is validated against the same input schema `tools/call` enforces
+and dispatches the parsed value, so a script cannot exceed a bound the direct path
+rejects. Waiting for a free script slot counts against the deadline rather than
+starting it.
 Nested calls are real and are not rolled back if the script later fails; the result
 lists every call with its status and says so. `store()` and `load()` do not persist
 across calls. The tool is advertised as mutating, so the WebSession adapter

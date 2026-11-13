@@ -100,7 +100,7 @@ function releaseScriptSlot() {
   next.resolve();
 }
 
-function acquireScriptSlot(signal) {
+function acquireScriptSlot(signal, waitMs) {
   if (signal?.aborted) return Promise.reject(new Error('aborted'));
   if (scriptSlots.active < SCRIPT_MAX_CONCURRENT) {
     scriptSlots.active += 1;
@@ -116,7 +116,7 @@ function acquireScriptSlot(signal) {
       remove();
       cleanup();
       reject(new Error('busy'));
-    }, SCRIPT_SLOT_WAIT_MS);
+    }, waitMs);
     timer.unref?.();
     const onAbort = () => {
       remove();
@@ -136,6 +136,15 @@ function acquireScriptSlot(signal) {
   });
 }
 
+function formatIssues(error) {
+  const issues = Array.isArray(error?.issues) ? error.issues : [];
+  if (issues.length === 0) return 'arguments do not match the tool schema';
+  return issues.slice(0, 4).map(issue => {
+    const where = Array.isArray(issue.path) && issue.path.length > 0 ? issue.path.join('.') : '(root)';
+    return `${where}: ${issue.message}`;
+  }).join('; ');
+}
+
 /**
  * The script's tool table. Each entry forwards to the same handler the MCP tools/call
  * path uses, so nested calls keep the same path policy, error rendering, diagnostics and
@@ -147,15 +156,27 @@ export function scriptToolTable({ handlers, configs, gate, limits }) {
   for (const [name, handler] of handlers) {
     if (SCRIPT_EXCLUDED_TOOLS.has(name)) continue;
     const readOnly = SCRIPT_READ_ONLY_TOOLS.has(name);
+    const schema = configs?.get(name)?.inputSchema;
     tools.push({
       name,
       description: configs?.get(name)?.description,
       execute: async (args, { signal }) => {
+        // tools/call validates against this schema before the handler runs. A script must
+        // not be a way around those bounds, so validate here too and dispatch the parsed
+        // value, which applies defaults and drops unknown keys exactly as MCP does.
+        let input = args;
+        if (typeof schema?.safeParse === 'function') {
+          const parsed = schema.safeParse(args);
+          if (!parsed.success) {
+            throw new Error(`INVALID_ARGUMENTS: ${name}: ${formatIssues(parsed.error)}`);
+          }
+          input = parsed.data;
+        }
         if (limits.calls >= limits.maxCalls) {
           throw new Error(`SCRIPT_CALL_LIMIT: the script already made ${limits.maxCalls} tool calls; split the work into smaller scripts`);
         }
         limits.calls += 1;
-        const result = await gate.run(readOnly, () => handler(args, { signal, callId: limits.callId }));
+        const result = await gate.run(readOnly, () => handler(input, { signal, callId: limits.callId }));
         if (result?.isError) throw new Error(textOf(result) || `Tool "${name}" failed`);
         if (result?.structuredContent !== undefined) return result.structuredContent;
         return textOf(result);
@@ -272,16 +293,24 @@ export async function runScript({
   const timeoutMs = timeout_ms ?? DEFAULT_SCRIPT_TIMEOUT_MS;
   const outputLimit = maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
   const maxCalls = max_calls ?? DEFAULT_SCRIPT_MAX_CALLS;
+  // The wait for a free slot counts against the caller's deadline, so timeout_ms stays an
+  // overall bound instead of a bound that only starts after admission.
+  const slotWaitMs = Math.min(SCRIPT_SLOT_WAIT_MS, timeoutMs);
 
   try {
-    await acquireScriptSlot(signal);
+    await acquireScriptSlot(signal, slotWaitMs);
   } catch (error) {
-    const kind = error?.message === 'busy' ? 'busy' : 'aborted';
-    const message = kind === 'busy'
-      ? `All ${SCRIPT_MAX_CONCURRENT} script slots are held by other scripts; retry after they finish`
-      : 'The script was cancelled before it started';
+    const aborted = error?.message !== 'busy';
+    const kind = aborted ? 'aborted' : slotWaitMs < SCRIPT_SLOT_WAIT_MS ? 'timeout' : 'busy';
+    const message = aborted
+      ? 'The script was cancelled before it started'
+      : kind === 'timeout'
+        ? `The script timed out after ${timeoutMs} ms while waiting for a free script slot`
+        : `All ${SCRIPT_MAX_CONCURRENT} script slots are held by other scripts; retry after they finish`;
     return failedResult({ kind, message, durationMs: Math.round(performance.now() - started), callLimit: maxCalls });
   }
+
+  const remainingMs = Math.max(1, Math.round(timeoutMs - (performance.now() - started)));
 
   const gate = new ScriptCallGate();
   const limits = { calls: 0, maxCalls, callId };
@@ -294,7 +323,7 @@ export async function runScript({
     const { CodemodeSandbox } = await import('@earendil-works/pi-codemode');
     sandbox = new CodemodeSandbox({
       tools,
-      timeoutMs,
+      timeoutMs: remainingMs,
       memoryLimitBytes: SCRIPT_MEMORY_LIMIT_BYTES,
     });
     result = await sandbox.execute(script, { signal });
