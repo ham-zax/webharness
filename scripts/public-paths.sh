@@ -8,6 +8,7 @@ is_public_path() {
       # Reviewed portable packs. skills/* stays private.
       return 0
       ;;
+    docs/aegis/work/* | \
     docs/history/* | \
     docs/benchmarks/* | \
     experiments/* | \

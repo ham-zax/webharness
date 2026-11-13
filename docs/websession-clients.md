@@ -14,9 +14,9 @@ For master-bearer lifetime, rotation, exchange, and storage rules, see [WebSessi
 
 | Client capability | WebSession profile | Credential bootstrap |
 |---|---|---|
-| HTTPS GET + POST + custom headers | enhanced JSON (`json-post-v1`) | master bearer exchange or finite capability |
+| HTTPS GET + POST + custom headers | enhanced JSON (`json-post-v1`) | master bearer in the `Authorization` header, or a finite capability |
 | Python stdlib HTTPS (chat or code sandbox) | direct JSON HTTPS through `urllib.request` | one-time pair code from `bin/adapter connect` |
-| Generic code/runtime HTTP client | enhanced JSON (`json-post-v1`) | master bearer exchange or finite capability |
+| Generic code/runtime HTTP client | enhanced JSON (`json-post-v1`) | master bearer in the `Authorization` header, or a finite capability |
 | Shell with curl only (no MCP client) | enhanced JSON via served client (`/v1/client.sh`) | finite capability issued by the operator |
 | HTTPS GET/open/fetch only | universal GET (`universal-get-v1`) | finite capability issued by the operator |
 | Native MCP client | direct `/mcp` preferred | normal MCP OAuth; WebSession optional |
@@ -29,9 +29,15 @@ Start the adapter only when you want the HTTP compatibility path exposed:
 
 ```bash
 bin/adapter start
-bin/adapter auth-status
+bin/adapter identity-status
 bin/adapter status
 ```
+
+The adapter's upstream 1MCP credential is its own service identity, provisioned over loopback and independent of every connector grant. Create it once with `bin/adapter identity-provision`; `bin/adapter identity-revoke` removes only that identity. It is not a borrowed connector token, and it needs no browser. See [WebSession master bearer](websession-master-bearer.md#adapter-service-identity).
+
+`identity-status` reads the 1MCP session record, so it reports `present`, `borrowed`, `missing`, `unverified`, or `revoked` rather than assuming the stored token is this service. Startup runs an idempotent `identity-ensure` that migrates a pre-existing borrowed `oauth.json` to a dedicated identity while leaving the borrowed connector session intact. An intentional `identity-revoke` is recorded, so a restart does not recreate the identity; run `identity-provision` explicitly to create a new one.
+
+The older `bin/adapter auth` flow is a same-machine path: it opens a loopback OAuth callback (`http://127.0.0.1:3052/callback` by default) and waits for a browser on the machine that runs the adapter. It is not the supported way to give the adapter its upstream credential, and WebHarness does not rewrite that registered loopback callback. Use `identity-provision`, which needs no browser, no callback, and no SSH forward.
 
 The main `/mcp` endpoint is independent. The public `/v1/*` WebSession routes are available only while the adapter is running; when it is stopped those routes are intentionally unavailable (typically surfaced by the tunnel as an upstream error).
 
@@ -210,6 +216,8 @@ Authorization: Bearer <MASTER_BEARER>
 ```
 
 The response contains a fresh ordinary `main` capability with `ttl_seconds: 21600`. Use that returned capability for discovery and calls exactly as below. Reusing the master bearer later issues another independent six-hour capability; rotating the master does not change capabilities that were already issued.
+
+A client that can send a custom `Authorization` header does not need the exchange at all: send the master bearer directly on `POST /v1/calls`, `POST /v1/batch`, `GET`/`PUT /v1/cwd`, or `GET /v1/raw`. The adapter resolves it into one stable stored principal, so operation ownership, working directory, and result history persist across requests and restarts. Never put the master bearer in a URL, and never use it for a continuation or confirmation decision.
 
 ## Python sandbox pairing prompt
 

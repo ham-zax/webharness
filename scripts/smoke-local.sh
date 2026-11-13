@@ -190,13 +190,15 @@ if [ ! -f "$APP_CONFIG" ]; then
   echo "missing 1MCP app config: $APP_CONFIG (re-render the deployment before starting the bridge)" >&2
   exit 1
 fi
-node - "$APP_CONFIG" "$BRIDGE_ONE_MCP_LOG_FILE" <<'NODE'
+node - "$APP_CONFIG" "$BRIDGE_ONE_MCP_LOG_FILE" "${MCP_BRIDGE_PROFILE:-}" <<'NODE'
 const fs = require('fs');
-const [configFile, expectedLogFile] = process.argv.slice(2);
+const [configFile, expectedLogFile, profile] = process.argv.slice(2);
 const text = fs.readFileSync(configFile, 'utf8');
 if (!text.includes('[auth]')) throw new Error('1MCP config.toml must contain [auth]');
 const sessionTtl = Number(text.match(/^sessionTtl\s*=\s*(\d+)$/m)?.[1]);
-if (sessionTtl !== 43200) throw new Error('1MCP auth.sessionTtl must be 43200 minutes');
+// The 365-day single-owner policy is server-only; every other profile keeps 30 days.
+const expectedSessionTtl = profile === 'server' ? 525600 : 43200;
+if (sessionTtl !== expectedSessionTtl) throw new Error(`1MCP auth.sessionTtl must be ${expectedSessionTtl} minutes for profile ${profile || 'unknown'}`);
 if (!text.includes('[logging]')) throw new Error('1MCP config.toml must contain [logging]');
 if (!text.includes(`file = ${JSON.stringify(expectedLogFile)}`)) throw new Error('1MCP logging.file must target the bridge state log path');
 const size = Number(text.match(/^maxSize\s*=\s*(\d+)$/m)?.[1]);

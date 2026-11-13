@@ -30,11 +30,47 @@ This prevents the workstation's default tunnel configuration from selecting a di
 
 Copy only that tunnel's credential to the server, with mode 0600. Keep the account-wide Cloudflare certificate on the owner's machine. Do not attach different MCP deployments to the same tunnel UUID as replicas: a client must reach the deployment that issued its OAuth grant. Cloudflare explains tunnel routing and replicas in its [routing documentation](https://developers.cloudflare.com/tunnel/concepts/routing/).
 
-## Private owner approval
+## Owner approval from a home browser
 
-The pinned 1MCP consent form is an authorization decision, not an owner login. On an internet-facing server, keep consent submission and management private rather than allowing any visitor to approve a new client.
+The supported cross-device mode is a hosted connector with its own registered HTTPS callback. ChatGPT, Claude, and Gemini web sessions register an HTTPS callback on their own platform, so the approval round trip never touches a loopback address:
 
-A narrowly allowed Cloudflare ingress can expose discovery, client registration, authorization, token exchange, revocation, health, and MCP while refusing every other path:
+```text
+web client   -> POST /register          platform callback registered
+home browser -> GET  /authorize?...     owner signs in, approves once
+home browser -> POST /oauth/consent     approval, same origin
+home browser -> 302  https://<platform>/callback?code=...&state=...
+platform     -> POST /token             code plus PKCE verifier
+web client   -> POST /mcp               Bearer access token
+```
+
+The owner opens the authorization link on the home browser and approves. The browser then redirects to the platform's registered HTTPS callback, the platform backend exchanges the code, and the web client continues on its own. The headless server needs no desktop, no browser, no SSH forward, and no URL editing. The exact registered callback, `state`, and PKCE `code_challenge` are carried through unchanged; the server never rewrites a callback.
+
+Two properties make this work and must be preserved:
+
+- `/authorize` and `/oauth/consent` are reachable from the owner's browser over the public HTTPS origin.
+- Every other protocol path stays directly reachable by the client without an interactive login: `/mcp`, `/register`, `/token`, `/revoke`, discovery, and `/v1/*`.
+
+A client that registers a `http://127.0.0.1:PORT/callback` redirect is a same-machine client. Its callback resolves on whichever machine runs the browser, so it cannot complete from a different computer. That is a client limitation, not a server setting: WebHarness does not rewrite a registered loopback callback, and this deployment offers no device-code or callback-relay flow. Use a hosted connector for cross-device approval, or run the loopback client on the machine with the browser.
+
+## Owner gate on the approval routes
+
+The pinned 1MCP consent form is an authorization decision, not an owner login. Gate exactly the two browser routes with Cloudflare Access restricted to the owner's identity:
+
+| Path | Access policy | Routed to |
+| --- | --- | --- |
+| `/authorize` | owner identity only | `http://127.0.0.1:3050` |
+| `/oauth/consent` | owner identity only | `http://127.0.0.1:3050` |
+| every other protocol path | no Access application | `http://127.0.0.1:3050` |
+
+Do not create a hostname-wide Access application. An interactive login on `/mcp`, `/register`, `/token`, `/revoke`, discovery, or `/v1/*` breaks the protocol clients that must call those endpoints directly.
+
+Before enabling the gate, confirm the effective path match including trailing-slash variants and any alternate ingress route, and confirm that an unauthenticated `POST /oauth/consent` is refused. Keep the origin loopback-only. Preserve authorization state and callback parameters across the Access login; the owner's browser session expiring affects future approvals only, never an existing connector token.
+
+**Status: not configured.** This change ships the runtime and documentation for this mode but does not create the Cloudflare Access application, which needs the owner's Cloudflare account. Until it exists, keep the private approval route below and leave the public `/oauth/consent` refused.
+
+## Fallback: private approval route
+
+Until the owner gate exists, approve through a private route rather than exposing public consent. A narrowly allowed ingress can expose discovery, client registration, authorization, token exchange, revocation, health, and MCP while refusing every other path:
 
 ```yaml
 tunnel: YOUR_SEPARATE_TUNNEL_UUID
@@ -46,7 +82,7 @@ ingress:
   - service: http_status:403
 ```
 
-Use the configured `MCP_ONE_MCP_PORT` in place of 3050. Validate ingress rules with `cloudflared tunnel ingress validate`. Do not put an interactive login gate over all MCP traffic: the cloud client needs to call these protocol endpoints directly.
+Use the configured `MCP_ONE_MCP_PORT` in place of 3050. Validate ingress rules with `cloudflared tunnel ingress validate`.
 
 To approve an app, open the SSH forward on the same computer as the browser that owns the client session. For Claude in a Windows browser, run this in Windows PowerShell:
 
@@ -70,6 +106,21 @@ The result must be `200` before you continue. Then:
 Do not put complete authorization URLs or callback URLs in repository files. They contain temporary OAuth state.
 
 Keep `MCP_PUBLIC_URL` set to the public HTTPS origin throughout. Changing the issuer to localhost would break client discovery and token validation. Each client and each machine receives its own grant. An unauthenticated public `/mcp` call must fail, and public `/oauth/consent` must remain refused.
+
+## Connector lifetime and registrations
+
+An approved connector keeps working until the owner revokes it:
+
+- Access tokens are issued for 365 days (`auth.sessionTtl = 525600` minutes).
+- Refresh authority is 365 days and restarts on every successful rotation, so a connector that refreshes normally never reaches a fixed approval deadline.
+- Client registrations are durable. A registration records identity metadata only; it grants nothing until the owner approves it.
+- A duplicate refresh request inside a bounded retry window returns the original rotation result instead of being treated as a replay. Outside that window the request fails as a token error without revoking an otherwise active connector. Owner revocation and invalid-client rejection still apply immediately.
+
+This is long-lived access, not a promise that a client keeps its credentials or refreshes successfully forever. A client that discards its refresh token needs a new approval.
+
+The `server` profile approves the deployment's whole published tag set in one decision. Scope enforcement is unchanged: the grant is still the published tags, and per-request tag checks still apply.
+
+These lifetime and registration choices are scoped to the `server` profile. The renderer writes `sessionTtl = 525600` and sets `WEBHARNESS_OAUTH_SINGLE_OWNER=1` / `WEBHARNESS_OAUTH_SERVICE_IDENTITY=1` for `server`. Other profiles explicitly receive both flags as `0` so inherited server settings are cleared; `restricted`, `trusted-dev`, and `personal` keep the previous 30-day access-token lifetime, the 30-day registration lifetime, per-tag consent checkboxes, and replay-triggered family revocation. Re-rendering one state directory for another profile rewrites both `bridge.env` and `config.toml`, so a stale single-owner policy is not left behind.
 
 ## Upgrade
 
@@ -123,15 +174,19 @@ Re-run setup so `local-1mcp/mcp.json` is re-rendered, then restart the bridge. T
 
 ## Troubleshooting
 
+### Approval link opened on a different computer never completes
+
+Check the client's registered redirect URI first. A hosted connector registers an HTTPS callback on its own platform and completes from any browser. A client that registers `http://127.0.0.1:PORT/callback` needs the browser on the same machine as the client; opening its approval link elsewhere sends the callback to the wrong computer. The server does not rewrite that callback. Approve from the machine running the client, or use a hosted connector.
+
 ### Local approval page says connection refused
 
-Nothing is listening on local port 43070. Start the SSH forward on the browser's computer and keep its terminal open. Check that `/health/ready` through the forward returns `200` before opening the local authorization URL.
+Nothing is listening on local port 43070. This is the fallback private approval route, not the owner-gated mode. Start the SSH forward on the browser's computer and keep its terminal open. Check that `/health/ready` through the forward returns `200` before opening the local authorization URL.
 
 ### Approval shows HTTP 403
 
-A consent page at the public `/authorize?...` URL is visible, but its Approve button submits to the private `/oauth/consent` path. With the recommended ingress guard, clicking Approve while still on the public origin returns HTTP 403. This does not mean the OAuth client lacks the selected scopes.
+A consent page at the public `/authorize?...` URL is visible, but its Approve button submits to the private `/oauth/consent` path. With the fallback ingress guard, clicking Approve while still on the public origin returns HTTP 403. This does not mean the OAuth client lacks the selected scopes.
 
-Go back to the original authorization URL, start the SSH forward, and replace only the origin with `http://127.0.0.1:43070` before approving. Preserve the entire path/query. Changing the denied `/oauth/consent` URL alone cannot restore the authorization parameters. If browser history no longer contains the original URL, restart connection setup in the client. The final callback still uses the registered client URL.
+Either configure the owner gate on `/authorize` and `/oauth/consent` so the public origin accepts the approval, or go back to the original authorization URL, start the SSH forward, and replace only the origin with `http://127.0.0.1:43070` before approving. Preserve the entire path/query. Changing the denied `/oauth/consent` URL alone cannot restore the authorization parameters. If browser history no longer contains the original URL, restart connection setup in the client. The final callback still uses the registered client URL.
 
 If the client reports `connect_request_unconfirmed` or sends the browser to sign-in, the callback may have opened in a different or signed-out browser profile. Start a fresh authorization from the client's signed-in browser and approve it there. Do not reuse an authorization URL that already reached the callback.
 

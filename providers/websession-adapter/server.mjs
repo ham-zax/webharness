@@ -4,7 +4,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { createServer } from 'node:http';
 import { OperationCore } from './core.mjs';
-import { compactInstructions, webSessionInstructions, decodeToolName, parseToolName, toolListSnapshot, enhancedSnapshot, parseWait, prefersPlainText, parseCapabilityToken, parseClientNonce, parseRequest, parseUniversalRequest, renderBridgeError, renderChunk, renderOperation, toolSignature, upstreamUnavailable } from './protocol.mjs';
+import { compactInstructions, webSessionInstructions, decodeToolName, parseToolName, toolListSnapshot, enhancedSnapshot, parseWait, prefersPlainText, parseBearerToken, parseCapabilityToken, parseClientNonce, parseRequest, parseUniversalRequest, renderBridgeError, renderChunk, renderOperation, toolSignature, upstreamUnavailable } from './protocol.mjs';
 
 const host = process.env.WEBSESSION_ADAPTER_HOST || '127.0.0.1';
 const port = Number.parseInt(process.env.WEBSESSION_ADAPTER_PORT || '3051', 10);
@@ -162,6 +162,14 @@ async function readBoundedBody(req, maxBytes = 64 * 1024) {
   return Buffer.concat(chunks);
 }
 
+// URL positions carry an ordinary capability only. The master bearer is a header
+// credential: it is never accepted from a path, even when its shape matches the
+// 43-character capability form. Ordinary capabilities keep working unchanged.
+function urlCapability(segment) {
+  const capability = parseCapabilityToken(segment);
+  return capability && !operationCore.store.masterBearerMatches(capability) ? capability : undefined;
+}
+
 async function handleUniversalGet(req, res, parts) {
   const base = publicBase(req);
 
@@ -204,7 +212,7 @@ async function handleUniversalGet(req, res, parts) {
   }
 
   if (parts[3] === 'tools' && parts.length === 4) {
-    const capability = parseCapabilityToken(parts[2]);
+    const capability = urlCapability(parts[2]);
     const access = capability ? await operationCore.permittedTools(capability) : undefined;
     if (!access) {
       sendText(res, 404, 'WEBSESSION-MCP-BRIDGE/1\nstate: rejected\ncode: not_found');
@@ -226,7 +234,7 @@ async function handleUniversalGet(req, res, parts) {
   }
 
   if (parts[3] === 'tool' && parts.length === 5) {
-    const capability = parseCapabilityToken(parts[2]);
+    const capability = urlCapability(parts[2]);
     const access = capability ? await operationCore.permittedTools(capability) : undefined;
     if (!access) {
       sendText(res, 404, 'WEBSESSION-MCP-BRIDGE/1\nstate: rejected\ncode: not_found');
@@ -254,7 +262,7 @@ async function handleUniversalGet(req, res, parts) {
   }
 
   if (parts[3] === 'call' && parts.length === 6) {
-    const capability = parseCapabilityToken(parts[2]);
+    const capability = urlCapability(parts[2]);
     if (!capability) {
       sendText(res, 404, 'WEBSESSION-MCP-BRIDGE/1\nstate: rejected\ncode: not_found');
       return true;
@@ -364,7 +372,7 @@ function sendPlainBody(res, body) {
 async function handleHeaderDiscovery(req, res, parts) {
   const authorization = req.headers.authorization || '';
   const capability = typeof authorization === 'string' && authorization.startsWith('Bearer ')
-    ? parseCapabilityToken(authorization.slice('Bearer '.length))
+    ? parseBearerToken(authorization.slice('Bearer '.length))
     : undefined;
   const access = capability ? await operationCore.permittedTools(capability) : undefined;
   if (!access) {
@@ -452,7 +460,7 @@ async function handleEnhancedCall(req, res, url) {
     sendJson(res, 401, { protocol: 'WEBSESSION-MCP-BRIDGE/1', state: 'rejected', code: 'authorization_required' });
     return;
   }
-  const capability = parseCapabilityToken(authorization.slice('Bearer '.length));
+  const capability = parseBearerToken(authorization.slice('Bearer '.length));
   if (!capability) {
     sendJson(res, 401, { protocol: 'WEBSESSION-MCP-BRIDGE/1', state: 'rejected', code: 'authorization_required' });
     return;
@@ -537,7 +545,7 @@ async function handleEnhancedBatch(req, res, url) {
     sendJson(res, 401, { protocol: 'WEBSESSION-MCP-BRIDGE/1', state: 'rejected', code: 'authorization_required' });
     return;
   }
-  const capability = parseCapabilityToken(authorization.slice('Bearer '.length));
+  const capability = parseBearerToken(authorization.slice('Bearer '.length));
   if (!capability) {
     sendJson(res, 401, { protocol: 'WEBSESSION-MCP-BRIDGE/1', state: 'rejected', code: 'authorization_required' });
     return;
@@ -658,7 +666,7 @@ async function handleEnhancedBatch(req, res, url) {
 
 function handleRaw(req, res, url) {
   const authorization = req.headers.authorization || '';
-  const token = authorization.startsWith('Bearer ') ? parseCapabilityToken(authorization.slice(7)) : undefined;
+  const token = authorization.startsWith('Bearer ') ? parseBearerToken(authorization.slice(7)) : undefined;
   if (!token || !operationCore.store.resolveCapability(token)) return sendJson(res, 401, { code: 'authorization_required' });
   const path = url.searchParams.get('path');
   if (!path || !path.startsWith('/tmp/') || path.includes('\0')) return sendJson(res, 400, { code: 'invalid_path' });
@@ -695,7 +703,10 @@ function handleMasterAccess(req, res) {
     return;
   }
   const masterBearer = authorization.slice('Bearer '.length);
-  if (!operationCore.store.masterBearerMatches(masterBearer)) {
+  // The exchange is master-only: an ordinary capability must never mint another
+  // capability, so this checks the master credential itself and then requires the
+  // current service principal to still be active (owner revocation wins).
+  if (!operationCore.store.masterBearerMatches(masterBearer) || !operationCore.store.activeMasterPrincipal()) {
     sendJson(res, 401, { protocol: 'WEBSESSION-MCP-BRIDGE/1', state: 'rejected', code: 'authorization_required' });
     return;
   }
@@ -716,7 +727,7 @@ async function handleCwd(req, res) {
     sendJson(res, 401, { protocol: 'WEBSESSION-MCP-BRIDGE/1', state: 'rejected', code: 'authorization_required' });
     return;
   }
-  const capability = parseCapabilityToken(authorization.slice('Bearer '.length));
+  const capability = parseBearerToken(authorization.slice('Bearer '.length));
   if (!capability) {
     sendJson(res, 401, { protocol: 'WEBSESSION-MCP-BRIDGE/1', state: 'rejected', code: 'authorization_required' });
     return;

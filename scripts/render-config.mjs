@@ -495,7 +495,10 @@ export async function renderConfig(options) {
     `port = ${coldStart === '1' ? backendPort : oneMcpPort}`,
     ...(isLocal ? ['[admin]', 'enabled = false', ''] : []),
     '[auth]',
-    'sessionTtl = 43200',
+    // The single-owner server profile keeps connector access for 365 days; every
+    // other profile keeps the previous 30-day access-token lifetime. The installer
+    // patches the refresh family to renew the same window only under the same flag.
+    `sessionTtl = ${isServer ? 525600 : 43200}`,
     '',
     '[logging]',
     `file = ${JSON.stringify(oneMcpLogFile)}`,
@@ -528,6 +531,12 @@ export async function renderConfig(options) {
     `BRIDGE_WAKE_IDLE_MS=${shellSingleQuote(String(wakeIdleMs))}`,
     `MCP_BRIDGE_ROOT=${shellSingleQuote(repoRoot)}`,
     `BRIDGE_STATE_DIR=${shellSingleQuote(stateDir)}`,
+    // Single-owner server deployments approve one full-access decision and keep
+    // connector registrations durable. Other profiles keep the per-tag consent
+    // form and the default registration lifetime. Emit explicit zeroes so a
+    // profile switch also clears policy inherited from a running parent shell.
+    `WEBHARNESS_OAUTH_SINGLE_OWNER=${isServer ? '1' : '0'}`,
+    `WEBHARNESS_OAUTH_SERVICE_IDENTITY=${isServer ? '1' : '0'}`,
     '',
   ].join('\n');
 

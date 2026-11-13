@@ -180,7 +180,11 @@ NODE2
         --profile "$profile" --env-file "$tmp/deployment.env" --state-dir "$tmp/$profile" --repo-root "$ROOT" >/dev/null || rc=1
       cmp "$ROOT/config/templates/instructions-template.md" "$tmp/$profile/1mcp/instructions-template.md" || rc=1
       grep -Fq '[auth]' "$log_cfg" || rc=1
-      grep -Fq 'sessionTtl = 43200' "$log_cfg" || rc=1
+      if [ "$profile" = server ]; then
+        grep -Fq 'sessionTtl = 525600' "$log_cfg" || rc=1
+      else
+        grep -Fq 'sessionTtl = 43200' "$log_cfg" || rc=1
+      fi
       grep -Fq '[logging]' "$log_cfg" || rc=1
       grep -Fq "file = \"$tmp/$profile/logs/one-mcp.log\"" "$log_cfg" || rc=1
       grep -Fq 'maxSize = 1048576' "$log_cfg" || rc=1
@@ -197,6 +201,24 @@ NODE2
     HOME="$tmp/home" XDG_RUNTIME_DIR="$tmp/runtime" node "$ROOT/scripts/render-config.mjs" \
       --check --profile restricted --env-file "$tmp/deployment.env" --state-dir "$tmp/check-only" --repo-root "$ROOT" >/dev/null || rc=1
     [ ! -e "$tmp/check-only" ] || rc=1
+    # Re-rendering one state directory for another profile must not leave the
+    # single-owner policy behind in bridge.env or in the 1MCP config.
+    switch_state="$tmp/switch"
+    HOME="$tmp/home" XDG_RUNTIME_DIR="$tmp/runtime" node "$ROOT/scripts/render-config.mjs" \
+      --profile server --env-file "$tmp/deployment.env" --state-dir "$switch_state" --repo-root "$ROOT" >/dev/null || rc=1
+    grep -Fq 'WEBHARNESS_OAUTH_SINGLE_OWNER=1' "$switch_state/bridge.env" || rc=1
+    grep -Fq 'WEBHARNESS_OAUTH_SERVICE_IDENTITY=1' "$switch_state/bridge.env" || rc=1
+    grep -Fq 'sessionTtl = 525600' "$switch_state/1mcp/config.toml" || rc=1
+    HOME="$tmp/home" XDG_RUNTIME_DIR="$tmp/runtime" node "$ROOT/scripts/render-config.mjs" \
+      --profile personal --env-file "$tmp/deployment.env" --state-dir "$switch_state" --repo-root "$ROOT" >/dev/null || rc=1
+    grep -Fq 'WEBHARNESS_OAUTH_SINGLE_OWNER=0' "$switch_state/bridge.env" || rc=1
+    grep -Fq 'WEBHARNESS_OAUTH_SERVICE_IDENTITY=0' "$switch_state/bridge.env" || rc=1
+    WEBHARNESS_OAUTH_SINGLE_OWNER=1 WEBHARNESS_OAUTH_SERVICE_IDENTITY=1 bash -c '
+      set -a
+      source "$1"
+      test "$WEBHARNESS_OAUTH_SINGLE_OWNER" = 0 && test "$WEBHARNESS_OAUTH_SERVICE_IDENTITY" = 0
+    ' bash "$switch_state/bridge.env" || rc=1
+    grep -Fq 'sessionTtl = 43200' "$switch_state/1mcp/config.toml" || rc=1
   fi
   rm -rf "$tmp"
   return "$rc"

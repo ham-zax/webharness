@@ -97,6 +97,7 @@ test_public_classifier_matches_reference_boundary() {
     is_public_path "$path" || { echo "reference path classified as non-public: $path" >&2; return 1; }
   done
   for path in \
+    docs/aegis/work/example/checkpoint.md \
     docs/history/example \
     docs/benchmarks/example.md \
     experiments/example \
@@ -135,7 +136,10 @@ EOF
     HOME="$tmp/home" XDG_RUNTIME_DIR="$tmp/runtime" node "$ROOT/scripts/render-config.mjs" --profile "$profile" --env-file "$env_file" --state-dir "$state" --repo-root "$ROOT" >/dev/null || { rm -rf "$tmp"; return 1; }
     grep -Fq "MCP_BRIDGE_PROFILE='$profile'" "$state/bridge.env" || { rm -rf "$tmp"; return 1; }
     grep -Fq '[auth]' "$state/1mcp/config.toml" || { rm -rf "$tmp"; return 1; }
+    # The 365-day single-owner policy is server-only; these profiles keep 30 days.
     grep -Fq 'sessionTtl = 43200' "$state/1mcp/config.toml" || { rm -rf "$tmp"; return 1; }
+    grep -Fq 'WEBHARNESS_OAUTH_SINGLE_OWNER=0' "$state/bridge.env" || { rm -rf "$tmp"; return 1; }
+    grep -Fq 'WEBHARNESS_OAUTH_SERVICE_IDENTITY=0' "$state/bridge.env" || { rm -rf "$tmp"; return 1; }
   done
   node - "$tmp/restricted/1mcp/mcp.json" "$tmp/trusted-dev/1mcp/mcp.json" "$tmp/personal/1mcp/mcp.json" "$tmp/personal/local-1mcp/mcp.json" "$ROOT" <<'NODE2'
 const fs = require('fs');
@@ -235,11 +239,11 @@ test_no_personal_identity_in_public_files() {
   local path private_user private_home private_domain private_host private_service private_title pattern
   private_user="ham""za"
   private_home="/home/$private_user"
-  private_domain="mcp.$private_user.my.id"
+  private_domain="([[:alnum:]_-]+\\.)*$private_user\\.my\\.id"
   private_host="DESKTOP-""HQOUFCO"
   private_service="$private_user-cloudflare-oauth-bridge"
   private_title="Ham""za WSL"
-  pattern="${private_home}|${private_domain//./\\.}|${private_host}|${private_service}|${private_title}"
+  pattern="${private_home}|${private_domain}|${private_host}|${private_service}|${private_title}"
   while IFS= read -r path; do
     [ -f "$ROOT/$path" ] || continue
     if grep -I -nE "$pattern" "$ROOT/$path" >/dev/null 2>&1; then

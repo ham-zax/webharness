@@ -29,7 +29,20 @@ try {
     store.setMasterBearer(token);
     if (supplied === undefined) process.stdout.write(`master_bearer: ${token}\n`);
     else process.stdout.write('master_bearer: set\n');
-    process.stdout.write('access_ttl_seconds: 21600\n');
+    process.stdout.write(`service_principal: ${store.masterPrincipalId()}\n`);
+    process.stdout.write('exchange_ttl_seconds: 21600\n');
+  } else if (action === 'master-status') {
+    const principalId = store.masterPrincipalId();
+    if (!principalId) throw new Error('no master bearer is configured');
+    const principal = store.activeCapabilityById(principalId);
+    process.stdout.write(`service_principal: ${principalId}\n`);
+    process.stdout.write(`state: ${principal ? 'active' : 'revoked'}\n`);
+    if (principal?.defaultCwd) process.stdout.write(`default_cwd: ${principal.defaultCwd}\n`);
+  } else if (action === 'revoke-master') {
+    const principalId = store.masterPrincipalId();
+    if (!principalId) throw new Error('no master bearer is configured');
+    if (!store.revokeCapability(principalId)) throw new Error('service principal was not found');
+    process.stdout.write(`revoked_service_principal: ${principalId}\n`);
   } else if (action === 'pair') {
     const ttlSeconds = process.argv[3] === undefined || process.argv[3] === '' ? 21600 : Number(process.argv[3]);
     const pairTtlSeconds = process.argv[4] === undefined || process.argv[4] === '' ? 300 : Number(process.argv[4]);
@@ -49,7 +62,7 @@ try {
     if (!store.revokeCapability(capabilityId)) throw new Error('capability ID was not found');
     process.stdout.write(`revoked_capability_id: ${capabilityId}\n`);
   } else {
-    throw new Error('usage: node operator.mjs issue [ttl-seconds] [default-cwd] | pair [ttl-seconds] [pair-ttl-seconds] [default-cwd] | set-master [bearer] | revoke <capability-id>');
+    throw new Error('usage: node operator.mjs issue [ttl-seconds] [default-cwd] | pair [ttl-seconds] [pair-ttl-seconds] [default-cwd] | set-master [bearer] | master-status | revoke-master | revoke <capability-id>');
   }
 } finally {
   store.close();

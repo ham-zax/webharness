@@ -1044,6 +1044,34 @@ test('Python import-session privately adopts redeemed access without a network r
   assert.equal(requests.length, 1);
 });
 
+test('reference clients accept custom master bearers and reject unsafe token shapes', async t => {
+  const dir = mkdtempSync(join(tmpdir(), 'wh-custom-bearer-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const shell = clientFixture(t);
+  const sessionFile = join(dir, 'session.json');
+  const { base, requests } = await pythonFixture(t, (_entry, fixtureBase) => completed('custom-bearer-ok', fixtureBase));
+  const env = { WH_SESSION_FILE: sessionFile, WS_BASE: '', WS_CAP: '' };
+  for (const secret of ['a'.repeat(32), 'custom.master-' + 'x'.repeat(114)]) {
+    const imported = await runPythonInput(['import-session', base], env, JSON.stringify({ capability: secret }));
+    assert.equal(imported.status, 0, imported.stderr);
+    assert.ok(!(imported.stdout + imported.stderr).includes(secret));
+    const call = await runPythonInput(['sh', 'pwd'], env);
+    assert.equal(call.status, 0, call.stderr);
+    assert.equal(requests.at(-1).headers.authorization, `Bearer ${secret}`);
+    const login = shell.run(['login', 'https://bridge.example'], ['echo\n'], secret);
+    assert.equal(login.status, 0, login.stderr);
+    const tools = shell.run(['tools'], ['echo\n']);
+    assert.equal(tools.status, 0, tools.stderr);
+    assert.ok(!(login.stdout + login.stderr + tools.stdout + tools.stderr).includes(secret));
+  }
+  for (const secret of ['a'.repeat(31), 'a'.repeat(129), 'a'.repeat(32) + ' bad', 'a'.repeat(32) + '\r\nInjected: yes']) {
+    const imported = await runPythonInput(['import-session', base], env, JSON.stringify({ capability: secret }));
+    assert.equal(imported.status, 1);
+    const login = shell.run(['login', 'https://bridge.example'], [], secret);
+    assert.notEqual(login.status, 0);
+  }
+});
+
 test('Python client supports pipe/sequential batch, local shortcuts, pull (/v1/raw), ls --depth, and --save spooling', async t => {
   const dir = mkdtempSync(join(tmpdir(), 'wh-power-features-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));

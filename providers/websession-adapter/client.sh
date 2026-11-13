@@ -36,7 +36,7 @@ load_access() {
   [[ -f $WH_HOME/cap && -f $WH_HOME/base ]] || fail 'run wh login <base-url> first'
   IFS= read -r capability < "$WH_HOME/cap" || true
   IFS= read -r base < "$WH_HOME/base" || true
-  [[ ${capability:-} =~ ^[A-Za-z0-9_-]{43}$ ]] || fail 'invalid stored capability'
+  [[ ${capability:-} =~ ^[A-Za-z0-9._-]{32,128}$ ]] || fail 'invalid stored capability'
   [[ ${base:-} =~ ^https?://[^[:space:]]+$ ]] || fail 'invalid stored base URL'
   printf 'Authorization: Bearer %s\n' "$capability" > "$headers"
   unset capability
@@ -146,7 +146,7 @@ case $command in
     [[ $base =~ ^https?://[^[:space:]]+$ && $base != *'?'* && $base != *'#'* ]] || fail 'invalid base URL'
     capability=''
     IFS= read -r capability || true
-    [[ $capability =~ ^[A-Za-z0-9_-]{43}$ ]] || fail 'invalid capability'
+    [[ $capability =~ ^[A-Za-z0-9._-]{32,128}$ ]] || fail 'invalid capability'
     mkdir -p -- "$WH_HOME"
     printf '%s\n' "$capability" > "$WH_HOME/cap"
     printf '%s\n' "$base" > "$WH_HOME/base"

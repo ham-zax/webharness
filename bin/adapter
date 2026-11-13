@@ -10,6 +10,7 @@ ADAPTER_HOST="${WEBSESSION_ADAPTER_HOST:-127.0.0.1}"
 ADAPTER_PORT="${WEBSESSION_ADAPTER_PORT:-3051}"
 ADAPTER_SERVER="$DIR/providers/websession-adapter/server.mjs"
 ADAPTER_AUTH="$DIR/providers/websession-adapter/auth.mjs"
+ADAPTER_IDENTITY="$DIR/providers/websession-adapter/identity.mjs"
 ADAPTER_OPERATOR="$DIR/providers/websession-adapter/operator.mjs"
 ADAPTER_STATE_DIR="${WEBSESSION_ADAPTER_STATE_DIR:-$BRIDGE_STATE_DIR/websession-adapter}"
 ADAPTER_PID_FILE="$BRIDGE_RUN_DIR/websession-adapter.pid"
@@ -27,18 +28,8 @@ adapter_mcp_url() {
     printf '%s\n' "$configured_mcp_url"
     return 0
   fi
-  if [ -n "${TUNNEL_URL:-}" ]; then
-    printf '%s/mcp\n' "${TUNNEL_URL%/}"
-    return 0
-  fi
-  if [ -s "$BRIDGE_TUNNEL_URL_FILE" ]; then
-    local public_url
-    public_url="$(cat "$BRIDGE_TUNNEL_URL_FILE")"
-    if [ -n "$public_url" ]; then
-      printf '%s/mcp\n' "${public_url%/}"
-      return 0
-    fi
-  fi
+  # The adapter is a local service: reach 1MCP through the loopback wake proxy so
+  # cold starts keep working without depending on the public tunnel or its DNS.
   printf 'http://127.0.0.1:%s/mcp\n' "$BRIDGE_ONE_MCP_PORT"
   return 0
 }
@@ -87,29 +78,37 @@ adapter_lock() {
   }
 }
 
+adapter_identity_env() {
+  ADAPTER_IDENTITY_ENV=(
+    "WEBSESSION_ADAPTER_STATE_DIR=$ADAPTER_STATE_DIR"
+    "WEBSESSION_ADAPTER_1MCP_BASE=http://127.0.0.1:$BRIDGE_ONE_MCP_PORT"
+    "WEBSESSION_ADAPTER_1MCP_SESSIONS_DIR=$BRIDGE_STATE_DIR/1mcp/sessions/sessions/server"
+  )
+}
+
+adapter_identity() {
+  local mode="$1"
+  [ -f "$ADAPTER_IDENTITY" ] || {
+    echo "adapter identity helper is missing: $ADAPTER_IDENTITY" >&2
+    exit 1
+  }
+  install -d -m 700 "$ADAPTER_STATE_DIR"
+  umask 077
+  adapter_identity_env
+  env "${ADAPTER_IDENTITY_ENV[@]}" node "$ADAPTER_IDENTITY" "$mode"
+}
+
 adapter_prepare_state() {
   install -d -m 700 "$ADAPTER_STATE_DIR" "$(dirname "$ADAPTER_LOG_FILE")" "$BRIDGE_RUN_DIR"
 
-  if [ ! -s "$ADAPTER_STATE_DIR/oauth.json" ] || ! grep -q 'access_token' "$ADAPTER_STATE_DIR/oauth.json" 2>/dev/null; then
-    local session_file
-    session_file="$(ls -t "$BRIDGE_STATE_DIR"/1mcp/sessions/sessions/server/session_sess-*.json 2>/dev/null | head -n 1 || true)"
-    if [ -n "$session_file" ] && [ -r "$session_file" ]; then
-      local token_id
-      token_id="$(basename "$session_file" | sed -E 's/^session_sess-(.*)\.json$/\1/')"
-      if [ -n "$token_id" ]; then
-        cat <<EOF > "$ADAPTER_STATE_DIR/oauth.json"
-{
-  "version": 1,
-  "tokens": {
-    "access_token": "tk-$token_id",
-    "token_type": "Bearer"
+  # The adapter owns a dedicated 1MCP service identity. It never borrows a
+  # connector's access token: connector grants and the adapter identity are
+  # independent, and revoking either must not disconnect the other. `ensure` is
+  # idempotent, migrates a borrowed token, and never undoes an intentional revoke.
+  adapter_identity ensure || {
+    echo "WebSession adapter service identity is unavailable; run bin/adapter identity-provision" >&2
+    return 1
   }
-}
-EOF
-        chmod 600 "$ADAPTER_STATE_DIR/oauth.json"
-      fi
-    fi
-  fi
 }
 
 adapter_server_env() {
@@ -141,7 +140,9 @@ adapter_run() {
     echo "adapter server is missing: $ADAPTER_SERVER" >&2
     exit 1
   }
-  adapter_prepare_state
+  # On a transient bridge/provisioning failure, exit so systemd retries startup.
+  # Serving health without an upstream identity would leave the adapter stuck.
+  adapter_prepare_state || return 1
   adapter_server_env
   umask 077
   exec env "${ADAPTER_SERVER_ENV[@]}" node "$ADAPTER_SERVER"
@@ -347,6 +348,17 @@ adapter_set_master_bearer() {
   fi
 }
 
+adapter_master_operator() {
+  local action="$1"
+  [ -f "$ADAPTER_OPERATOR" ] || {
+    echo "adapter operator helper is missing: $ADAPTER_OPERATOR" >&2
+    exit 1
+  }
+  install -d -m 700 "$ADAPTER_STATE_DIR"
+  umask 077
+  WEBSESSION_ADAPTER_STATE_DIR="$ADAPTER_STATE_DIR" node "$ADAPTER_OPERATOR" "$action"
+}
+
 adapter_revoke_capability() {
   local capability_id="${2:-}"
   [ -n "$capability_id" ] || {
@@ -483,11 +495,16 @@ case "$ACTION" in
   connect) adapter_connect "${@:2}" ;;
   auth) adapter_auth_command auth ;;
   auth-status) adapter_auth_command status ;;
+  identity-provision) adapter_identity provision ;;
+  identity-status) adapter_identity status ;;
+  identity-revoke) adapter_identity revoke ;;
   issue-cap) adapter_issue_capability "${@:2}" ;;
   set-master-bearer) adapter_set_master_bearer "${@:2}" ;;
+  master-status) adapter_master_operator master-status ;;
+  revoke-master) adapter_master_operator revoke-master ;;
   revoke-cap) adapter_revoke_capability "$@" ;;
   *)
-    echo "usage: bin/adapter start|stop|status|run|connect [--cwd <dir>|--here] [--ttl <seconds>] [--pair-ttl <seconds>]|auth|auth-status|issue-cap [ttl-seconds] [--cwd <dir>|--here]|set-master-bearer [bearer]|revoke-cap <capability-id>" >&2
+    echo "usage: bin/adapter start|stop|status|run|connect [--cwd <dir>|--here] [--ttl <seconds>] [--pair-ttl <seconds>]|auth|auth-status|identity-provision|identity-status|identity-revoke|issue-cap [ttl-seconds] [--cwd <dir>|--here]|set-master-bearer [bearer]|master-status|revoke-master|revoke-cap <capability-id>" >&2
     exit 2
     ;;
 esac

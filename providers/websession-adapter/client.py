@@ -823,7 +823,7 @@ def cmd_import_session(args):
     if not valid_base:
         fail("session base must be an HTTP(S) URL without credentials, query, or fragment")
     cap = data.get("cap", data.get("capability"))
-    if not isinstance(cap, str) or re.fullmatch(r"[A-Za-z0-9_-]{43}", cap) is None:
+    if not isinstance(cap, str) or re.fullmatch(r"[A-Za-z0-9._-]{32,128}", cap) is None:
         fail("session input requires a valid capability in cap or capability")
     cwd = explicit_cwd if explicit_cwd is not None else data.get("cwd", data.get("default_cwd"))
     if cwd is not None and (not isinstance(cwd, str) or not cwd or "\0" in cwd):

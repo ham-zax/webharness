@@ -1,9 +1,17 @@
 const BASE64URL_RE = /^[A-Za-z0-9_-]+$/;
 const TOKEN_RE = /^[A-Za-z0-9_-]{43}$/;
+// Principal credentials are either a 43-character capability or the configured
+// master bearer (32-128 characters). This only bounds the input shape; the store
+// still decides whether the presented value resolves to an active principal.
+const BEARER_RE = /^[A-Za-z0-9._-]{32,128}$/;
 const NONCE_RE = /^[A-Za-z0-9._-]{1,64}$/;
 
 export function parseCapabilityToken(value) {
   return TOKEN_RE.test(value) ? value : undefined;
+}
+
+export function parseBearerToken(value) {
+  return BEARER_RE.test(value) ? value : undefined;
 }
 
 export function parseClientNonce(value) {

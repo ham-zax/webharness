@@ -9,6 +9,10 @@ function sha256(value) {
 
 const CHUNK_BYTES = 8192;
 const MASTER_BEARER_FILE = 'master-bearer.sha256';
+// The master bearer resolves to one stored service principal. Its id carries a
+// generation derived from the bearer hash, so rotating the master retires the
+// previous generation instead of letting new requests inherit its operations.
+const MASTER_PRINCIPAL_PREFIX = 'master:';
 const PAIRING_CODE_RE = /^[a-z]{4,7}-[0-9]{4}-[a-z0-9]{4}$/;
 const PAIRING_TTL_MIN_SECONDS = 30;
 const PAIRING_TTL_MAX_SECONDS = 900;
@@ -96,7 +100,8 @@ export class AdapterStore {
         created_ms INTEGER NOT NULL,
         expires_ms INTEGER NOT NULL,
         revoked_ms INTEGER,
-        default_cwd TEXT
+        default_cwd TEXT,
+        non_expiring INTEGER NOT NULL DEFAULT 0
       );
       CREATE TABLE IF NOT EXISTS operations (
         id TEXT PRIMARY KEY,
@@ -151,6 +156,9 @@ export class AdapterStore {
     if (!capabilityColumns.some(column => column.name === 'default_cwd')) {
       this.db.exec('ALTER TABLE capabilities ADD COLUMN default_cwd TEXT');
     }
+    if (!capabilityColumns.some(column => column.name === 'non_expiring')) {
+      this.db.exec('ALTER TABLE capabilities ADD COLUMN non_expiring INTEGER NOT NULL DEFAULT 0');
+    }
     const operationColumns = this.db.prepare('PRAGMA table_info(operations)').all().map(column => column.name);
     const migrations = [
       ['tool', "TEXT NOT NULL DEFAULT 'read'"],
@@ -169,6 +177,7 @@ export class AdapterStore {
       if (!operationColumns.includes(name)) this.db.exec(`ALTER TABLE operations ADD COLUMN ${name} ${definition}`);
     }
     this.db.exec('CREATE INDEX IF NOT EXISTS idx_operations_batch ON operations(principal_id, batch_id, batch_index)');
+    this._ensureMasterPrincipal();
   }
 
   close() {
@@ -262,23 +271,94 @@ export class AdapterStore {
     if (!validMasterBearer(token)) {
       throw new Error('master bearer must be 32 to 128 characters using letters, digits, dot, underscore, or hyphen');
     }
+    const tokenHash = sha256(token);
     const path = join(this.stateDir, MASTER_BEARER_FILE);
-    writeFileSync(path, `${sha256(token)}\n`, { mode: 0o600 });
+    writeFileSync(path, `${tokenHash}\n`, { mode: 0o600 });
     chmodSync(path, 0o600);
+    this._installMasterPrincipal(tokenHash);
   }
 
   masterBearerMatches(token) {
     if (!validMasterBearer(token)) return false;
-    let expected;
-    try {
-      expected = readFileSync(join(this.stateDir, MASTER_BEARER_FILE), 'utf8').trim();
-    } catch (error) {
-      if (error?.code === 'ENOENT') return false;
-      throw error;
-    }
+    const expected = this._masterTokenHash();
+    if (!expected) return false;
     const actualBuffer = Buffer.from(sha256(token));
     const expectedBuffer = Buffer.from(expected);
     return actualBuffer.length === expectedBuffer.length && timingSafeEqual(actualBuffer, expectedBuffer);
+  }
+
+  _masterTokenHash() {
+    try {
+      const value = readFileSync(join(this.stateDir, MASTER_BEARER_FILE), 'utf8').trim();
+      return value || null;
+    } catch (error) {
+      if (error?.code === 'ENOENT') return null;
+      throw error;
+    }
+  }
+
+  _masterPrincipalId() {
+    const tokenHash = this._masterTokenHash();
+    return tokenHash ? `${MASTER_PRINCIPAL_PREFIX}${tokenHash.slice(0, 32)}` : null;
+  }
+
+  /** Current master service principal id, or null when no master bearer is configured. */
+  masterPrincipalId() {
+    return this._masterPrincipalId();
+  }
+
+  /**
+   * Installs the service principal for the current master bearer.
+   *
+   * The row is explicitly non-expiring: it ends only through owner revocation or
+   * master rotation. Its token_hash is a namespaced marker rather than the bearer
+   * hash, so the master bearer is never resolvable through the ordinary
+   * capability lookup and can only be admitted by the explicit master check.
+   */
+  _installMasterPrincipal(tokenHash) {
+    const principalId = `${MASTER_PRINCIPAL_PREFIX}${tokenHash.slice(0, 32)}`;
+    const now = Date.now();
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      this.db.prepare(
+        "UPDATE capabilities SET revoked_ms = COALESCE(revoked_ms, ?) WHERE non_expiring = 1 AND id LIKE ? AND id <> ? AND revoked_ms IS NULL"
+      ).run(now, `${MASTER_PRINCIPAL_PREFIX}%`, principalId);
+      this.db.prepare(`
+        INSERT INTO capabilities (id, token_hash, scope, created_ms, expires_ms, revoked_ms, default_cwd, non_expiring)
+        VALUES (?, ?, 'main', ?, 0, NULL, NULL, 1)
+        ON CONFLICT(id) DO UPDATE SET scope = 'main', revoked_ms = NULL, non_expiring = 1
+      `).run(principalId, `service:${principalId}`, now);
+      this.db.exec('COMMIT');
+    } catch (error) {
+      try { this.db.exec('ROLLBACK'); } catch {}
+      throw error;
+    }
+  }
+
+  _ensureMasterPrincipal() {
+    const tokenHash = this._masterTokenHash();
+    if (!tokenHash) return;
+    const principalId = `${MASTER_PRINCIPAL_PREFIX}${tokenHash.slice(0, 32)}`;
+    // Retire generations left behind by an out-of-band state restore, but never
+    // revive the current generation: an owner revocation must survive restarts.
+    this.db.prepare(
+      "UPDATE capabilities SET revoked_ms = COALESCE(revoked_ms, ?) WHERE non_expiring = 1 AND id LIKE ? AND id <> ? AND revoked_ms IS NULL"
+    ).run(Date.now(), `${MASTER_PRINCIPAL_PREFIX}%`, principalId);
+    if (!this.db.prepare('SELECT id FROM capabilities WHERE id = ?').get(principalId)) {
+      this._installMasterPrincipal(tokenHash);
+    }
+  }
+
+  _activePrincipal(row) {
+    if (!row || row.scope !== 'main') return undefined;
+    if (row.revoked_ms !== null) return undefined;
+    if (!row.non_expiring && row.expires_ms <= Date.now()) return undefined;
+    return {
+      id: row.id,
+      scope: row.scope,
+      expiresMs: row.non_expiring ? null : row.expires_ms,
+      defaultCwd: row.default_cwd ?? null,
+    };
   }
 
   revokeCapability(id) {
@@ -289,21 +369,39 @@ export class AdapterStore {
   updateCapabilityDefaultCwd(id, defaultCwd) {
     const normalized = defaultCwd === '' ? null : normalizeDefaultCwd(defaultCwd);
     const result = this.db.prepare(
-      'UPDATE capabilities SET default_cwd = ? WHERE id = ? AND scope = ? AND revoked_ms IS NULL AND expires_ms > ?'
+      'UPDATE capabilities SET default_cwd = ? WHERE id = ? AND scope = ? AND revoked_ms IS NULL AND (non_expiring = 1 OR expires_ms > ?)'
     ).run(normalized, id, 'main', Date.now());
     return result.changes === 1 ? normalized : undefined;
   }
 
+  /**
+   * The active master service principal, or undefined when no master bearer is
+   * configured or the owner revoked the current generation.
+   *
+   * This is the only admission check for the master credential. It is separate
+   * from `resolveCapability` so a caller that must accept the master bearer alone
+   * cannot accidentally accept an ordinary capability.
+   */
+  activeMasterPrincipal() {
+    const masterId = this._masterPrincipalId();
+    if (!masterId) return undefined;
+    return this._activePrincipal(
+      this.db.prepare('SELECT id, scope, expires_ms, revoked_ms, default_cwd, non_expiring FROM capabilities WHERE id = ?').get(masterId)
+    );
+  }
+
   resolveCapability(token) {
-    const row = this.db.prepare('SELECT id, scope, expires_ms, revoked_ms, default_cwd FROM capabilities WHERE token_hash = ?').get(sha256(token));
-    if (!row || row.scope !== 'main' || row.expires_ms <= Date.now() || row.revoked_ms !== null) return undefined;
-    return { id: row.id, scope: row.scope, expiresMs: row.expires_ms, defaultCwd: row.default_cwd ?? null };
+    const row = this.db.prepare('SELECT id, scope, expires_ms, revoked_ms, default_cwd, non_expiring FROM capabilities WHERE token_hash = ?').get(sha256(token));
+    const principal = this._activePrincipal(row);
+    if (principal) return principal;
+    if (!this.masterBearerMatches(token)) return undefined;
+    return this.activeMasterPrincipal();
   }
 
   activeCapabilityById(id) {
-    const row = this.db.prepare('SELECT id, scope, expires_ms, revoked_ms, default_cwd FROM capabilities WHERE id = ?').get(id);
-    if (!row || row.scope !== 'main' || row.expires_ms <= Date.now() || row.revoked_ms !== null) return undefined;
-    return { id: row.id, scope: row.scope, expiresMs: row.expires_ms, defaultCwd: row.default_cwd ?? null };
+    return this._activePrincipal(
+      this.db.prepare('SELECT id, scope, expires_ms, revoked_ms, default_cwd, non_expiring FROM capabilities WHERE id = ?').get(id)
+    );
   }
 
   advanceTurn(principalId, turnId) {
@@ -401,7 +499,8 @@ export class AdapterStore {
         WHERE id = ? AND state = 'confirmation_required'
           AND EXISTS (
             SELECT 1 FROM capabilities c
-            WHERE c.id = operations.principal_id AND c.revoked_ms IS NULL AND c.expires_ms > ?
+            WHERE c.id = operations.principal_id AND c.revoked_ms IS NULL
+              AND (c.non_expiring = 1 OR c.expires_ms > ?)
           )
       `).run(now, now, id, now);
     }

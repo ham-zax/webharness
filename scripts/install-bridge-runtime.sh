@@ -182,6 +182,11 @@ if (!loggerSource.includes('maxsize: options.maxSize') ||
 NODE
 echo "  verified native log rotation (structured maxSize/maxFiles)"
 
+echo "== applying pinned 1MCP single-owner OAuth policy =="
+# Every patch is qualified against an exact upstream source shape and is
+# idempotent, so re-running this installer never applies a blind replacement.
+node "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/patch-1mcp-oauth-policy.mjs" "$(npm root -g)/@1mcp/agent"
+
 echo "== verifying WebHarness prerequisites =="
 REQUIRED_CMDS=(node npm npx cloudflared curl flock)
 for cmd in "${REQUIRED_CMDS[@]}"; do
