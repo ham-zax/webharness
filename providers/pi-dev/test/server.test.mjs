@@ -272,7 +272,7 @@ test('trusted-dev exposes structured exec alongside Bash and minimal schemas', a
   const { env } = await fixture('unrestricted');
   await withClient(env, async client => {
     const listed = await client.listTools();
-    assert.deepEqual(listed.tools.map(x => x.name).sort(), ['bash', 'edit', 'exec', 'list_directory', 'read', 'search', 'write']);
+    assert.deepEqual(listed.tools.map(x => x.name).sort(), ['bash', 'edit', 'exec', 'list_directory', 'read', 'run_script', 'search', 'write']);
     const exec = listed.tools.find(x => x.name === 'exec');
     assert.match(exec.description, /structured argv/i);
     assert.match(exec.description, /no shell parsing/i);
@@ -318,7 +318,7 @@ test('restricted omits unrestricted Pi exec and bash', async () => {
   const { env } = await fixture('allowlist');
   await withClient(env, async client => {
     const listed = await client.listTools();
-    assert.deepEqual(listed.tools.map(x => x.name).sort(), ['edit', 'list_directory', 'read', 'search', 'write']);
+    assert.deepEqual(listed.tools.map(x => x.name).sort(), ['edit', 'list_directory', 'read', 'run_script', 'search', 'write']);
     const edit = listed.tools.find(x => x.name === 'edit');
     assertEditV2Schema(edit);
     assert.match(edit.inputSchema.properties.targets.items.properties.path.description, /workspace root/i);
@@ -329,7 +329,7 @@ test('personal user mode exposes file_ops alongside edit with user-path descript
   const { env } = await userFixture();
   await withClient(env, async client => {
     const listed = await client.listTools();
-    assert.deepEqual(listed.tools.map(x => x.name).sort(), ['bash', 'edit', 'exec', 'file_ops', 'import_file', 'list_directory', 'read', 'review_changes', 'search', 'wait', 'write']);
+    assert.deepEqual(listed.tools.map(x => x.name).sort(), ['bash', 'edit', 'exec', 'file_ops', 'import_file', 'list_directory', 'read', 'review_changes', 'run_script', 'search', 'wait', 'write']);
     const read = listed.tools.find(x => x.name === 'read');
     assert.match(read.description, /UTF-8|text/i);
     assert.match(read.description, /1-based/i);
@@ -870,7 +870,7 @@ test('workspace-mode pi-dev loads from a smaller-profile fixture with the Termin
   const { env } = await fixture('unrestricted');
   await withClientAt(path.join(copiedPi, 'server.mjs'), env, async client => {
     const listed = await client.listTools();
-    assert.deepEqual(listed.tools.map(tool => tool.name).sort(), ['bash', 'edit', 'exec', 'list_directory', 'read', 'search', 'write']);
+    assert.deepEqual(listed.tools.map(tool => tool.name).sort(), ['bash', 'edit', 'exec', 'list_directory', 'read', 'run_script', 'search', 'write']);
   });
 });
 

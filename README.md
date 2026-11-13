@@ -12,13 +12,13 @@ Agents should reason about two outer MCP surfaces rather than individual backend
 
 | Capability | Use it for | Important boundary |
 |---|---|---|
-| **Dev** | structured search, focused files, guarded edits, native file import, aggregate Git review, structured argv execution, native Bash, durable waits | direct high-frequency workstation primitives with the authority of the selected trust profile |
+| **Dev** | structured search, focused files, guarded edits, native file import, aggregate Git review, structured argv execution, native Bash, one-call code mode, durable waits | direct high-frequency workstation primitives with the authority of the selected trust profile |
 | **Local** | durable Terminal control, host actions, Browser, owner-added MCPs, and writable-call recovery | exposes only `tool_list`, `tool_schema`, `tool_call`, `fallback_dispatch`, and `tool_batch`; logical servers stay behind one compact broker surface, while only Dev is mirrored as a hidden fallback route |
 
 The full workstation composition is deliberately small at the client boundary:
 
 ```text
-Dev       read list_directory search edit write import_file file_ops review_changes wait exec bash
+Dev       read list_directory search edit write import_file file_ops review_changes wait exec bash run_script
 Local     tool_list tool_schema tool_call fallback_dispatch tool_batch
             |-- terminal          durable PTY/session control
             |-- host              pc_sleep
@@ -26,6 +26,8 @@ Local     tool_list tool_schema tool_call fallback_dispatch tool_batch
             |-- browser-fast      observe / execute
             `-- browser-devtools  Chrome DevTools diagnostics
 ```
+
+`run_script` runs one bounded JavaScript program that calls the Dev tools above, so a search, read, edit, and verify cycle costs one model round trip instead of four. Its only capability is those tools; it has no filesystem, network, timers, or process access of its own, and nested calls are not rolled back if the script later fails.
 
 `browser-fast` is for routine interaction. `browser-devtools` keeps the full Chrome DevTools MCP surface for network, console, performance, Lighthouse, heap, screenshots, and detailed debugging.
 

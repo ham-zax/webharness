@@ -9,10 +9,12 @@ Files, ChatGPT-native file ingress, aggregate Git change review, short-RPC shell
 Personal Workstation surface:
 
 ```text
-read list_directory search edit write import_file file_ops review_changes wait exec bash
+read list_directory search edit write import_file file_ops review_changes wait exec bash run_script
 ```
 
 `import_file` and `review_changes` are Personal Workstation tools: the former streams one trusted ChatGPT-native file to a create-only WSL destination, while the latter returns a bounded aggregate view of the current Git working tree without creating checkpoints or refs. `restricted` and `trusted-dev` expose smaller subsets according to their trust policy.
+
+`run_script` runs one bounded JavaScript program whose only capability is calling the Dev tools this process registered, minus `run_script`, `wait`, and `import_file`. It runs in a QuickJS VM inside a worker thread of the execution worker, with no filesystem, network, timers, imports, or process access. Read-only calls may overlap; a mutating call runs alone. Nested calls are real and are not rolled back if the script later fails, and the result lists every call with its status. A script's authority is exactly the profile's own Dev surface, so it adds no Local, Terminal, Browser, Host, or owner-MCP reach.
 
 
 `search` provides structured ripgrep queries with bounded output and vendor exclusions. `read` supports structural outlines and up to 20 targets, with a default of 160 lines for line mode. User-mode paths expand `~` against the service user's home. Failed edit anchors can include a bounded nearest-match snippet; long command output preserves its start and end with a retained-output path on the remote host.

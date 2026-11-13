@@ -26,6 +26,7 @@ const { runFileOps } = executionWorker ? await import('./file-ops.mjs') : {};
 const { runImportFile } = executionWorker ? await import('./import-file.mjs') : {};
 const { runReviewChanges } = executionWorker ? await import('./review-changes.mjs') : {};
 const { runBash, runExec } = executionWorker ? await import('./shell.mjs') : {};
+const { runScript, scriptErrorCode } = executionWorker ? await import('./run-script.mjs') : {};
 import {
   renderBashText,
   renderDetachedText,
@@ -37,9 +38,17 @@ import {
   renderImportFileText,
   renderListDirectoryText,
   renderReviewChangesText,
+  renderScriptText,
   renderSearchText,
   renderWriteText,
 } from './render.mjs';
+import {
+  DEFAULT_SCRIPT_MAX_CALLS,
+  DEFAULT_SCRIPT_TIMEOUT_MS,
+  MAX_SCRIPT_MAX_CALLS,
+  MAX_SCRIPT_TIMEOUT_MS,
+  SCRIPT_EXCLUDED_TOOLS,
+} from './script-limits.mjs';
 import { WaitEngine } from './wait-engine.mjs';
 import { LocalWaitSources } from './wait-local.mjs';
 import { waitInputSchema } from './wait-schema.mjs';
@@ -62,6 +71,7 @@ const FILE_ACCESS_INSTRUCTIONS = [
 const EXECUTION_EFFICIENCY_INSTRUCTIONS = [
   'Execution efficiency (each result stays in context and is re-billed on every later turn):',
   '- Batch inspection: read several known files in one read call with targets (up to 20) and locate code with search first; avoid one call per file or per Git check.',
+  '- Code mode: when a task needs several dependent Dev steps (search, then read the hits, then edit, then verify), send one run_script instead of one call per step; intermediate results stay out of context.',
   '- Quiet output: send builds and test runs to a /tmp log and print only the exit status plus the tail or failing lines (normally 25 lines or fewer); never dump schemas, full diffs, or passing-test output. Call review_changes once after the final related edit instead of repeating Git status or diff.',
   '- Localized bugs: when the report names a file, line, and reproduction, read that scope and verify with a targeted test before widening the investigation. Do not skip validation.',
   '- Deployment: after changing a running service, decide whether it needs a restart or reload, then confirm with a harmless readiness check before claiming it is live.',
@@ -219,12 +229,14 @@ const worker = executionWorker ? null : new IdleExecutionWorker({
   serverPath: fileURLToPath(import.meta.url), idleMs,
 });
 const executionHandlers = new Map();
+const executionToolConfigs = new Map();
 const toolRegistrations = [];
 const shutdownController = new AbortController();
 const READ_ONLY_TOOLS = new Set(['read', 'list_directory', 'search', 'review_changes', 'wait']);
 function registerTool(name, config, handler) {
   const mutating = !READ_ONLY_TOOLS.has(name);
   if (executionWorker) {
+    executionToolConfigs.set(name, config);
     executionHandlers.set(name, (args, extra) => traceCall({
       id: extra.callId, layer: 'dev-worker', tool: name, mutating,
     }, () => {
@@ -559,6 +571,45 @@ if (mode === 'unrestricted') {
     return { content: [{ type: 'text', text: renderBashText(result) }] };
   }));
 }
+
+const scriptToolNames = toolRegistrations
+  .map(([name]) => name)
+  .filter(name => !SCRIPT_EXCLUDED_TOOLS.has(name));
+
+registerTool('run_script', {
+  description: `Run one JavaScript program that calls Dev tools directly, so loops, filters and conditional edit/test cycles stay inside one call instead of one model round trip per step. The script runs as an async function body: top-level await and return work. Call tools.<name>({...}) with exactly the arguments of the same-named Dev tool (${scriptToolNames.join(', ')}). text(value) adds output; the returned value is reported too. Nested calls are real and are not rolled back if the script later fails. The script has no filesystem, network, timers, imports or process access; its only capability is the listed tools. store() and load() do not persist across calls. timeout_ms does not extend the connector window.`,
+  inputSchema: z.object({
+    script: z.string().min(1).max(65536).describe('Raw JavaScript as a JSON string, no code fence. Runs as an async function body.'),
+    timeout_ms: z.number().int().min(1000).max(MAX_SCRIPT_TIMEOUT_MS).optional().describe(`Overall deadline including nested calls; default ${DEFAULT_SCRIPT_TIMEOUT_MS / 1000}s, max ${MAX_SCRIPT_TIMEOUT_MS / 1000}s`),
+    max_calls: z.number().int().min(1).max(MAX_SCRIPT_MAX_CALLS).optional().describe(`Maximum nested tool calls; default ${DEFAULT_SCRIPT_MAX_CALLS}`),
+  }),
+  annotations: {
+    readOnlyHint: false,
+    destructiveHint: true,
+    idempotentHint: false,
+    openWorldHint: false,
+  },
+}, async (args, extra) => invoke(async () => {
+  const result = await runScript({
+    ...args,
+    maxOutputBytes,
+    handlers: executionHandlers,
+    configs: executionToolConfigs,
+    signal: extra.signal,
+    callId: extra.callId,
+    stateDir,
+    spoolTtlSeconds,
+    maxSpoolBytes,
+    maxSpoolTotalBytes,
+  });
+  return {
+    isError: result.status === 'failed',
+    content: [{ type: 'text', text: renderScriptText(result) }],
+    ...(result.status === 'failed'
+      ? { _meta: { 'webharness/error-code': scriptErrorCode(result.error_kind) } }
+      : {}),
+  };
+}));
 
 if (executionWorker) {
   serveExecutionWorker(executionHandlers);

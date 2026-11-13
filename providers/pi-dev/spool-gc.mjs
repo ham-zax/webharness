@@ -93,7 +93,7 @@ export async function pruneBashSpools({
       }
       continue;
     }
-    if (!/^(?:bash|exec)-.*\.log$/.test(entry.name)) continue;
+    if (!/^(?:bash|exec|script)-.*\.log$/.test(entry.name)) continue;
     const file = path.join(stateDir, entry.name);
     let stats;
     try {

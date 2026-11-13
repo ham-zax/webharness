@@ -1,3 +1,5 @@
+import { SCRIPT_READ_ONLY_TOOLS } from './script-limits.mjs';
+
 function appendLines(output, annotations) {
   const base = output ?? '';
   if (annotations.length === 0) return base || 'Command completed.';
@@ -27,6 +29,34 @@ export function renderBashText(result) {
   }
   annotations.push(`[${status}]`);
   return appendLines(result.output, annotations);
+}
+
+export function renderScriptText(result) {
+  const lines = [];
+  const parts = [
+    result.status === 'completed' ? 'Script completed' : 'Script failed',
+    `${(result.duration_ms / 1000).toFixed(1)}s`,
+  ];
+  if (result.call_count > 0) parts.push(`${result.call_count} ${result.call_count === 1 ? 'call' : 'calls'}`);
+  lines.push(parts.join(' · '));
+  if (result.calls.length > 0) {
+    lines.push('Calls:');
+    for (const call of result.calls) lines.push(`- ${call.name} ${call.status} ${call.duration_ms}ms`);
+  }
+  if (result.output) lines.push('Output:', result.output);
+  if (result.truncated && result.full_output_path) {
+    lines.push(`[truncated · ${result.output_bytes} bytes total · saved on remote host: ${result.full_output_path}]`);
+  }
+  if (result.status === 'failed') {
+    const label = result.error_kind === 'script' ? '' : `${result.error_kind}: `;
+    lines.push('Script error:', `${label}${result.error_message}`);
+  }
+  // Only a dispatched mutating call can leave an effect behind; a read-only script
+  // has nothing to roll back, so the warning would be noise.
+  if (result.calls.some(call => !SCRIPT_READ_ONLY_TOOLS.has(call.name))) {
+    lines.push('completed calls are not rolled back');
+  }
+  return lines.join('\n');
 }
 
 export function renderEditText(relativePath, diff) {

@@ -47,6 +47,12 @@ the ID and mutation state in `_meta`. Successful write receipts use that ID as
 `operation_id`. The metadata additions preserve native image and structured
 result blocks. Batch subcalls can share the parent invocation ID.
 
+`run_script` nested calls share the parent invocation ID and emit their own
+`call_started`/`call_completed` records with the nested tool name, so one script
+call stays traceable per step. A failed script reports a bounded code
+(`SCRIPT_FAILED`, `SCRIPT_TIMEOUT`, `SCRIPT_ABORTED`, `SCRIPT_BUSY`, or
+`SCRIPT_SANDBOX_FAILED`) in `_meta["webharness/error-code"]`.
+
 Write mutation states are `not_started`, `started`, and `published`.
 `started` can mean staged-file or parent-directory work, not destination
 publication. Read-only Dev tools use `not_applicable`. Worker loss and other

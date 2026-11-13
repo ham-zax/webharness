@@ -9,6 +9,7 @@
     "start": "node server.mjs"
   },
   "dependencies": {
+    "@earendil-works/pi-codemode": "1.5.2",
     "@earendil-works/pi-coding-agent": "0.84.1",
     "@modelcontextprotocol/client": "2.4.0",
     "@modelcontextprotocol/server": "2.4.0",

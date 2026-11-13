@@ -39,7 +39,7 @@ Dev uses a lightweight schema/instruction facade and an on-demand execution work
 Personal surface:
 
 ```text
-read list_directory search edit write import_file file_ops review_changes wait exec bash
+read list_directory search edit write import_file file_ops review_changes wait exec bash run_script
 ```
 
 `edit` owns guarded mutation of existing text across one or more files. One exact `oldText` match always wins; only zero exact matches trigger tolerance for line endings, trailing whitespace, and common Unicode punctuation or space differences, and the fallback must still be unique. Exact and tolerant edits sharing a line must be merged. Callers inspect with `read`, `rg`, or ast-grep and include enough context when needed. `edit` is quiet by default and returns one `M path (+added -removed)` line per target; `diff: true` returns each unified diff. `read` returns at most 16 KiB of UTF-8 text (`mode: "outline"` returns structural landmarks, and `targets` batches up to 20 files) and defaults to `MCP_DEV_READ_DEFAULT_LINES` lines (160) when no `limit` is given. `search` runs structured, boundary-checked ripgrep queries that exclude vendored directories by default. Truncated reads report the total file size and next line offset; oversized individual lines require a focused command extract. A directory target is refused with `EISDIR` and the listing route instead of a raw read error. `list_directory` owns bounded read-only name discovery: kind, name, and byte size per entry, sorted by name, capped by `limit` (default 200, maximum 1000) with the observed total when truncated. It resolves through the same workspace/user path policy and realpath containment as `read`, lists symbolic links without following them, and adds no authority beyond reading. Long command output preserves the beginning and end with an omitted-byte marker (very small configured budgets retain tail-only behavior). Command results end with one compact exit-status and elapsed-time footer; truncation notes include the observed byte count and retained-output path. `write` owns new text-file creation (create-only by default; `overwrite` atomically replaces an existing regular file under the same per-path lease as `edit`, refusing symlinks and directories), `import_file` owns create-only ingress of one ChatGPT-native file into a WSL-user path, and `file_ops` owns move/delete for existing regular files. `review_changes` owns one bounded read-only aggregate view of a Git working tree, including untracked file content when it fits the patch budget; it creates no refs, commits, or temporary Git index state. `exec` passes one `argv[]` directly to an executable without a shell parser and Bash remains the explicit path for pipes, redirects, substitutions, loops, compound commands, and other shell semantics. Both are short-RPC execution paths: agents route only work expected comfortably inside the connector request window through direct Dev, using 45 seconds as the routing target. Runtime that is uncertain, may approach a minute, or must survive the call belongs in Local Terminal; Dev `wait` observes Terminal output/exit/readiness across short RPCs and `terminal_read` retrieves output. The provider's larger internal timeout does not extend the connector lifetime. Syntax-shaped discovery/codemods can therefore run ast-grep through `exec` when no shell composition is needed and normally feed guarded `edit`; an existing authoritative `.patch`/`.diff` artifact may still use Bash for the guarded `git apply --check -- "$patch" && git apply -- "$patch"` compound command.
@@ -52,6 +52,24 @@ correlation metadata, diagnostic coverage, and uncertain mutation outcomes.
 
 `wait` owns durable named wait state and generic local readiness checks. Terminal-specific waits use private broker transcript/session observations, but `wait` is not a Terminal MCP action.
 
+
+`run_script` owns one bounded JavaScript program per call. It runs in a QuickJS VM
+inside a worker thread of the Dev execution worker, so a spinning script cannot
+block the facade and a runaway allocation is capped at 256 MiB. The VM has no
+filesystem, network, timers, imports, or process access; its only capability is
+the `tools` table, which forwards each call to the same registered handler the MCP
+`tools/call` path uses. The table is the profile's own Dev surface minus
+`run_script` (recursion), `wait` (a durable condition would hold the connector
+window), and `import_file` (it needs a ChatGPT-native file value a script cannot
+construct), so a script adds no authority the caller did not already have. Read-only
+calls may overlap up to four; a mutating call waits for them and runs alone. The
+adapter bounds nested calls (default and maximum 32), the overall deadline
+(default 30s, maximum 120s), and the model-facing output (the deployment's
+`MCP_DEV_MAX_OUTPUT_BYTES`, with the complete text retained on the remote host).
+Nested calls are real and are not rolled back if the script later fails; the result
+lists every call with its status and says so. `store()` and `load()` do not persist
+across calls. The tool is advertised as mutating, so the WebSession adapter
+serializes it with other mutations rather than treating it as a read.
 
 ### Terminal logical server
 

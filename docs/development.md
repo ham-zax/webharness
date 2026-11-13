@@ -5,7 +5,7 @@
 ```text
 bin/                 WebHarness operator, lifecycle, extension, and Terminal entrypoints
 lib/bridge/          lifecycle/process supervision internals
-providers/pi-dev/    Dev read/list_directory/search/edit/write/import_file/file_ops/review_changes/exec/Bash/wait provider
+providers/pi-dev/    Dev read/list_directory/search/edit/write/import_file/file_ops/review_changes/exec/Bash/wait/run_script provider
 providers/websession-adapter/ optional HTTP transport, pairing, Python client, operation store
 providers/terminal/  Terminal MCP, broker, tmux/transcript logic
 providers/browser/   Chrome DevTools facade + resource-local child routing

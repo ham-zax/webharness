@@ -7,13 +7,22 @@ WebHarness treats the model-facing MCP surface as a public contract. Provider im
 The full Personal Workstation exposes these outer provider identities:
 
 ```text
-Dev       read list_directory search edit write import_file file_ops review_changes wait exec bash
+Dev       read list_directory search edit write import_file file_ops review_changes wait exec bash run_script
 Local     tool_list tool_schema tool_call fallback_dispatch tool_batch
             |-- terminal  terminal_open / terminal_read / terminal_send / ...
             `-- host      pc_sleep
 ```
 
 The current outer provider IDs are `dev` and `local`. `restricted` and `trusted-dev` intentionally expose smaller compositions without Local.
+
+`run_script` is an additive Dev tool. It runs one JavaScript program whose only
+capability is calling the Dev tools this process registered, minus `run_script`
+itself, `wait`, and `import_file`. A script therefore has exactly the profile's
+own Dev authority and no Local, Terminal, Browser, Host, or owner-MCP reach. It is
+advertised as mutating (`readOnlyHint: false`, `destructiveHint: true`) because it
+can call `edit`, `write`, `file_ops`, `exec`, and Bash. Nested calls are real and
+are not rolled back if the script later fails; the result lists every call with
+its status. `store()` and `load()` do not persist across calls.
 
 Local is one authorization domain. Its five broker tools address downstream MCPs by logical `{server, tool}` identity. The maintained Personal Workstation composes public Local servers for `terminal`, `host`, `browser-fast`, `browser-devtools`, and owner-added MCPs, plus one fallback-only mirror of outer Dev.
 

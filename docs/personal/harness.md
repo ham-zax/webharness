@@ -5,7 +5,7 @@ The `personal` profile is the full WebHarness reference deployment. It runs with
 ## Mental model
 
 ```text
-Dev       read edit write import_file file_ops review_changes wait exec bash
+Dev       read edit write import_file file_ops review_changes wait exec bash run_script
 Local     tool_list tool_schema tool_call fallback_dispatch tool_batch
             |-- terminal          durable PTY/session control
             |-- host              pc_sleep
