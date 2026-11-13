@@ -164,12 +164,21 @@ export const PATCHES = [
             expires: data.client_secret_expires_at ? data.client_secret_expires_at * 1000 : Date.now() + ttlMs,
             createdAt: data.client_id_issued_at ? data.client_id_issued_at * 1000 : Date.now(),
         };`,
-    patched: `        // A null TTL is the explicit non-expiring registration lifetime. The record then
+    // Recognize the exact prior WebHarness patch so installed deployments can
+    // upgrade without weakening shape qualification.
+    previous: [`        // A null TTL is the explicit non-expiring registration lifetime. The record then
         // carries no \`expires\` field at all: readData treats a missing expiry as live, and
         // cleanupExpiredData only removes records that declare one.
         const clientData = {
             ...data,
             ...(ttlMs === null ? {} : { expires: data.client_secret_expires_at ? data.client_secret_expires_at * 1000 : Date.now() + ttlMs }),
+            createdAt: data.client_id_issued_at ? data.client_id_issued_at * 1000 : Date.now(),
+        };`],
+    patched: `        // ProtectedRecordStorage requires a finite numeric expiry on every
+        // record. Reuse the service-identity sentinel for durable registration.
+        const clientData = {
+            ...data,
+            expires: ttlMs === null ? AUTH_CONFIG.SERVER.SESSION.NON_EXPIRING_MS : (data.client_secret_expires_at ? data.client_secret_expires_at * 1000 : Date.now() + ttlMs),
             createdAt: data.client_id_issued_at ? data.client_id_issued_at * 1000 : Date.now(),
         };`,
   },
@@ -447,11 +456,24 @@ import { bindResource, canonicalResource, sameResource } from '../../../auth/res
             logger.info('sdkOAuthServerProvider.registered.oauth.client.1661d38f');
             return client;
         }`,
-    patched: `    registerClient(client) {
+    previous: [`    registerClient(client) {
         const clientKey = this.getClientKey(client.client_id);
         // Single-owner deployments keep inbound registrations durable: a connector
         // keeps working until the owner removes it. RFC 7591 spells "the secret does
         // not expire" as 0, and a null TTL makes the stored record carry no expiry.
+        // Every other deployment keeps the previous 30-day registration lifetime.
+        const durable = process.env.WEBHARNESS_OAUTH_SINGLE_OWNER === '1';
+        const registered = durable ? { ...client, client_secret_expires_at: 0 } : client;
+        try {
+            readCredential(() => this.oauthStorage.clientDataRepository.save(clientKey, registered, durable ? null : AUTH_CONFIG.CLIENT.OAUTH.TTL_MS));
+            logger.info('sdkOAuthServerProvider.registered.oauth.client.1661d38f');
+            return registered;
+        }`],
+    patched: `    registerClient(client) {
+        const clientKey = this.getClientKey(client.client_id);
+        // Single-owner deployments keep inbound registrations durable: a connector
+        // keeps working until the owner removes it. RFC 7591 spells "the secret does
+        // not expire" as 0; a null TTL stores the protected store’s finite sentinel.
         // Every other deployment keeps the previous 30-day registration lifetime.
         const durable = process.env.WEBHARNESS_OAUTH_SINGLE_OWNER === '1';
         const registered = durable ? { ...client, client_secret_expires_at: 0 } : client;
@@ -830,7 +852,7 @@ export function preflightOAuthPolicyPatches(agentRoot) {
     }
     const source = fs.readFileSync(target, 'utf8');
     if (source.includes(entry.patched)) continue;
-    if (!source.includes(entry.upstream)) {
+    if (![entry.upstream, ...(entry.previous ?? [])].some(shape => source.includes(shape))) {
       problems.push(`${entry.label}: source shape changed; refusing an unsafe patch (${entry.id})`);
     }
   }
@@ -869,7 +891,8 @@ export function applyOAuthPolicyPatches(agentRoot, { log = () => {} } = {}) {
       already.push(entry.id);
       continue;
     }
-    fs.writeFileSync(target, source.replace(entry.upstream, entry.patched));
+    const previousShape = [entry.upstream, ...(entry.previous ?? [])].find(shape => source.includes(shape));
+    fs.writeFileSync(target, source.replace(previousShape, entry.patched));
     applied.push(entry.id);
     log(`  patched ${entry.label}`);
   }

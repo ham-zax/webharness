@@ -38,9 +38,9 @@ WebSession HTTP is part of the same deliverable: keep quick pairing and add dire
 
 ### 1. Retain URL-only registration and make clients durable
 
-Keep `/register` and its advertised metadata endpoint available. Retain PKCE and exact registered callback validation. Make client records non-expiring in the actual client repository/storage path, including cleanup behavior; simply changing one TTL constant is insufficient if another cleanup path still expires them. Use the store's explicit non-expiring representation rather than numeric Infinity or an arbitrary timestamp.
+Keep `/register` and its advertised metadata endpoint available. Retain PKCE and exact registered callback validation. Make client records non-expiring in the actual client repository/storage path, including cleanup behavior; simply changing one TTL constant is insufficient if another cleanup path still expires them. Use the existing finite service-identity sentinel (`Number.MAX_SAFE_INTEGER`): protected file storage requires a numeric `expires` field even for durable records.
 
-Preserve existing client IDs and secrets, and remove expiry from existing valid ARM client records through the same controlled migration. Do not recreate connectors or reset OAuth state. Expired records already deleted cannot be reconstructed from a TTL patch; report any such client separately. Scope permanence changes to inbound registrations, not unrelated cached outbound OAuth credentials sharing a constant.
+Preserve existing client IDs and secrets, and replace time-based expiry on existing valid ARM client records with the protected-store sentinel through the same controlled migration. Do not recreate connectors or reset OAuth state. Expired records already deleted cannot be reconstructed from a TTL patch; report any such client separately. Scope permanence changes to inbound registrations, not unrelated cached outbound OAuth credentials sharing a constant.
 
 ### 2. Apply small, reproducible 1MCP policy patches
 

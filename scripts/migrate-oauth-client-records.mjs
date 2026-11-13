@@ -6,7 +6,8 @@
  * sessions/sessions/server/session_cli_<clientId>.json with an `expires` field and
  * a `client_secret_expires_at` value. Both are enforced: the storage layer deletes
  * an expired record on read, and the SDK's client authentication rejects an
- * expired secret. This migration clears both without changing any client id,
+ * expired secret. This migration uses the protected store’s finite non-expiring sentinel and clears
+ * secret expiry without changing any client id,
  * secret, redirect URI, or grant.
  *
  * Records the runtime already deleted cannot be reconstructed here; they are
@@ -93,12 +94,11 @@ function main() {
       continue;
     }
 
-    const hasExpiry = Object.hasOwn(record, 'expires');
     const secretExpiry = record.client_secret_expires_at;
     const secretExpired = typeof secretExpiry === 'number' && secretExpiry > 0 && secretExpiry * 1000 <= now;
     const recordExpired = typeof record.expires === 'number' && record.expires <= now;
 
-    if (!hasExpiry && (secretExpiry === 0 || secretExpiry === undefined)) {
+    if (record.expires === Number.MAX_SAFE_INTEGER && secretExpiry === 0) {
       report.already.push({ clientId, clientName: record.client_name ?? null });
       continue;
     }
@@ -107,8 +107,7 @@ function main() {
       continue;
     }
 
-    const migrated = { ...record, client_secret_expires_at: 0 };
-    delete migrated.expires;
+    const migrated = { ...record, client_secret_expires_at: 0, expires: Number.MAX_SAFE_INTEGER };
     if (options.apply) writeAtomic(filePath, migrated);
     report.migrated.push({ clientId, clientName: record.client_name ?? null, revived: recordExpired || secretExpired });
   }
