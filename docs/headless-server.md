@@ -66,7 +66,25 @@ Do not create a hostname-wide Access application. An interactive login on `/mcp`
 
 Before enabling the gate, confirm the effective path match including trailing-slash variants and any alternate ingress route, and confirm that an unauthenticated `POST /oauth/consent` is refused. Keep the origin loopback-only. Preserve authorization state and callback parameters across the Access login; the owner's browser session expiring affects future approvals only, never an existing connector token.
 
-**Status: not configured.** This change ships the runtime and documentation for this mode but does not create the Cloudflare Access application, which needs the owner's Cloudflare account. Until it exists, keep the private approval route below and leave the public `/oauth/consent` refused.
+Create one self-hosted Access application with two public destinations: the server hostname plus `/authorize`, and the same hostname plus `/oauth/consent`. A shared application lets both routes use the same application audience and browser session. Restrict its Allow policy to the owner email. The application and policy can use `720h` (30 days) for the approval-browser session; this is separate from connector token lifetime.
+
+On the narrow ingress rule for those two routes, enable [cloudflared Access JWT validation](https://developers.cloudflare.com/tunnel/reference/origin-parameters/#access). The team name is the part before `.cloudflareaccess.com`, and the audience tag comes from that Access application:
+
+```yaml
+  - hostname: mcp-server.example.com
+    path: '^/(authorize|oauth/consent)/?$'
+    service: http://127.0.0.1:3050
+    originRequest:
+      access:
+        required: true
+        teamName: YOUR_TEAM_NAME
+        audTag:
+          - YOUR_APPLICATION_AUDIENCE
+```
+
+Place this rule before the protocol rule, remove `authorize` from the unguarded protocol rule, and replace the consent refusal only after verifying the Access application protects both routes. Validate ingress before restarting the tunnel. The tunnel checks the signed login token before forwarding approval requests, while protocol routes remain outside this guard.
+
+**Installation requirement:** installing the runtime does not create the Cloudflare Access application. Until the owner gate is configured and verified, keep the private approval route below and leave public consent refused. Once enabled, test owner login and a real connector callback from the owner browser before claiming the full connection flow is verified.
 
 ## Fallback: private approval route
 
