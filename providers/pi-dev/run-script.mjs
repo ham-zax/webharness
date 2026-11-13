@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
-import { writeFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { DEFAULT_MAX_OUTPUT_BYTES } from './output-limits.mjs';
+import { renderScriptText } from './render.mjs';
 import { pruneBashSpools } from './spool-gc.mjs';
 import {
   DEFAULT_SCRIPT_MAX_CALLS,
@@ -46,18 +47,30 @@ class ScriptCallGate {
     this.queue = [];
   }
 
-  async run(readOnly, fn) {
-    await this.acquire(readOnly);
+  async run(readOnly, signal, fn) {
+    await this.acquire(readOnly, signal);
     try {
+      // A queued call can be admitted after the script already finished. Never dispatch
+      // into an aborted signal: the handler would start real work for a dead script.
+      signal?.throwIfAborted();
       return await fn();
     } finally {
       this.release(readOnly);
     }
   }
 
-  acquire(readOnly) {
-    return new Promise(resolve => {
-      this.queue.push({ readOnly, resolve });
+  acquire(readOnly, signal) {
+    if (signal?.aborted) return Promise.reject(new Error('aborted'));
+    return new Promise((resolve, reject) => {
+      const entry = { readOnly, resolve, reject, cleanup: null };
+      const onAbort = () => {
+        const index = this.queue.indexOf(entry);
+        if (index >= 0) this.queue.splice(index, 1);
+        reject(new Error('aborted'));
+      };
+      signal?.addEventListener('abort', onAbort, { once: true });
+      entry.cleanup = () => signal?.removeEventListener('abort', onAbort);
+      this.queue.push(entry);
       this.drain();
     });
   }
@@ -69,12 +82,14 @@ class ScriptCallGate {
         if (this.mutating || this.activeReads >= this.readConcurrency) return;
         this.queue.shift();
         this.activeReads += 1;
+        next.cleanup?.();
         next.resolve();
         continue;
       }
       if (this.mutating || this.activeReads > 0) return;
       this.queue.shift();
       this.mutating = true;
+      next.cleanup?.();
       next.resolve();
       return;
     }
@@ -176,7 +191,7 @@ export function scriptToolTable({ handlers, configs, gate, limits }) {
           throw new Error(`SCRIPT_CALL_LIMIT: the script already made ${limits.maxCalls} tool calls; split the work into smaller scripts`);
         }
         limits.calls += 1;
-        const result = await gate.run(readOnly, () => handler(input, { signal, callId: limits.callId }));
+        const result = await gate.run(readOnly, signal, () => handler(input, { signal, callId: limits.callId }));
         if (result?.isError) throw new Error(textOf(result) || `Tool "${name}" failed`);
         if (result?.structuredContent !== undefined) return result.structuredContent;
         return textOf(result);
@@ -237,6 +252,8 @@ function renderValue(value) {
 
 async function spillScriptOutput({ text, stateDir, spoolTtlSeconds, maxSpoolBytes, maxSpoolTotalBytes }) {
   const file = path.join(stateDir, `script-${Date.now()}-${process.pid}-${randomUUID()}.log`);
+  // A fresh state path must not turn a truncated result into a failed call.
+  await mkdir(stateDir, { recursive: true, mode: 0o700 });
   await writeFile(file, text, { mode: 0o600, flag: 'wx' });
   try {
     await pruneBashSpools({
@@ -339,43 +356,43 @@ export async function runScript({
     duration_ms: Math.round(call.durationMs),
   }));
 
-  if (!result.ok) {
-    const body = renderOutputItems(result.output);
-    const bounded = truncateScriptText(body, outputLimit);
-    const fullOutputPath = bounded.truncated
-      ? await spillScriptOutput({ text: body, stateDir, spoolTtlSeconds, maxSpoolBytes, maxSpoolTotalBytes })
-      : null;
-    return {
-      status: 'failed',
-      error_kind: result.error.kind,
-      error_message: result.error.message,
-      duration_ms: durationMs,
-      calls,
-      call_count: limits.calls,
-      call_limit: maxCalls,
-      output: bounded.text,
-      output_bytes: bounded.bytes,
-      truncated: bounded.truncated,
-      full_output_path: fullOutputPath,
-    };
-  }
+  const structured = result.ok
+    ? {
+        status: 'completed',
+        error_kind: null,
+        error_message: null,
+        duration_ms: durationMs,
+        calls,
+        call_count: limits.calls,
+        call_limit: maxCalls,
+        output: [renderOutputItems(result.output), renderValue(result.value)]
+          .filter(part => part !== '')
+          .join('\n'),
+      }
+    : {
+        status: 'failed',
+        error_kind: result.error.kind,
+        error_message: result.error.message,
+        duration_ms: durationMs,
+        calls,
+        call_count: limits.calls,
+        call_limit: maxCalls,
+        output: renderOutputItems(result.output),
+      };
 
-  const body = [renderOutputItems(result.output), renderValue(result.value)]
-    .filter(part => part !== '')
-    .join('\n');
-  const bounded = truncateScriptText(body, outputLimit);
+  // The model-facing artifact is the rendered text, so the budget applies to the whole
+  // response: output, error message and call records together. Bounding only the output
+  // let a generated error or a long call list exceed the cap while reporting truncated:false.
+  const rendered = renderScriptText(structured);
+  const bounded = truncateScriptText(rendered, outputLimit);
   const fullOutputPath = bounded.truncated
-    ? await spillScriptOutput({ text: body, stateDir, spoolTtlSeconds, maxSpoolBytes, maxSpoolTotalBytes })
+    ? await spillScriptOutput({ text: rendered, stateDir, spoolTtlSeconds, maxSpoolBytes, maxSpoolTotalBytes })
     : null;
   return {
-    status: 'completed',
-    error_kind: null,
-    error_message: null,
-    duration_ms: durationMs,
-    calls,
-    call_count: limits.calls,
-    call_limit: maxCalls,
-    output: bounded.text,
+    ...structured,
+    text: bounded.truncated
+      ? `${bounded.text}\n[truncated · ${bounded.bytes} bytes total · saved on remote host: ${fullOutputPath}]`
+      : bounded.text,
     output_bytes: bounded.bytes,
     truncated: bounded.truncated,
     full_output_path: fullOutputPath,

@@ -44,9 +44,6 @@ export function renderScriptText(result) {
     for (const call of result.calls) lines.push(`- ${call.name} ${call.status} ${call.duration_ms}ms`);
   }
   if (result.output) lines.push('Output:', result.output);
-  if (result.truncated && result.full_output_path) {
-    lines.push(`[truncated · ${result.output_bytes} bytes total · saved on remote host: ${result.full_output_path}]`);
-  }
   if (result.status === 'failed') {
     const label = result.error_kind === 'script' ? '' : `${result.error_kind}: `;
     lines.push('Script error:', `${label}${result.error_message}`);

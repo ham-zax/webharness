@@ -273,14 +273,96 @@ test('output over the cap is truncated and retained on disk', async () => {
   assert.equal(result.status, 'completed');
   assert.equal(result.truncated, true);
   assert.ok(result.output_bytes > 4000);
-  assert.match(result.output, /^HEAD/);
-  assert.match(result.output, /TAIL$/);
-  assert.match(result.output, /bytes omitted/);
+  assert.match(result.text, /^Script completed/);
+  assert.match(result.text, /HEAD/);
+  assert.match(result.text, /TAIL/);
+  assert.match(result.text, /bytes omitted/);
+  assert.match(result.text, /saved on remote host: /);
   const retained = await fs.readFile(result.full_output_path, 'utf8');
-  assert.equal(retained.length, result.output_bytes);
-  assert.match(retained, /^HEAD/);
+  assert.equal(Buffer.byteLength(retained, 'utf8'), result.output_bytes);
+  assert.match(retained, /^Script completed/);
+  assert.match(retained, /HEAD/);
   assert.match(retained, /TAIL$/);
   assert.equal((await fs.stat(result.full_output_path)).mode & 0o777, 0o600);
+});
+
+test('a generated error message is bounded by the output cap', async () => {
+  const stateDir = await tempDir('pi-dev-script-');
+  const result = await runScript(scriptFixture({
+    read: async () => textResult('ok'),
+  }, {
+    stateDir,
+    maxOutputBytes: 1024,
+    script: `throw new Error('E'.repeat(1000000));`,
+  }));
+  assert.equal(result.status, 'failed');
+  assert.equal(result.truncated, true);
+  assert.ok(Buffer.byteLength(result.text, 'utf8') < 2048, `text was ${Buffer.byteLength(result.text, 'utf8')} bytes`);
+  assert.match(result.text, /bytes omitted/);
+  assert.equal(Buffer.byteLength(await fs.readFile(result.full_output_path, 'utf8'), 'utf8'), result.output_bytes);
+});
+
+test('a long call list is bounded by the output cap', async () => {
+  const stateDir = await tempDir('pi-dev-script-');
+  const result = await runScript(scriptFixture({
+    read: async () => textResult('ok'),
+  }, {
+    stateDir,
+    maxOutputBytes: 1024,
+    max_calls: 1,
+    script: `
+      for (let i = 0; i < 2000; i += 1) {
+        try { await tools.read({}); } catch { /* counted by the sandbox, not dispatched */ }
+      }
+      return 'done';
+    `,
+  }));
+  assert.equal(result.status, 'completed');
+  assert.equal(result.truncated, true);
+  assert.ok(Buffer.byteLength(result.text, 'utf8') < 2048, `text was ${Buffer.byteLength(result.text, 'utf8')} bytes`);
+  assert.match(result.text, /bytes omitted/);
+});
+
+test('a truncated result survives a state directory that does not exist yet', async () => {
+  const parent = await tempDir('pi-dev-script-');
+  const stateDir = path.join(parent, 'nested', 'state');
+  const result = await runScript(scriptFixture({
+    read: async () => textResult('ok'),
+  }, {
+    stateDir,
+    maxOutputBytes: 1024,
+    script: `text('HEAD' + 'x'.repeat(4000) + 'TAIL');`,
+  }));
+  assert.equal(result.status, 'completed');
+  assert.equal(result.truncated, true);
+  assert.ok(result.full_output_path.startsWith(stateDir));
+  assert.match(await fs.readFile(result.full_output_path, 'utf8'), /HEAD/);
+  assert.equal((await fs.stat(stateDir)).mode & 0o777, 0o700);
+});
+
+test('a queued call does not dispatch after the script is cancelled', async () => {
+  const stateDir = await tempDir('pi-dev-script-');
+  const dispatched = [];
+  const controller = new AbortController();
+  setTimeout(() => controller.abort(), 200);
+  const result = await runScript(scriptFixture({
+    read: async (_args, { signal }) => new Promise((_resolve, reject) => {
+      signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
+    }),
+    edit: async () => { dispatched.push('edit'); return textResult('ok'); },
+  }, {
+    stateDir,
+    signal: controller.signal,
+    timeout_ms: 30_000,
+    script: `
+      const first = tools.read({});
+      const second = tools.edit({});
+      await Promise.allSettled([first, second]);
+    `,
+  }));
+  assert.equal(result.status, 'failed');
+  assert.equal(result.error_kind, 'aborted');
+  assert.deepEqual(dispatched, []);
 });
 
 test('truncateScriptText keeps UTF-8 boundaries intact', () => {

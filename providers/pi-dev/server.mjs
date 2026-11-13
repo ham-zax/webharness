@@ -38,7 +38,6 @@ import {
   renderImportFileText,
   renderListDirectoryText,
   renderReviewChangesText,
-  renderScriptText,
   renderSearchText,
   renderWriteText,
 } from './render.mjs';
@@ -604,7 +603,7 @@ registerTool('run_script', {
   });
   return {
     isError: result.status === 'failed',
-    content: [{ type: 'text', text: renderScriptText(result) }],
+    content: [{ type: 'text', text: result.text }],
     ...(result.status === 'failed'
       ? { _meta: { 'webharness/error-code': scriptErrorCode(result.error_kind) } }
       : {}),
