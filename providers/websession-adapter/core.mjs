@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto';
 import { posix } from 'node:path';
 import { requestHash, AdapterStore } from './store.mjs';
-import { callMcpTool, closeMcpPools, listMcpTools } from './mcp-client.mjs';
+import { callMcpTool, closeMcpPools, findMcpTool, listMcpTools } from './mcp-client.mjs';
+import { explainSchemaViolation } from './schema-hint.mjs';
 
 const MAX_RESULT_BYTES = 1024 * 1024;
 const DEV_COMMAND_FAILURE_FOOTER = /^\[(?:exit (?!0(?:\]| · ))-?\d+|timed out after [0-9.]+s|cancelled|terminated)(?: · [0-9.]+s)?\]$/;
@@ -62,12 +63,18 @@ export function renderToolResult(result) {
       : 'MCP tool failed';
     throw new Error(text || 'MCP tool failed');
   }
-  const hasStructuredContent = result?.structuredContent !== undefined;
-  const textOnly = !hasStructuredContent
-    && Array.isArray(result?.content)
-    && result.content.length > 0
-    && result.content.every(block => block?.type === 'text');
-  const text = textOnly ? result.content.map(block => block.text).join('\n') : JSON.stringify(result);
+  const blocks = Array.isArray(result?.content) ? result.content : [];
+  const textOnly = blocks.length > 0 && blocks.every(block => block?.type === 'text');
+  // A tool that returns structuredContent also renders the same payload as text, so
+  // sending the whole envelope billed the model twice for one result. Send one form:
+  // the rendered text, which carries the tool's own guidance (a detached exec's wait
+  // hint, for example), and fall back to the structured value when the content is not
+  // plain text.
+  const text = textOnly
+    ? blocks.map(block => block.text).join('\n')
+    : result?.structuredContent !== undefined
+      ? JSON.stringify(result.structuredContent)
+      : JSON.stringify(result);
   if (Buffer.byteLength(text, 'utf8') > MAX_RESULT_BYTES) throw new Error('result_too_large');
   return text;
 }
@@ -546,9 +553,32 @@ export class OperationCore {
     try {
       resultText = renderToolResult(result);
     } catch (error) {
-      this.store.failOperation(operationId, boundedError(error));
+      this.store.failOperation(operationId, await this._describeToolFailure(error, operation.tool, requestArguments));
       return;
     }
     this.store.completeOperation(operationId, resultText);
+  }
+
+  // 1MCP rejects an argument object that fails the tool's input schema with the bare
+  // text "schema_input_invalid", which names neither the field nor the rule. Explain it
+  // from the same schema so the client can fix the call instead of guessing or spending
+  // a round trip on GET /v1/tools/<name>. Any other failure keeps its own message.
+  async _describeToolFailure(error, tool, args) {
+    const message = boundedError(error);
+    if (message !== 'schema_input_invalid') return message;
+    try {
+      const schema = (await findMcpTool({
+        mcpUrl: this.mcpUrl,
+        stateDir: this.store.stateDir,
+        callbackUrl: this.callbackUrl,
+        timeoutMs: this.toolTimeoutMs,
+        signal: AbortSignal.timeout(5000),
+      }, tool))?.inputSchema;
+      const detail = explainSchemaViolation(schema, args);
+      if (detail) return `${message}: ${tool}: ${detail}`;
+    } catch {
+      // The schema could not be read; the upstream message still stands.
+    }
+    return message;
   }
 }

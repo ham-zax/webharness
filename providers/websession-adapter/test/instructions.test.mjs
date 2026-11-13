@@ -75,7 +75,7 @@ test('authenticated WebSession discovery preserves initialization guidance witho
   assert.equal(call.status, 200);
   const operation = await call.json();
   assert.equal(operation.state, 'completed');
-  assert.deepEqual(JSON.parse(operation.result), toolResult);
+  assert.equal(operation.result, 'summary');
 });
 
 test('authenticated discovery compacts 1MCP guidance and exposes the capability default cwd', async t => {

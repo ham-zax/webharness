@@ -226,22 +226,35 @@ test('tool results preserve text-only rendering and serialize non-text or empty 
   }
 });
 
-test('tool results preserve the whole JSON when structured content is defined', () => {
+test('tool results send one form instead of the payload twice', () => {
   const text = { type: 'text', text: 'summary only' };
-  const mixed = { content: [text, { type: 'image', data: 'aGVsbG8=', mimeType: 'image/png' }] };
+  const image = { type: 'image', data: 'aGVsbG8=', mimeType: 'image/png' };
+  // The rendered text carries the tool's own guidance, so it wins when it is plain text.
   for (const structuredContent of [{ answer: 42 }, null, false, 0, '', []]) {
-    const result = { content: [text], structuredContent };
-    assert.equal(renderToolResult(result), JSON.stringify(result));
-    assert.equal(renderToolResult({ ...mixed, structuredContent }), JSON.stringify({ ...mixed, structuredContent }));
+    assert.equal(renderToolResult({ content: [text], structuredContent }), 'summary only');
   }
+  // Non-text content falls back to the structured value rather than the whole envelope.
+  assert.equal(renderToolResult({ content: [text, image], structuredContent: { answer: 42 } }), '{"answer":42}');
+  assert.equal(renderToolResult({ content: [], structuredContent: { answer: 42 } }), '{"answer":42}');
+  // A review is not billed twice: the text and the structured patch are the same diff.
+  const review = { root: '/repo', summary: { files: 1 }, files: [], patch: 'diff', patchTruncated: false };
+  const rendered = renderToolResult({ content: [{ type: 'text', text: '1 changed file' }], structuredContent: review });
+  assert.equal(rendered, '1 changed file');
+  assert.equal(rendered.includes('"patch"'), false);
   assert.equal(renderToolResult({ content: [{ type: 'text', text: 'plain' }] }), 'plain');
   assert.equal(renderToolResult({ content: [{ type: 'text', text: 'plain' }], other: true }), 'plain');
 });
 
 test('structured tool results exceeding the byte limit are rejected', () => {
+  // The bound applies to what is actually sent: a structured value is only rendered
+  // when the content is not plain text, and a small text rendering is sent alone.
   assert.throws(
-    () => renderToolResult({ content: [{ type: 'text', text: 'summary' }], structuredContent: { data: 'A'.repeat(1024 * 1024) } }),
+    () => renderToolResult({ content: [], structuredContent: { data: 'A'.repeat(1024 * 1024) } }),
     /result_too_large/,
+  );
+  assert.equal(
+    renderToolResult({ content: [{ type: 'text', text: 'summary' }], structuredContent: { data: 'A'.repeat(1024 * 1024) } }),
+    'summary',
   );
 });
 
@@ -1122,6 +1135,68 @@ test('a capability default cwd resolves missing cwd and relative paths across De
   } finally {
     await core.close();
     rmSync(stateDir, { recursive: true, force: true });
+  }
+});
+
+test('a schema_input_invalid rejection names the offending field', async t => {
+  const stateDir = mkdtempSync(join(tmpdir(), 'websession-schema-hint-'));
+  t.after(() => rmSync(stateDir, { recursive: true, force: true }));
+  // 1MCP answers a schema rejection with the bare text "schema_input_invalid", so the
+  // adapter explains it from the same input schema it already listed.
+  const tools = [{
+    name: 'dev_file_ops',
+    description: 'Move or delete files.',
+    inputSchema: {
+      type: 'object',
+      required: ['operations'],
+      properties: {
+        operations: {
+          type: 'array',
+          minItems: 1,
+          items: {
+            oneOf: [
+              { type: 'object', required: ['kind', 'path', 'to'], properties: { kind: { const: 'move' }, path: { type: 'string' }, to: { type: 'string' } } },
+              { type: 'object', required: ['kind', 'path'], properties: { kind: { const: 'delete' }, path: { type: 'string' } } },
+            ],
+          },
+        },
+        cwd: { type: 'string' },
+      },
+    },
+  }];
+  const { server } = startToolFixture(t, tools, async () => ({
+    isError: true,
+    content: [{ type: 'text', text: 'schema_input_invalid' }],
+  }));
+  await once(server, 'listening');
+  t.after(() => {
+    server.closeAllConnections();
+    server.close();
+  });
+  const core = new OperationCore({
+    stateDir,
+    mcpUrl: `http://127.0.0.1:${server.address().port}/mcp`,
+    callbackUrl: 'http://127.0.0.1:9/callback',
+    toolTimeoutMs: 15000,
+  });
+  try {
+    const issued = core.store.issueMainCapability(120);
+    const submit = args => core.submit(
+      issued.token,
+      `c-schema-${args.operations[0].op ?? 'ok'}`,
+      parseRequest({ version: 1, tool: 'dev_file_ops', arguments: args }),
+      'json-post-v1',
+    );
+    const rejected = await core.waitForOperation(submit({ operations: [{ op: 'delete', path: 'a.txt' }] }).operation.id, 15000);
+    assert.equal(rejected.state, 'tool_failed');
+    assert.equal(rejected.error_text, 'schema_input_invalid: dev_file_ops: operations.0: missing required property "kind"');
+
+    // A call the schema accepts keeps the upstream message unchanged.
+    const accepted = await core.waitForOperation(submit({ operations: [{ kind: 'delete', path: 'a.txt' }] }).operation.id, 15000);
+    assert.equal(accepted.state, 'tool_failed');
+    assert.equal(accepted.error_text, 'schema_input_invalid');
+  } finally {
+    await core.close();
   }
 });
 

@@ -654,6 +654,26 @@ test('tool signatures put required parameters first and keep one summary sentenc
     } },
   }), 'run(command: string, cwd?: string, argv?: string[], mode?: "a"|"b", count?: number)  Run a program;');
   assert.equal(toolSignature({ name: 'bare' }), 'bare()');
+  assert.equal(toolSignature({
+    name: 'dev_file_ops',
+    description: 'Move or delete files.',
+    inputSchema: {
+      type: 'object',
+      required: ['operations'],
+      properties: {
+        operations: {
+          type: 'array',
+          items: {
+            oneOf: [
+              { type: 'object', required: ['kind', 'path', 'to'], properties: { kind: { const: 'move' }, path: { type: 'string' }, to: { type: 'string' } } },
+              { type: 'object', required: ['kind', 'path'], properties: { kind: { const: 'delete' }, path: { type: 'string' } } },
+            ],
+          },
+        },
+        cwd: { type: 'string' },
+      },
+    },
+  }), 'dev_file_ops(operations: ({ kind: "move", path: string, to: string }|{ kind: "delete", path: string })[], cwd?: string)  Move or delete files.');
 });
 
 test('client sh sends a script without JSON quoting and reports errors that lack a final newline', (t) => {
@@ -940,6 +960,14 @@ test('python client harness subcommands resolve sticky cwd, accept stdin payload
     version: 1,
     tool: 'dev_bash',
     arguments: { command: 'git status -sb\n', cwd: '/workspace/app/packages/core' },
+  });
+
+  // A script inherits the sticky cwd too: Dev applies it to the nested calls.
+  assert.equal((await runPythonInput(['call', 'dev_run_script', '-'], env, JSON.stringify({ script: 'return 1;' }))).status, 0);
+  assert.deepEqual(calls.at(-1), {
+    version: 1,
+    tool: 'dev_run_script',
+    arguments: { script: 'return 1;', cwd: '/workspace/app/packages/core' },
   });
 
   const callsBeforeBatch = calls.length;

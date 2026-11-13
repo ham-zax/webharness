@@ -1,7 +1,7 @@
 import { Client, ProtocolError, SdkHttpError, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { PersistentOAuthProvider } from './oauth.mjs';
 
-const TOOL_NAME_TTL_MS = 60_000;
+const TOOL_LIST_TTL_MS = 60_000;
 
 function isRequestTimeout(error) {
   if (error?.code === 'REQUEST_TIMEOUT' || error?.code === -32001) return true;
@@ -94,7 +94,7 @@ function poolEntry(options) {
   const key = poolKey(options);
   let entry = pools.get(key);
   if (!entry) {
-    entry = { key, connection: undefined, connecting: undefined, generation: 0, revision: 0, toolNames: undefined, toolNamesAt: 0, closed: false };
+    entry = { key, connection: undefined, connecting: undefined, generation: 0, revision: 0, tools: undefined, toolsAt: 0, closed: false };
     pools.set(key, entry);
   }
   return entry;
@@ -128,8 +128,8 @@ async function ensureConnection(entry, options) {
       connection = await connectMcp({ ...options, signal: controller.signal, onToolsChanged: () => {
         if (entry.connection === connection) {
           entry.revision += 1;
-          entry.toolNames = undefined;
-          entry.toolNamesAt = 0;
+          entry.tools = undefined;
+          entry.toolsAt = 0;
         }
       } });
       if (entry.closed || entry.generation !== generation) {
@@ -139,14 +139,14 @@ async function ensureConnection(entry, options) {
       connection.client.onclose = () => {
         if (entry.connection === connection) {
           entry.connection = undefined;
-          entry.toolNames = undefined;
-          entry.toolNamesAt = 0;
+          entry.tools = undefined;
+          entry.toolsAt = 0;
         }
         connection.evicted = true;
       };
       entry.connection = connection;
-      entry.toolNames = undefined;
-      entry.toolNamesAt = 0;
+      entry.tools = undefined;
+      entry.toolsAt = 0;
       return connection;
     })();
     pending.catch(() => {});
@@ -172,8 +172,8 @@ async function refreshConnection(entry, options) {
   entry.listingTools = undefined;
   entry.connectController?.abort();
   entry.generation = (entry.generation ?? 0) + 1;
-  entry.toolNames = undefined;
-  entry.toolNamesAt = 0;
+  entry.tools = undefined;
+  entry.toolsAt = 0;
   if (previous) {
     previous.evicted = true;
     if (!previous.inFlight) await previous.close().catch(() => {});
@@ -181,20 +181,21 @@ async function refreshConnection(entry, options) {
   return ensureConnection(entry, options);
 }
 
-async function ensureToolNames(entry, connection, signal) {
+// The full tool list is cached, not just the names: a rejected call is explained from
+// the same input schema the upstream validated against, without a second round trip.
+async function ensureTools(entry, connection, signal) {
   signal?.throwIfAborted();
-  if (entry.toolNames && Date.now() - entry.toolNamesAt < TOOL_NAME_TTL_MS) return entry.toolNames;
+  if (entry.tools && Date.now() - entry.toolsAt < TOOL_LIST_TTL_MS) return entry.tools;
   if (!entry.listingTools) {
     const pending = (async () => {
       for (;;) {
         const revision = entry.revision;
         const listed = await connection.client.listTools(undefined, { timeout: 15_000, cacheMode: 'refresh' });
-        const names = new Set(listed.tools.map(tool => tool.name));
         if (entry.connection !== connection) throw new Error('MCP connection changed while listing tools');
         if (revision !== entry.revision) continue;
-        entry.toolNames = names;
-        entry.toolNamesAt = Date.now();
-        return names;
+        entry.tools = listed.tools;
+        entry.toolsAt = Date.now();
+        return entry.tools;
       }
     })();
     pending.catch(() => {});
@@ -210,15 +211,23 @@ async function ensureToolNames(entry, connection, signal) {
   }
 }
 
+/** One tool's definition, including its input schema, from the pooled connection. */
+export async function findMcpTool(options, name) {
+  const entry = poolEntry(options);
+  const connection = await ensureConnection(entry, options);
+  const tools = await ensureTools(entry, connection, options.signal);
+  return tools.find(tool => tool?.name === name);
+}
+
 export async function callMcpTool(options, name, args, hooks = {}) {
   const entry = poolEntry(options);
   let refreshed = false;
   for (;;) {
     let connection;
-    let toolNames;
+    let tools;
     try {
       connection = await ensureConnection(entry, options);
-      toolNames = await ensureToolNames(entry, connection, options.signal);
+      tools = await ensureTools(entry, connection, options.signal);
     } catch (error) {
       if (options.signal?.aborted || entry.closed) throw error;
       if (refreshed) throw error;
@@ -227,7 +236,7 @@ export async function callMcpTool(options, name, args, hooks = {}) {
       continue;
     }
     options.signal?.throwIfAborted();
-    if (!toolNames.has(name)) {
+    if (!tools.some(tool => tool?.name === name)) {
       if (refreshed) throw new Error(`MCP tool is unavailable: ${name}`);
       refreshed = true;
       await refreshConnection(entry, options).catch(() => {});
@@ -251,8 +260,8 @@ export async function callMcpTool(options, name, args, hooks = {}) {
         if (entry.connection === connection) {
           entry.connection = undefined;
           entry.connecting = undefined;
-          entry.toolNames = undefined;
-          entry.toolNamesAt = 0;
+          entry.tools = undefined;
+          entry.toolsAt = 0;
         }
         connection.evicted = true;
       }
@@ -278,8 +287,8 @@ export async function closeMcpPools() {
     entry.generation = (entry.generation ?? 0) + 1;
     entry.connection = undefined;
     entry.connecting = undefined;
-    entry.toolNames = undefined;
-    entry.toolNamesAt = 0;
+    entry.tools = undefined;
+    entry.toolsAt = 0;
     if (connection) pending.push(connection.close().catch(() => {}));
   }
   await Promise.all(pending);
