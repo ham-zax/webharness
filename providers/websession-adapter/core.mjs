@@ -5,7 +5,9 @@ import { callMcpTool, closeMcpPools, listMcpTools } from './mcp-client.mjs';
 
 const MAX_RESULT_BYTES = 1024 * 1024;
 const DEV_COMMAND_FAILURE_FOOTER = /^\[(?:exit (?!0(?:\]| · ))-?\d+|timed out after [0-9.]+s|cancelled|terminated)(?: · [0-9.]+s)?\]$/;
-const DEFAULT_CWD_TOOLS = new Set(['dev_bash', 'dev_exec', 'dev_review_changes', 'dev_file_ops']);
+// dev_run_script takes the same base directory as the shell and file tools: Dev applies
+// it to the script's nested calls, which never pass through this rewrite themselves.
+const DEFAULT_CWD_TOOLS = new Set(['dev_bash', 'dev_exec', 'dev_review_changes', 'dev_file_ops', 'dev_run_script']);
 const OPTIONAL_PATH_CWD_TOOLS = new Set(['dev_list_directory', 'dev_search']);
 const RELATIVE_PATH_TOOLS = new Set(['dev_read', 'dev_write', 'dev_list_directory', 'dev_search']);
 const TARGET_PATH_TOOLS = new Set(['dev_read', 'dev_edit']);

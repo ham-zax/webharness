@@ -1066,6 +1066,7 @@ test('a capability default cwd resolves missing cwd and relative paths across De
     { name: 'dev_write', description: 'Write a file.', inputSchema: { type: 'object' } },
     { name: 'dev_list_directory', description: 'List directory.', inputSchema: { type: 'object' }, annotations: { readOnlyHint: true } },
     { name: 'dev_search', description: 'Search files.', inputSchema: { type: 'object' }, annotations: { readOnlyHint: true } },
+    { name: 'dev_run_script', description: 'Run a script.', inputSchema: { type: 'object' } },
   ];
   const { server } = startToolFixture(t, tools, async (name, args) => {
     calls.push({ name, args });
@@ -1110,6 +1111,14 @@ test('a capability default cwd resolves missing cwd and relative paths across De
 
     await runOne('c-write-1', 'dev_write', { path: 'out.txt', content: 'hi' });
     assert.deepEqual(calls.at(-1).args, { path: '/tmp/default-work/out.txt', content: 'hi' });
+
+    // Dev applies this cwd to the script's nested calls, so a script inherits the
+    // capability default instead of the provider's configured one.
+    await runOne('c-script-1', 'dev_run_script', { script: 'return 1;' });
+    assert.deepEqual(calls.at(-1).args, { script: 'return 1;', cwd: '/tmp/default-work' });
+
+    await runOne('c-script-2', 'dev_run_script', { script: 'return 1;', cwd: '/tmp/explicit' });
+    assert.deepEqual(calls.at(-1).args, { script: 'return 1;', cwd: '/tmp/explicit' });
   } finally {
     await core.close();
     rmSync(stateDir, { recursive: true, force: true });

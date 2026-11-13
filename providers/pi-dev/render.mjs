@@ -37,7 +37,11 @@ export function renderScriptText(result) {
     result.status === 'completed' ? 'Script completed' : 'Script failed',
     `${(result.duration_ms / 1000).toFixed(1)}s`,
   ];
-  if (result.call_count > 0) parts.push(`${result.call_count} ${result.call_count === 1 ? 'call' : 'calls'}`);
+  // The call list also records attempts the schema rejected before dispatch, so the
+  // header counts those records instead of the dispatched-call budget. Otherwise a
+  // script whose every call was rejected printed no count above a non-empty list.
+  const callCount = Array.isArray(result.calls) ? result.calls.length : (result.call_count ?? 0);
+  if (callCount > 0) parts.push(`${callCount} ${callCount === 1 ? 'call' : 'calls'}`);
   lines.push(parts.join(' · '));
   if (result.calls.length > 0) {
     lines.push('Calls:');

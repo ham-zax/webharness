@@ -151,6 +151,54 @@ function acquireScriptSlot(signal, waitMs) {
   });
 }
 
+// A script's nested calls are dispatched inside Dev, so the WebSession adapter cannot
+// rewrite their arguments the way it rewrites a top-level dev_* call. run_script takes
+// the same base directory a top-level call would and applies it here, so tools.bash({})
+// and tools.read({ path: 'a.txt' }) resolve exactly as dev_bash({}) and
+// dev_read({ path: 'a.txt' }) do for the same capability.
+const CWD_TOOLS = new Set(['bash', 'exec', 'review_changes', 'file_ops']);
+const OPTIONAL_PATH_TOOLS = new Set(['list_directory', 'search']);
+const RELATIVE_PATH_TOOLS = new Set(['read', 'write', 'list_directory', 'search']);
+const TARGET_PATH_TOOLS = new Set(['read', 'edit']);
+
+function resolveAgainstBase(base, value) {
+  if (typeof value !== 'string' || value === '') return value;
+  if (path.isAbsolute(value) || value === '~' || value.startsWith('~/')) return value;
+  // User mode passes an absolute base; workspace mode passes a workspace-relative one,
+  // which must stay relative or the nested handler rejects it.
+  return path.isAbsolute(base) ? path.resolve(base, value) : path.join(base, value);
+}
+
+export function withDefaultCwd(tool, args, base) {
+  if (!base || !args || typeof args !== 'object' || Array.isArray(args)) return args;
+  let updated = args;
+  const clone = () => {
+    if (updated === args) updated = { ...args };
+    return updated;
+  };
+  if (CWD_TOOLS.has(tool) && args.cwd === undefined) {
+    clone().cwd = base;
+  }
+  if (OPTIONAL_PATH_TOOLS.has(tool) && args.path === undefined) {
+    clone().path = base;
+  } else if (RELATIVE_PATH_TOOLS.has(tool) && typeof args.path === 'string') {
+    const resolved = resolveAgainstBase(base, args.path);
+    if (resolved !== args.path) clone().path = resolved;
+  }
+  if (TARGET_PATH_TOOLS.has(tool) && Array.isArray(args.targets)) {
+    let changed = false;
+    const nextTargets = args.targets.map(target => {
+      if (!target || typeof target !== 'object' || typeof target.path !== 'string') return target;
+      const resolved = resolveAgainstBase(base, target.path);
+      if (resolved === target.path) return target;
+      changed = true;
+      return { ...target, path: resolved };
+    });
+    if (changed) clone().targets = nextTargets;
+  }
+  return updated;
+}
+
 function formatIssues(error) {
   const issues = Array.isArray(error?.issues) ? error.issues : [];
   if (issues.length === 0) return 'arguments do not match the tool schema';
@@ -166,7 +214,7 @@ function formatIssues(error) {
  * mutation accounting. A failed nested call rejects the script's promise with the same
  * message, which makes Promise.allSettled work for partial-failure handling.
  */
-export function scriptToolTable({ handlers, configs, gate, limits }) {
+export function scriptToolTable({ handlers, configs, gate, limits, defaultCwd }) {
   const tools = [];
   for (const [name, handler] of handlers) {
     if (SCRIPT_EXCLUDED_TOOLS.has(name)) continue;
@@ -176,12 +224,15 @@ export function scriptToolTable({ handlers, configs, gate, limits }) {
       name,
       description: configs?.get(name)?.description,
       execute: async (args, { signal }) => {
+        // Seed the base directory before validation so the parsed value carries it, and
+        // so a relative path is resolved by the same rule a top-level call would use.
+        const seeded = defaultCwd ? withDefaultCwd(name, args, defaultCwd) : args;
         // tools/call validates against this schema before the handler runs. A script must
         // not be a way around those bounds, so validate here too and dispatch the parsed
         // value, which applies defaults and drops unknown keys exactly as MCP does.
-        let input = args;
+        let input = seeded;
         if (typeof schema?.safeParse === 'function') {
-          const parsed = schema.safeParse(args);
+          const parsed = schema.safeParse(seeded);
           if (!parsed.success) {
             throw new Error(`INVALID_ARGUMENTS: ${name}: ${formatIssues(parsed.error)}`);
           }
@@ -294,6 +345,7 @@ function failedResult({ kind, message, durationMs, calls = [], callCount = 0, ca
  */
 export async function runScript({
   script,
+  cwd,
   timeout_ms,
   max_calls,
   maxOutputBytes,
@@ -331,7 +383,7 @@ export async function runScript({
 
   const gate = new ScriptCallGate();
   const limits = { calls: 0, maxCalls, callId };
-  const tools = scriptToolTable({ handlers, configs, gate, limits });
+  const tools = scriptToolTable({ handlers, configs, gate, limits, defaultCwd: cwd });
   let sandbox;
   let result;
   try {

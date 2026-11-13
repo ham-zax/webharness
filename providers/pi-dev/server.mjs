@@ -6,7 +6,7 @@ import { McpServer } from '@modelcontextprotocol/server';
 import { StdioServerTransport, serveStdio } from '@modelcontextprotocol/server/stdio';
 import { createStdioErrorReporter } from './stdio-diagnostics.mjs';
 import { z } from 'zod';
-import { canonicalDefaultCwd, canonicalWorkspaceRoot } from './boundary.mjs';
+import { canonicalDefaultCwd, canonicalWorkspaceRoot, resolveUserCwd, resolveWorkspaceCwd } from './boundary.mjs';
 import { fileURLToPath } from 'node:url';
 import { IdleExecutionWorker, serveExecutionWorker } from './idle-worker.mjs';
 import { pruneBashSpools } from './spool-gc.mjs';
@@ -269,6 +269,17 @@ const cwdPath = pathMode === 'user'
   ? z.string().min(1).describe('Optional cwd; relative paths resolve from the configured default cwd and absolute paths are accepted')
   : z.string().min(1).describe('Optional cwd relative to the configured workspace root');
 const pathPolicy = { pathMode, workspaceRoot, defaultCwd };
+
+// run_script's cwd is the base for nested calls, so it must be expressed the way the
+// nested tools expect it: absolute in user mode, workspace-relative in workspace mode.
+// Resolving it here also rejects a missing directory before the script starts.
+async function resolveScriptBaseCwd(value) {
+  if (value === undefined) return undefined;
+  if (pathMode === 'workspace') {
+    return path.relative(workspaceRoot, await resolveWorkspaceCwd(workspaceRoot, value)) || undefined;
+  }
+  return resolveUserCwd(defaultCwd, value);
+}
 const listPath = pathMode === 'user'
   ? z.string().min(1).describe('Directory to list; relative paths resolve from the configured default cwd and absolute paths are accepted')
   : z.string().min(1).describe('Directory to list, relative to the configured workspace root');
@@ -576,9 +587,10 @@ const scriptToolNames = toolRegistrations
   .filter(name => !SCRIPT_EXCLUDED_TOOLS.has(name));
 
 registerTool('run_script', {
-  description: `Run one JavaScript program that calls Dev tools directly, so loops, filters and conditional edit/test cycles stay inside one call instead of one model round trip per step. The script runs as an async function body: top-level await and return work. Call tools.<name>({...}) with exactly the arguments of the same-named Dev tool (${scriptToolNames.join(', ')}). text(value) adds output; the returned value is reported too. Nested calls are real and are not rolled back if the script later fails. The script has no filesystem, network, timers, imports or process access; its only capability is the listed tools. store() and load() do not persist across calls. timeout_ms does not extend the connector window.`,
+  description: `Run one JavaScript program that calls Dev tools directly, so loops, filters and conditional edit/test cycles stay inside one call instead of one model round trip per step. The script runs as an async function body: top-level await and return work. Call tools.<name>({...}) with exactly the arguments of the same-named Dev tool (${scriptToolNames.join(', ')}). text(value) adds output; the returned value is reported too. Nested calls are real and are not rolled back if the script later fails. The script has no filesystem, network, timers, imports or process access; its only capability is the listed tools. store() and load() do not persist across calls. timeout_ms does not extend the connector window. cwd is the base directory for nested calls that omit cwd or path, so relative paths inside the script resolve from it.`,
   inputSchema: z.object({
     script: z.string().min(1).max(65536).describe('Raw JavaScript as a JSON string, no code fence. Runs as an async function body.'),
+    cwd: cwdPath.optional().describe('Base directory for nested calls that omit cwd or path; relative paths inside the script resolve from it'),
     timeout_ms: z.number().int().min(1000).max(MAX_SCRIPT_TIMEOUT_MS).optional().describe(`Overall deadline including nested calls; default ${DEFAULT_SCRIPT_TIMEOUT_MS / 1000}s, max ${MAX_SCRIPT_TIMEOUT_MS / 1000}s`),
     max_calls: z.number().int().min(1).max(MAX_SCRIPT_MAX_CALLS).optional().describe(`Maximum nested tool calls; default ${DEFAULT_SCRIPT_MAX_CALLS}`),
   }),
@@ -591,6 +603,7 @@ registerTool('run_script', {
 }, async (args, extra) => invoke(async () => {
   const result = await runScript({
     ...args,
+    cwd: await resolveScriptBaseCwd(args.cwd),
     maxOutputBytes,
     handlers: executionHandlers,
     configs: executionToolConfigs,

@@ -8,7 +8,7 @@ import { Client } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 import { z } from 'zod';
 import { renderScriptText } from '../render.mjs';
-import { runScript, scriptToolTable, truncateScriptText } from '../run-script.mjs';
+import { runScript, scriptToolTable, truncateScriptText, withDefaultCwd } from '../run-script.mjs';
 import { SCRIPT_EXCLUDED_TOOLS } from '../script-limits.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -129,6 +129,27 @@ test('nested calls dispatch the parsed value, not the raw arguments', async () =
   });
   assert.equal(result.status, 'completed');
   assert.deepEqual(received, { path: 'a.txt' });
+});
+
+test('withDefaultCwd seeds the base directory into nested call arguments', () => {
+  const base = '/work/project';
+  assert.deepEqual(withDefaultCwd('bash', { command: 'pwd' }, base), { command: 'pwd', cwd: base });
+  assert.deepEqual(withDefaultCwd('bash', { command: 'pwd', cwd: '/elsewhere' }, base), { command: 'pwd', cwd: '/elsewhere' });
+  assert.deepEqual(withDefaultCwd('read', { path: 'a.txt' }, base), { path: '/work/project/a.txt' });
+  assert.deepEqual(withDefaultCwd('read', { path: '/etc/hosts' }, base), { path: '/etc/hosts' });
+  assert.deepEqual(withDefaultCwd('read', { path: '~/notes.txt' }, base), { path: '~/notes.txt' });
+  assert.deepEqual(withDefaultCwd('read', { targets: [{ path: 'a.txt' }, { path: '/b.txt' }] }, base), {
+    targets: [{ path: '/work/project/a.txt' }, { path: '/b.txt' }],
+  });
+  assert.deepEqual(withDefaultCwd('search', { pattern: 'x' }, base), { pattern: 'x', path: base });
+  assert.deepEqual(withDefaultCwd('list_directory', { path: 'src' }, base), { path: '/work/project/src' });
+  // A tool with no path or cwd argument is left untouched, and so is a call with no base.
+  assert.deepEqual(withDefaultCwd('edit', { targets: [{ path: 'a.txt', edits: [] }] }, base), {
+    targets: [{ path: '/work/project/a.txt', edits: [] }],
+  });
+  assert.deepEqual(withDefaultCwd('bash', { command: 'pwd' }, undefined), { command: 'pwd' });
+  // Workspace mode passes a workspace-relative base, which must stay relative.
+  assert.deepEqual(withDefaultCwd('read', { path: 'a.txt' }, 'sub/dir'), { path: 'sub/dir/a.txt' });
 });
 
 test('a small timeout_ms bounds the wait for a free slot', async () => {
@@ -390,6 +411,28 @@ test('renderScriptText reports a completed script without a rollback note when n
   assert.equal(rendered, 'Script completed · 1.2s\nOutput:\nhello');
 });
 
+test('renderScriptText counts rejected calls in the header', () => {
+  // Every call was rejected by the schema, so nothing was dispatched and call_count is 0
+  // while the call list is not empty. The header must still report the list it prints.
+  const rendered = renderScriptText({
+    status: 'completed',
+    error_kind: null,
+    error_message: null,
+    duration_ms: 100,
+    calls: [
+      { name: 'exec', status: 'error', duration_ms: 0 },
+      { name: 'exec', status: 'error', duration_ms: 0 },
+    ],
+    call_count: 0,
+    call_limit: 32,
+    output: '',
+    output_bytes: 0,
+    truncated: false,
+    full_output_path: null,
+  });
+  assert.match(rendered, /^Script completed · 0\.1s · 2 calls\nCalls:/);
+});
+
 test('renderScriptText labels a timeout distinctly from a script error', () => {
   const rendered = renderScriptText({
     status: 'failed',
@@ -466,7 +509,7 @@ test('run_script is advertised as a mutating Dev tool', async () => {
     assert.equal(tool.annotations.readOnlyHint, false);
     assert.equal(tool.annotations.destructiveHint, true);
     assert.equal(tool.annotations.idempotentHint, false);
-    assert.deepEqual(Object.keys(tool.inputSchema.properties), ['script', 'timeout_ms', 'max_calls']);
+    assert.deepEqual(Object.keys(tool.inputSchema.properties), ['script', 'cwd', 'timeout_ms', 'max_calls']);
     assert.deepEqual(tool.inputSchema.required, ['script']);
     assert.match(tool.description, /read, list_directory, search, edit, write, exec, bash/);
     assert.doesNotMatch(tool.description, /tools\.run_script/);
@@ -499,6 +542,41 @@ test('a script reads, edits and verifies in one call', async () => {
     assert.match(text, /completed calls are not rolled back/);
   });
   assert.equal(await fs.readFile(path.join(workspaceRoot, 'a.txt'), 'utf8'), 'alpha\ngamma\n');
+});
+
+test('run_script cwd is the base directory for nested calls', async () => {
+  const defaultCwd = await tempDir('pi-dev-script-user-');
+  const projectDir = path.join(defaultCwd, 'project');
+  await fs.mkdir(projectDir);
+  await fs.writeFile(path.join(projectDir, 'a.txt'), 'alpha\n');
+  const stateDir = await tempDir('pi-dev-script-state-');
+  const env = {
+    MCP_DEV_SHELL_MODE: 'unrestricted',
+    MCP_DEV_PATH_MODE: 'user',
+    MCP_DEV_DEFAULT_CWD: defaultCwd,
+    MCP_DEV_STATE_DIR: stateDir,
+    MCP_DEV_MAX_OUTPUT_BYTES: '1048576',
+    MCP_DEV_TERMINAL_SOCKET: path.join(stateDir, 'wsl-agent-terminal.sock'),
+  };
+  await withClient(env, async client => {
+    const result = await client.callTool({
+      name: 'run_script',
+      arguments: {
+        cwd: 'project',
+        script: `
+          const pwd = await tools.bash({ command: 'pwd' });
+          text('pwd: ' + pwd.split('\\n')[0]);
+          const file = await tools.read({ path: 'a.txt' });
+          text('file: ' + file.trim());
+        `,
+      },
+    });
+    assert.notEqual(result.isError, true);
+    const text = result.content.map(block => block.text).join('\n');
+    assert.match(text, /^Script completed/);
+    assert.ok(text.includes(`pwd: ${projectDir}`), text);
+    assert.match(text, /file: alpha/);
+  });
 });
 
 test('a failing script surfaces isError and keeps partial output', async () => {

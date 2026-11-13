@@ -69,7 +69,10 @@ adapter bounds nested calls (default and maximum 32), the overall deadline
 Each nested call is validated against the same input schema `tools/call` enforces
 and dispatches the parsed value, so a script cannot exceed a bound the direct path
 rejects. Waiting for a free script slot counts against the deadline rather than
-starting it.
+starting it. `run_script`'s own `cwd` is the base directory for nested calls that
+omit `cwd` or `path`, which is how a WebSession capability's `default_cwd` reaches
+a script: the adapter rewrites only the top-level call, and Dev applies that base
+to the calls the script makes.
 Nested calls are real and are not rolled back if the script later fails; the result
 lists every call with its status and says so. `store()` and `load()` do not persist
 across calls. The tool is advertised as mutating, so the WebSession adapter
