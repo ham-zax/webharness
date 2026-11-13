@@ -37,13 +37,24 @@ export function compactInstructions(instructions) {
   return '';
 }
 
+// The contract sentences below are the single source for both the server-served
+// instructions and the client-facing pairing prompt that bin/adapter prints.
+// Keep them here so the two can never disagree about how results are shaped.
+export const CALL_CONTRACT = 'GET /v1/tools/<name> retrieves a schema. Invoke every tool via POST /v1/calls?wait=2 (wait=10+ for commands) with Authorization: Bearer <capability>, Content-Type: application/json, and Idempotency-Key: <fresh UUID hex>. Body: {"version":1,"tool":"<discovered-name>","arguments":{...}}.';
+
+export const RESULT_CONTRACT = 'Poll the returned status_url verbatim while queued/running (optional wait=90) to completion inside the same local script run rather than spending separate model turns polling; reuse HTTP keep-alive connections across submit/poll/chunk requests and retry transient 502/503/504 only on GET. Check state, not status. For completed with chunk_count == 1, read result. With chunk_count > 1, result is intentionally absent: GET chunk_base_url + each number 1..chunk_count and concatenate the response content fields in order. Never interpret a missing result as empty output. The assembled result is the tool output itself, either its rendered text or its structured JSON when the tool returns no plain text; it is not an MCP envelope, so do not look for content blocks inside it. Never automatically repeat a mutation after a lost submission response or unknown_outcome.';
+
+export const BATCH_CONTRACT = 'POST /v1/batch?wait=2 uses the same headers and {"version":1,"calls":[{"tool":"<name>","arguments":{...}}],"sequential"?:true,"stop_on_error"?:true} (1..20 calls). Default batch overlaps reads with serialized writes; set "sequential":true for ordered pipelines (e.g. edit -> test -> review) that stop on failure. stop_on_error requires sequential:true.';
+
+export const CWD_CONTRACT = 'GET /v1/cwd reads project context; POST /v1/cwd with the bearer and JSON {"cwd":"/project"} selects it once ({"cwd":null} clears it). Supported Dev calls inherit it; use relative paths. Local Terminal has its own cwd.';
+
 export const HTTP_INSTRUCTIONS = [
   'WebSession HTTP contract:',
   'Use only documented routes; do not probe endpoint names. Send User-Agent: websession-client/1.0.',
-  'GET /v1/tools/<name> retrieves a schema. Invoke every tool via POST /v1/calls?wait=2 with Authorization: Bearer <capability>, Content-Type: application/json, and Idempotency-Key: <fresh UUID hex>. Body: {"version":1,"tool":"<discovered-name>","arguments":{...}}.',
-  'Poll the returned status_url verbatim while queued/running (optional wait=90) to completion inside the same local script run rather than spending separate model turns polling; reuse HTTP keep-alive connections across submit/poll/chunk requests and retry transient 502/503/504 only on GET. Check state, not status. For completed with chunk_count == 1, read result. With chunk_count > 1, result is intentionally absent: GET chunk_base_url + each number 1..chunk_count and concatenate the response content fields in order. Never interpret a missing result as empty output. The assembled result is the tool output itself, either its rendered text or its structured JSON when the tool returns no plain text; it is not an MCP envelope, so do not look for content blocks inside it. Never automatically repeat a mutation after a lost submission response or unknown_outcome.',
-  'POST /v1/batch?wait=2 uses the same headers and {"version":1,"calls":[{"tool":"<name>","arguments":{...}}],"sequential"?:true,"stop_on_error"?:true} (1..20 calls). Default batch overlaps reads with serialized writes; set "sequential":true for ordered pipelines (e.g. edit -> test -> review) that stop on failure. stop_on_error requires sequential:true.',
-  'GET /v1/cwd reads project context; POST /v1/cwd with the bearer and JSON {"cwd":"/project"} selects it once ({"cwd":null} clears it). Supported Dev calls inherit it; use relative paths. Local Terminal has its own cwd.',
+  CALL_CONTRACT,
+  RESULT_CONTRACT,
+  BATCH_CONTRACT,
+  CWD_CONTRACT,
   'Execution efficiency: cache pairing signatures locally instead of re-fetching schemas; group related independent reads/searches into one /v1/batch (or dev_read targets); use a sequential batch/pipe (wait=10+) for ordered edit -> targeted tests -> final review, and run long suites detached (dev_exec detach:true + dev_wait) inside one local call. Avoid a separate model round-trip for every inspection, poll, or Git check.',
   'Quiet output: keep builds and test logs in /tmp files, and print a short status plus failures (normally <=25 lines), not raw schemas, full diffs, or all passing-test output. Use the client output cap and --save when full output is necessary.',
   'Localized bugs: when the report includes a concrete file, line, and reproduction, inspect that scope and verify the fix with targeted tests before expanding investigation. Do not skip validation.',

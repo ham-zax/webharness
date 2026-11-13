@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { renderPairingPrompt } from './pairing-prompt.mjs';
 import { AdapterStore } from './store.mjs';
 
 process.stdout.on('error', (error) => {
@@ -56,13 +57,19 @@ try {
     ];
     if (pairing.defaultCwd !== null) lines.push(`default_cwd: ${pairing.defaultCwd}`);
     process.stdout.write(`${lines.join('\n')}\n`);
+  } else if (action === 'prompt') {
+    const [base, pairCode, pairExpiresAt, expiresAt, defaultCwd] = process.argv.slice(3);
+    if (!base || !pairCode || !pairExpiresAt || !expiresAt) {
+      throw new Error('prompt requires <base> <pair-code> <pair-expires-at> <expires-at> [default-cwd]');
+    }
+    process.stdout.write(`${renderPairingPrompt({ base, pairCode, pairExpiresAt, expiresAt, defaultCwd: defaultCwd || null })}\n`);
   } else if (action === 'revoke') {
     const capabilityId = process.argv[3];
     if (!capabilityId) throw new Error('capability ID is required');
     if (!store.revokeCapability(capabilityId)) throw new Error('capability ID was not found');
     process.stdout.write(`revoked_capability_id: ${capabilityId}\n`);
   } else {
-    throw new Error('usage: node operator.mjs issue [ttl-seconds] [default-cwd] | pair [ttl-seconds] [pair-ttl-seconds] [default-cwd] | set-master [bearer] | master-status | revoke-master | revoke <capability-id>');
+    throw new Error('usage: node operator.mjs issue [ttl-seconds] [default-cwd] | pair [ttl-seconds] [pair-ttl-seconds] [default-cwd] | prompt <base> <pair-code> <pair-expires-at> <expires-at> [default-cwd] | set-master [bearer] | master-status | revoke-master | revoke <capability-id>');
   }
 } finally {
   store.close();
