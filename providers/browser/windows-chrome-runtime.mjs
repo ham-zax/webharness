@@ -1,13 +1,16 @@
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
 const WINDOWS_CHROME_HELPER_SOURCE = path.join(DIR, 'windows-chrome.cjs');
+const WINDOWS_CLOAKBROWSER_HELPER_SOURCE = path.join(DIR, 'windows-cloakbrowser.cjs');
 const WINDOWS_CMD = '/mnt/c/Windows/System32/cmd.exe';
 const MAX_OUTPUT_BYTES = 1024 * 1024;
 const STARTUP_TIMEOUT_MS = 15000;
+const CLOAKBROWSER_STARTUP_TIMEOUT_MS = 90000;
 const MAX_PROFILE_NAME_LENGTH = 64;
 const PROFILE_NAME = /^[A-Za-z0-9._-]+$/;
 
@@ -107,10 +110,14 @@ export async function resolveWindowsHost({ processRunner = runWindowsHostProcess
       const nodeExecutable = translatedNode.stdout.trim();
       const runtimeDir = path.join(localAppData, 'mcp-dev-bridge', 'chrome-runtime');
       const windowsRuntimeDir = `${windowsLocalAppData}\\mcp-dev-bridge\\chrome-runtime`;
+      const cloakRuntimeDir = path.join(localAppData, 'mcp-dev-bridge', 'cloakbrowser-runtime');
+      const windowsCloakRuntimeDir = `${windowsLocalAppData}\\mcp-dev-bridge\\cloakbrowser-runtime`;
       const profileDir = path.join(localAppData, 'mcp-dev-bridge', 'chrome-profile');
       const windowsProfileDir = `${windowsLocalAppData}\\mcp-dev-bridge\\chrome-profile`;
       const helper = path.join(runtimeDir, 'windows-chrome.cjs');
       const windowsHelper = `${windowsRuntimeDir}\\windows-chrome.cjs`;
+      const cloakHelper = path.join(cloakRuntimeDir, 'windows-cloakbrowser.cjs');
+      const windowsCloakHelper = `${windowsCloakRuntimeDir}\\windows-cloakbrowser.cjs`;
 
       await fs.mkdir(runtimeDir, { recursive: true });
       await fs.copyFile(WINDOWS_CHROME_HELPER_SOURCE, helper);
@@ -122,7 +129,11 @@ export async function resolveWindowsHost({ processRunner = runWindowsHostProcess
         profileDir,
         windowsProfileDir,
         helper,
-        windowsHelper
+        windowsHelper,
+        cloakRuntimeDir,
+        windowsCloakRuntimeDir,
+        cloakHelper,
+        windowsCloakHelper
       };
     })().catch(error => {
       hostPromise = null;
@@ -132,9 +143,55 @@ export async function resolveWindowsHost({ processRunner = runWindowsHostProcess
   return hostPromise;
 }
 
-export async function ensureWindowsChrome({ processRunner = runWindowsHostProcess, profile } = {}) {
+async function syncCloakLicenseToWindows(localAppData) {
+  const linuxKeyFile = path.join(os.homedir(), '.cloakbrowser', 'license.key');
+  let keyText;
+  try {
+    keyText = await fs.readFile(linuxKeyFile, 'utf8');
+  } catch {
+    return;
+  }
+  const windowsHome = path.resolve(localAppData, '..', '..');
+  const targetDir = path.join(windowsHome, '.cloakbrowser');
+  const targetKeyFile = path.join(targetDir, 'license.key');
+  try {
+    const current = await fs.readFile(targetKeyFile, 'utf8');
+    if (current === keyText) return;
+  } catch {}
+  await fs.mkdir(targetDir, { recursive: true });
+  await fs.writeFile(targetKeyFile, keyText, { encoding: 'utf8', mode: 0o600 });
+}
+
+export async function ensureWindowsChrome({ processRunner = runWindowsHostProcess, profile, backend = 'chrome', cloakOptions } = {}) {
   const profileName = optionalProfileName(profile);
   const host = await resolveWindowsHost({ processRunner });
+  if (backend === 'cloakbrowser') {
+    const cloakName = profileName ?? 'x-main';
+    const profileDir = path.join(host.localAppData, 'mcp-dev-bridge', 'cloakbrowser', 'profiles', cloakName);
+    const windowsProfileDir = `${host.windowsLocalAppData}\\mcp-dev-bridge\\cloakbrowser\\profiles\\${cloakName}`;
+    await fs.mkdir(host.cloakRuntimeDir, { recursive: true });
+    await fs.copyFile(WINDOWS_CLOAKBROWSER_HELPER_SOURCE, host.cloakHelper);
+    await syncCloakLicenseToWindows(host.localAppData);
+    const result = await processRunner(host.nodeExecutable, [
+      host.windowsCloakHelper,
+      host.windowsCloakRuntimeDir,
+      windowsProfileDir,
+      String(CLOAKBROWSER_STARTUP_TIMEOUT_MS),
+      JSON.stringify(cloakOptions ?? {})
+    ], { cwd: '/mnt/c' });
+
+    let endpoint;
+    try {
+      endpoint = JSON.parse(result.stdout || '{}');
+    } catch (error) {
+      throw runtimeError('WINDOWS_CLOAKBROWSER_INVALID_OUTPUT', result.stderr || 'Windows CloakBrowser helper returned invalid JSON', error);
+    }
+    if (typeof endpoint.browserUrl !== 'string' || typeof endpoint.wsEndpoint !== 'string') {
+      throw runtimeError('WINDOWS_CLOAKBROWSER_START_FAILED', result.stderr || 'Windows CloakBrowser helper did not return a DevTools endpoint');
+    }
+    return { ...host, profileDir, windowsProfileDir, profileName: cloakName, backend: 'cloakbrowser', ...endpoint };
+  }
+
   const profileDir = profileName === undefined
     ? host.profileDir
     : path.join(host.localAppData, 'mcp-dev-bridge', 'chrome-profiles', profileName);
@@ -157,7 +214,7 @@ export async function ensureWindowsChrome({ processRunner = runWindowsHostProces
   if (typeof endpoint.browserUrl !== 'string' || typeof endpoint.wsEndpoint !== 'string') {
     throw runtimeError('WINDOWS_MCP_CHROME_START_FAILED', result.stderr || 'Windows MCP Chrome helper did not return a DevTools endpoint');
   }
-  return { ...host, profileDir, windowsProfileDir, profileName: profileName ?? null, ...endpoint };
+  return { ...host, profileDir, windowsProfileDir, profileName: profileName ?? null, backend: 'chrome', ...endpoint };
 }
 
 export const WINDOWS_MCP_CHROME_PROFILE_SUFFIX = 'mcp-dev-bridge\\chrome-profile';

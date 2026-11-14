@@ -19,10 +19,11 @@ import {
   createBrowserFastServer
 } from '../server.mjs';
 
-test('browser-fast exposes only observe and execute', async t => {
+test('browser-fast exposes observe, execute, and inspect', async t => {
   const browser = {
     async observe() { return { snapshot: '', refs: {}, tabs: [] }; },
-    async execute() { return { outcome: 'completed', steps: [] }; }
+    async execute() { return { outcome: 'completed', steps: [] }; },
+    async inspect() { return { kind: 'console', result: [] }; }
   };
   const server = createBrowserFastServer({ browser });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -35,7 +36,7 @@ test('browser-fast exposes only observe and execute', async t => {
   await client.connect(clientTransport);
 
   const { tools } = await client.listTools();
-  assert.deepEqual(tools.map(tool => tool.name), ['observe', 'execute']);
+  assert.deepEqual(tools.map(tool => tool.name), ['observe', 'execute', 'inspect']);
   assert.equal(tools[0].annotations.readOnlyHint, true);
   assert.match(tools[0].description, /local policy\/site\/platform memory/i);
   assert.equal(tools[1].annotations.readOnlyHint, false);
@@ -942,7 +943,7 @@ test('browser selection is explicit and Windows profile locks are isolated', asy
   const runner = {
     async resolveSelection(target, selection) {
       return {
-        browserBackend: target === 'windows' ? 'chrome' : selection.browserBackend,
+        browserBackend: target === 'windows' ? (selection.browserBackend ?? 'chrome') : selection.browserBackend,
         browserProfile: selection.browserProfile
       };
     },
@@ -952,7 +953,7 @@ test('browser selection is explicit and Windows profile locks are isolated', asy
     async batch(_target, commands, options) {
       if (commands.length === 1 && commands[0][0] === 'tab' && commands[0][1] === 'list') {
         return {
-          browserBackend: 'chrome',
+          browserBackend: options.browserBackend ?? 'chrome',
           browserProfile: options.browserProfile,
           exitCode: 0,
           items: [{ success: true, result: { tabs: [
@@ -964,7 +965,7 @@ test('browser selection is explicit and Windows profile locks are isolated', asy
         return { exitCode: 0, items: [{ success: true, result: { targetId: 'TARGET-A' } }] };
       }
       return {
-        browserBackend: 'chrome',
+        browserBackend: options.browserBackend ?? 'chrome',
         browserProfile: options.browserProfile,
         exitCode: 0,
         items: [
@@ -994,9 +995,13 @@ test('browser selection is explicit and Windows profile locks are isolated', asy
     browser.operationKey('windows', { browserProfile: 'agent-two', tab: 'TARGET-A' }),
     browser.operationKey('windows', { browserProfile: 'agent-two', tab: 'TARGET-B' })
   );
-  await assert.rejects(
-    browser.observe({ browser_target: 'windows', browser_backend: 'cloakbrowser' }),
-    /Windows supports only the chrome backend/
+  const windowsCloak = await browser.observe({ browser_target: 'windows', browser_backend: 'cloakbrowser', browser_profile: 'x-main' });
+  assert.equal(windowsCloak.browser_target, 'windows');
+  assert.equal(windowsCloak.browser_backend, 'cloakbrowser');
+  assert.equal(windowsCloak.browser_profile, 'x-main');
+  assert.notEqual(
+    browser.operationKey('windows', { browserBackend: 'chrome', browserProfile: 'x-main', tab: 'TARGET-A' }),
+    browser.operationKey('windows', { browserBackend: 'cloakbrowser', browserProfile: 'x-main', tab: 'TARGET-A' })
   );
   await assert.rejects(
     browser.observe({ browser_target: 'linux', browser_profile: 'agent-two' }),
@@ -1290,4 +1295,126 @@ test('a stale DevToolsActivePort reads as no browser instead of a live endpoint'
   await fs.rm(path.join(userDataDir, 'DevToolsActivePort'));
   assert.equal(await readCloakBrowserEndpoint(userDataDir, { allowMissing: true }), null);
   await assert.rejects(readCloakBrowserEndpoint(userDataDir), /ENOENT/);
+});
+
+test('managed CloakBrowser config validates proxy and geoip fields and launch forwards them with --test-type', async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'cloak-proxy-config-'));
+  t.after(async () => { await fs.rm(root, { recursive: true, force: true }); });
+  const configFile = path.join(root, 'browser-fast.json');
+
+  await fs.writeFile(configFile, JSON.stringify({
+    version: 2,
+    linux: { browser: 'cloakbrowser', profile: 'x-main' },
+    cloakbrowser: {
+      profiles: {
+        'x-main': {
+          headless: false,
+          humanize: true,
+          proxy: 'socks5://user:pass@127.0.0.1:1080',
+          geoip: true
+        },
+        work: {
+          proxy: { server: 'http://proxy.local:8080', bypass: '.local', username: 'u', password: 'p' }
+        }
+      }
+    }
+  }));
+
+  const resolvedMain = await resolveLinuxBrowserBackend({ configFile });
+  assert.equal(resolvedMain.profile.proxy, 'socks5://user:pass@127.0.0.1:1080');
+  assert.equal(resolvedMain.profile.geoip, true);
+
+  const resolvedWork = await resolveLinuxBrowserBackend({ configFile, browser: 'cloakbrowser', profile: 'work' });
+  assert.deepEqual(resolvedWork.profile.proxy, {
+    server: 'http://proxy.local:8080',
+    bypass: '.local',
+    username: 'u',
+    password: 'p'
+  });
+
+  await fs.writeFile(configFile, JSON.stringify({
+    version: 2,
+    linux: { browser: 'cloakbrowser', profile: 'bad' },
+    cloakbrowser: { profiles: { bad: { proxy: { bypass: '.local' } } } }
+  }));
+  await assert.rejects(resolveLinuxBrowserBackend({ configFile }), /BROWSER_FAST_CONFIG_INVALID/);
+
+  let captured;
+  const runtime = new ManagedCloakBrowserRuntime({
+    stateRoot: root,
+    launch: async options => {
+      captured = options;
+      const err = new Error('captured');
+      err.code = 'TEST_CAPTURE_COMPLETE';
+      throw err;
+    }
+  });
+  await assert.rejects(runtime.ensure(resolvedMain), error => error?.code === 'TEST_CAPTURE_COMPLETE');
+  assert.equal(captured.proxy, 'socks5://user:pass@127.0.0.1:1080');
+  assert.equal(captured.geoip, true);
+  assert.equal(captured.args.includes('--test-type'), true);
+});
+
+test('non-CDP Linux Chrome keeps one session name across tab listing and selection', async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'browser-fast-linux-chrome-session-'));
+  t.after(async () => { await fs.rm(root, { recursive: true, force: true }); });
+  const sessions = [];
+  const runner = new AgentBrowserRunner({
+    linuxBackendResolve: async () => ({ browser: 'chrome', profileName: 'dev', session: 'mcp-browser-fast-linux-chrome-dev' }),
+    processRunner: async (_cmd, args, opts = {}) => {
+      const idx = args.indexOf('--session');
+      sessions.push(args[idx + 1]);
+      const cmds = JSON.parse(opts.input);
+      const items = cmds.map(c => {
+        if (c[0] === 'tab' && c[1] === 'list') return { success: true, result: { tabs: [{ targetId: 'TAB-1', active: true, url: 'about:blank' }] } };
+        if (c[0] === 'snapshot') return { success: true, result: { origin: 'about:blank', snapshot: '', refs: {} } };
+        return { success: true, result: { targetId: 'TAB-1' } };
+      });
+      return { code: 0, stdout: JSON.stringify(items), stderr: '' };
+    }
+  });
+  const browser = new FastBrowser({ runner, memoryRoot: root, defaultTarget: 'linux' });
+  const observed = await browser.observe({ browser_target: 'linux', browser_backend: 'chrome', browser_profile: 'dev' });
+  assert.equal(observed.active_tab, 'TAB-1');
+  assert.ok(sessions.length >= 2);
+  assert.ok(sessions.every(s => s === 'mcp-browser-fast-linux-chrome-dev'), `sessions: ${sessions.join(',')}`);
+});
+
+test('browser-fast inspect runs compact diagnostics on the pinned tab', async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'browser-fast-inspect-'));
+  t.after(async () => { await fs.rm(root, { recursive: true, force: true }); });
+  const dispatched = [];
+  const browser = new FastBrowser({
+    memoryRoot: root,
+    defaultTarget: 'linux',
+    runner: {
+      async resolveSelection(target, sel) { return { browserBackend: sel.browserBackend ?? 'cloakbrowser', browserProfile: sel.browserProfile ?? 'x-main' }; },
+      async batch(_target, commands, opts) {
+        dispatched.push({ commands, opts });
+        return {
+          exitCode: 0,
+          browserBackend: opts.browserBackend,
+          browserProfile: opts.browserProfile,
+          items: commands.map(cmd => ({ success: true, result: { cmd } }))
+        };
+      }
+    }
+  });
+
+  const con = await browser.inspect({ tab: 'TAB-1', kind: 'console', clear: true });
+  assert.equal(con.kind, 'console');
+  assert.deepEqual(dispatched.at(-1).commands, [['console', '--clear']]);
+
+  const netRes = await browser.inspect({ tab: 'TAB-1', kind: 'network', filter: 'api' });
+  assert.deepEqual(dispatched.at(-1).commands, [['network', 'requests', '--filter', 'api']]);
+
+  const evalRes = await browser.inspect({ tab: 'TAB-1', kind: 'eval', expression: 'document.title' });
+  assert.deepEqual(dispatched.at(-1).commands, [['eval', 'document.title']]);
+
+  const shotRes = await browser.inspect({ tab: 'TAB-1', kind: 'screenshot', full_page: true, annotate: true, path: '/tmp/test-shot.png' });
+  assert.equal(shotRes.path, '/tmp/test-shot.png');
+  assert.deepEqual(dispatched.at(-1).commands, [['screenshot', '/tmp/test-shot.png', '--full', '--annotate']]);
+
+  await assert.rejects(browser.inspect({ tab: 'TAB-1', kind: 'unknown' }), /unsupported inspect kind/);
+  await assert.rejects(browser.inspect({ tab: 'TAB-1', kind: 'eval' }), /expression must be a non-empty string/);
 });

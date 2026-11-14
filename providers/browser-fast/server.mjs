@@ -14,12 +14,13 @@ import { resolveBrowserMemory } from './browser-memory.mjs';
 import { readTargetInfo } from './target-info.mjs';
 import { readExternalCdpPages, ownedBootstrapPage, closeExternalOwnedPage } from './external-pinned-session.mjs';
 
-export const AGENT_BROWSER_VERSION = '0.39.0';
+export const AGENT_BROWSER_VERSION = '0.43.0';
 export const DEFAULT_SESSION_PREFIX = 'mcp-browser-fast';
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
 const AGENT_BROWSER_JS = path.join(DIR, 'node_modules', 'agent-browser', 'bin', 'agent-browser.js');
-const WINDOWS_AGENT_BROWSER_SOURCE = path.join(DIR, 'node_modules', 'agent-browser', 'bin', 'agent-browser-win32-x64.exe');
+const WINDOWS_AGENT_BROWSER_SOURCE = path.join(DIR, 'node_modules', '@agent-browser', 'cli-win32-x64-msvc', 'bin', 'agent-browser-win32-x64.exe');
+const WINDOWS_AGENT_BROWSER_LEGACY_SOURCE = path.join(DIR, 'node_modules', 'agent-browser', 'bin', 'agent-browser-win32-x64.exe');
 const WINDOWS_RUNNER_SOURCE = path.join(DIR, 'windows-runner.cjs');
 const MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
 const AGENT_BROWSER_MAX_OUTPUT_CHARS = 262144;
@@ -84,14 +85,11 @@ function browserProfileName(value) {
 
 function browserSelection(target, backend, profile) {
   const browserProfile = browserProfileName(profile);
-  if (target === 'windows') {
-    if (backend !== undefined && backend !== 'chrome') {
-      throw fastError('INVALID_ARGUMENT', 'Windows supports only the chrome backend');
-    }
-    return { browserBackend: 'chrome', browserProfile };
-  }
   if (backend !== undefined && !['chrome', 'cloakbrowser'].includes(backend)) {
     throw fastError('INVALID_ARGUMENT', 'browser_backend must be chrome or cloakbrowser');
+  }
+  if (target === 'windows') {
+    return { browserBackend: backend ?? 'chrome', browserProfile };
   }
   if (browserProfile !== undefined && backend === undefined) {
     throw fastError('INVALID_ARGUMENT', 'browser_profile requires an explicit browser_backend for Linux');
@@ -298,7 +296,7 @@ export class AgentBrowserRunner {
     this.processRunner = processRunner;
     this.windowsSource = windowsSource;
     this.windowsRunnerSource = windowsRunnerSource;
-    this.windowsChromeEnsure = windowsChromeEnsure ?? (profile => ensureWindowsChrome({ processRunner: this.processRunner, profile }));
+    this.windowsChromeEnsure = windowsChromeEnsure ?? ((profile, options = {}) => ensureWindowsChrome({ processRunner: this.processRunner, profile, ...options }));
     this.linuxBackendResolve = linuxBackendResolve;
     this.linuxChromeProfilesRoot = linuxChromeProfilesRoot;
     this.cloakbrowserRuntime = cloakbrowserRuntime;
@@ -313,6 +311,16 @@ export class AgentBrowserRunner {
     this.closed = false;
   }
 
+  async resolveWindowsBinarySource() {
+    for (const candidate of [this.windowsSource, WINDOWS_AGENT_BROWSER_LEGACY_SOURCE]) {
+      try {
+        const stat = await fs.stat(candidate);
+        if (stat.isFile()) return { path: candidate, size: stat.size };
+      } catch {}
+    }
+    return null;
+  }
+
   async windowsAgentRuntime(chrome) {
     if (!this.windowsAgentRuntimePromise) {
       this.windowsAgentRuntimePromise = (async () => {
@@ -320,15 +328,30 @@ export class AgentBrowserRunner {
         const windowsRuntimeDir = `${chrome.windowsLocalAppData}\\mcp-dev-bridge\\agent-browser\\${AGENT_BROWSER_VERSION}`;
         const executable = path.join(runtimeDir, 'agent-browser.exe');
         const helper = path.join(runtimeDir, 'windows-runner.cjs');
-        const sourceStat = await fs.stat(this.windowsSource);
-        let install = false;
-        try {
-          install = (await fs.stat(executable)).size !== sourceStat.size;
-        } catch {
-          install = true;
-        }
         await fs.mkdir(runtimeDir, { recursive: true });
-        if (install) await fs.copyFile(this.windowsSource, executable);
+        const source = await this.resolveWindowsBinarySource();
+        if (source) {
+          let install = false;
+          try {
+            install = (await fs.stat(executable)).size !== source.size;
+          } catch {
+            install = true;
+          }
+          if (install) await fs.copyFile(source.path, executable);
+        } else {
+          let exists = false;
+          try {
+            exists = (await fs.stat(executable)).isFile();
+          } catch {}
+          if (!exists) {
+            await this.processRunner('/mnt/c/Windows/System32/cmd.exe', [
+              '/d', '/c', 'npm', 'install', '--no-save', '--prefix', windowsRuntimeDir,
+              `@agent-browser/cli-win32-x64-msvc@${AGENT_BROWSER_VERSION}`
+            ], { cwd: '/mnt/c' });
+            const installedExe = path.join(runtimeDir, 'node_modules', '@agent-browser', 'cli-win32-x64-msvc', 'bin', 'agent-browser-win32-x64.exe');
+            await fs.copyFile(installedExe, executable);
+          }
+        }
         await fs.copyFile(this.windowsRunnerSource, helper);
         return {
           executable,
@@ -345,8 +368,18 @@ export class AgentBrowserRunner {
     return this.windowsAgentRuntimePromise;
   }
 
-  async windowsRuntime(profile) {
-    const chrome = await this.windowsChromeEnsure(profile);
+  async windowsRuntime(profile, backend = 'chrome') {
+    let chrome;
+    if (backend === 'cloakbrowser') {
+      let cloakOptions = {};
+      try {
+        const resolved = await this.linuxBackendResolve({ browser: 'cloakbrowser', profile });
+        if (resolved?.profile) cloakOptions = resolved.profile;
+      } catch {}
+      chrome = await this.windowsChromeEnsure(profile, { backend: 'cloakbrowser', cloakOptions });
+    } else {
+      chrome = await this.windowsChromeEnsure(profile);
+    }
     return { ...chrome, ...(await this.windowsAgentRuntime(chrome)) };
   }
 
@@ -382,12 +415,15 @@ export class AgentBrowserRunner {
     return normalized;
   }
 
-  async windowsBatch(commands, { bail = true, browserProfile } = {}) {
-    const runtime = await this.windowsRuntime(browserProfile);
+  async windowsBatch(commands, { bail = true, browserBackend = 'chrome', browserProfile } = {}) {
+    const runtime = await this.windowsRuntime(browserProfile, browserBackend);
+    const sessionBase = browserBackend === 'cloakbrowser'
+      ? `${DEFAULT_SESSION_PREFIX}-windows-cloakbrowser`
+      : `${DEFAULT_SESSION_PREFIX}-windows`;
     const args = [
       '--session', browserProfile === undefined
-        ? `${DEFAULT_SESSION_PREFIX}-windows`
-        : `${DEFAULT_SESSION_PREFIX}-windows-${browserProfile}`,
+        ? sessionBase
+        : `${sessionBase}-${browserProfile}`,
       '--cdp', runtime.wsEndpoint,
       '--pin-tab',
       '--idle-timeout', '0',
@@ -402,13 +438,18 @@ export class AgentBrowserRunner {
     });
     return {
       ...parseAgentBrowserBatch(result),
-      browserBackend: 'chrome',
+      browserBackend,
       browserProfile: browserProfile ?? null
     };
   }
 
   linuxSession(backend, sessionTab) {
     if (sessionTab === undefined) return backend.session;
+    // Per-tab sessions only work when multiple sessions attach to one shared browser
+    // (external CDP or managed CloakBrowser). A launched Linux Chrome owns one process
+    // per session name, so changing the session name after listing tabs starts a second
+    // browser whose tab IDs and profile lock collide with the first.
+    if (backend.cdp === undefined && backend.managed !== true) return backend.session;
     const token = createHash('sha256')
       .update(`${backend.session}\0${String(sessionTab)}`)
       .digest('hex')
@@ -697,7 +738,7 @@ export class AgentBrowserRunner {
   }
 
   async resolveSelection(target, { browserBackend, browserProfile } = {}) {
-    if (target !== 'linux') return { browserBackend: 'chrome', browserProfile };
+    if (target !== 'linux') return { browserBackend: browserBackend ?? 'chrome', browserProfile };
     const selected = await this.linuxBackendResolve({ browser: browserBackend, profile: browserProfile });
     return {
       browserBackend: selected.browser,
@@ -997,7 +1038,7 @@ export class FastBrowser {
   }
 
   operationKey(target, { browserBackend, browserProfile, tab } = {}) {
-    if (target !== 'linux') return `${target}:${browserProfile ?? 'default'}`;
+    if (target !== 'linux') return `${target}:${browserBackend ?? 'chrome'}:${browserProfile ?? 'default'}`;
     return `${target}:${browserBackend ?? 'default'}:${browserProfile ?? '-'}:${tab ?? 'browser'}`;
   }
 
@@ -1185,6 +1226,81 @@ export class FastBrowser {
       };
     });
   }
+
+  async inspect({
+    browser_target,
+    browser_backend,
+    browser_profile,
+    tab,
+    kind,
+    clear = false,
+    filter,
+    expression,
+    full_page = false,
+    annotate = false,
+    path: outputPath
+  } = {}) {
+    const target = targetName(browser_target, this.defaultTarget);
+    const requested = browserSelection(target, browser_backend, browser_profile);
+    const selection = await this.resolvedSelection(target, requested);
+    const requestedTab = requiredString(tab, 'tab');
+    const sessionSelection = { ...selection, sessionTab: requestedTab };
+    const inspectKind = requiredString(kind, 'kind');
+
+    let command;
+    let screenshotPath;
+    switch (inspectKind) {
+      case 'console':
+        command = clear ? ['console', '--clear'] : ['console'];
+        break;
+      case 'errors':
+        command = clear ? ['errors', '--clear'] : ['errors'];
+        break;
+      case 'network':
+        command = ['network', 'requests'];
+        if (clear) command.push('--clear');
+        if (filter !== undefined) command.push('--filter', requiredString(filter, 'filter'));
+        break;
+      case 'eval':
+        command = ['eval', requiredString(expression, 'expression')];
+        break;
+      case 'vitals':
+        command = ['vitals', '--json'];
+        break;
+      case 'screenshot': {
+        const rawPath = outputPath === undefined
+          ? path.join(os.tmpdir(), `browser-fast-shot-${Date.now()}.png`)
+          : requiredString(outputPath, 'path');
+        screenshotPath = target === 'windows' && !/^(?:[A-Za-z]:[\\/]|\\\\)/u.test(rawPath) && typeof this.runner.pathForTarget === 'function'
+          ? await this.runner.pathForTarget(target, rawPath)
+          : rawPath;
+        command = ['screenshot', screenshotPath];
+        if (full_page) command.push('--full');
+        if (annotate) command.push('--annotate');
+        break;
+      }
+      default:
+        throw fastError('INVALID_ARGUMENT', `unsupported inspect kind: ${inspectKind}`);
+    }
+
+    return this.withTargetLock(this.operationKey(target, { ...selection, tab: requestedTab }), async () => {
+      const batch = await this.runner.batch(target, [command], { bail: true, tab: requestedTab, ...sessionSelection });
+      if (batch.contextError) throw fastError('BROWSER_FAST_INSPECT_FAILED', batch.contextError);
+      const item = batch.items[0];
+      if (item?.success !== true) {
+        throw fastError('BROWSER_FAST_INSPECT_FAILED', item?.error || `inspect ${inspectKind} failed`);
+      }
+      return {
+        browser_target: target,
+        browser_backend: batch.browserBackend ?? selection.browserBackend ?? (target === 'windows' ? 'chrome' : null),
+        browser_profile: batch.browserProfile ?? selection.browserProfile ?? null,
+        tab: requestedTab,
+        kind: inspectKind,
+        ...(screenshotPath === undefined ? {} : { path: screenshotPath }),
+        result: withoutLifecycle(item.result)
+      };
+    });
+  }
 }
 
 const ACTION_SCHEMA = {
@@ -1231,8 +1347,8 @@ export function createBrowserFastServer({ browser } = {}) {
         type: 'object',
         properties: {
           browser_target: { type: 'string', enum: ['windows', 'linux'], description: 'Omit for the host default: windows on WSL, linux elsewhere. Use linux for a Linux Chrome or CloakBrowser backend.' },
-          browser_backend: { type: 'string', enum: ['chrome', 'cloakbrowser'], description: 'Select Chrome or managed CloakBrowser. Windows supports only Chrome. On Linux, omit to use the configured default; set it explicitly whenever browser_profile is set.' },
-          browser_profile: { type: 'string', minLength: 1, maxLength: 64, pattern: '^[A-Za-z0-9._-]+$', description: 'Optional named persistent profile on Windows or Linux. Omit for the existing shared default. Windows and Linux Chrome create or reuse an isolated profile by this name; Linux CloakBrowser selects a profile defined in browser-fast.json.' },
+          browser_backend: { type: 'string', enum: ['chrome', 'cloakbrowser'], description: 'Select Chrome or CloakBrowser. Omit for the host default; on Linux, set explicitly whenever browser_profile is set.' },
+          browser_profile: { type: 'string', minLength: 1, maxLength: 64, pattern: '^[A-Za-z0-9._-]+$', description: 'Optional named persistent profile on Windows or Linux. Omit for the existing shared default. Windows and Linux Chrome create or reuse an isolated profile by this name; CloakBrowser uses the named profile.' },
           scope: { type: 'string', enum: ['interactive', 'compact', 'full'], default: 'interactive' },
           include_urls: { type: 'boolean', default: true },
           tab: { type: 'string', minLength: 1, description: 'Optional stable tab ID or CDP target ID to continue/select before observing. For managed Linux CloakBrowser, omit it to allocate an independent workspace; reuse the returned active_tab on later observations for the same task.' }
@@ -1248,7 +1364,7 @@ export function createBrowserFastServer({ browser } = {}) {
         type: 'object',
         properties: {
           browser_target: { type: 'string', enum: ['windows', 'linux'], description: 'Use the same target returned by observe.' },
-          browser_backend: { type: 'string', enum: ['chrome', 'cloakbrowser'], description: 'Use the same backend returned by observe. Windows supports only Chrome.' },
+          browser_backend: { type: 'string', enum: ['chrome', 'cloakbrowser'], description: 'Use the same backend returned by observe.' },
           browser_profile: { type: 'string', minLength: 1, maxLength: 64, pattern: '^[A-Za-z0-9._-]+$', description: 'Use the same named persistent profile returned by observe. Omit only when observe returned null.' },
           tab: { type: 'string', minLength: 1, description: 'Required tab ID from the latest observe result. Execution validates that the pinned Agent Browser session is still on this exact tab and fails closed on mismatch; it does not switch tabs.' },
           actions: { type: 'array', items: ACTION_SCHEMA, minItems: 1, maxItems: 64 },
@@ -1258,12 +1374,36 @@ export function createBrowserFastServer({ browser } = {}) {
         required: ['tab', 'actions'],
         additionalProperties: false
       }
+    },
+    {
+      name: 'inspect',
+      description: 'Run compact diagnostics on the observed tab without starting a separate DevTools child: console logs, page errors, network requests, JavaScript eval, Core Web Vitals, or screenshots saved to a file path.',
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          browser_target: { type: 'string', enum: ['windows', 'linux'], description: 'Use the same target returned by observe.' },
+          browser_backend: { type: 'string', enum: ['chrome', 'cloakbrowser'], description: 'Use the same backend returned by observe.' },
+          browser_profile: { type: 'string', minLength: 1, maxLength: 64, pattern: '^[A-Za-z0-9._-]+$', description: 'Use the same named persistent profile returned by observe. Omit only when observe returned null.' },
+          tab: { type: 'string', minLength: 1, description: 'Required tab ID from the latest observe result. Validated fail-closed before inspecting.' },
+          kind: { type: 'string', enum: ['console', 'errors', 'network', 'eval', 'vitals', 'screenshot'], description: 'Diagnostic operation to run on the pinned tab.' },
+          clear: { type: 'boolean', default: false, description: 'Clear buffered console/errors/network records after reading.' },
+          filter: { type: 'string', minLength: 1, description: 'Optional substring filter for kind=network.' },
+          expression: { type: 'string', minLength: 1, description: 'JavaScript expression for kind=eval.' },
+          full_page: { type: 'boolean', default: false, description: 'Full-page capture for kind=screenshot.' },
+          annotate: { type: 'boolean', default: false, description: 'Add ref labels for kind=screenshot.' },
+          path: { type: 'string', minLength: 1, description: 'Optional output PNG file path for kind=screenshot.' }
+        },
+        required: ['tab', 'kind'],
+        additionalProperties: false
+      }
     }
   ] }));
   server.setRequestHandler('tools/call', async request => {
     try {
       if (request.params.name === 'observe') return jsonResult(await browser.observe(request.params.arguments ?? {}));
       if (request.params.name === 'execute') return jsonResult(await browser.execute(request.params.arguments ?? {}));
+      if (request.params.name === 'inspect') return jsonResult(await browser.inspect(request.params.arguments ?? {}));
       return errorResult(fastError('UNKNOWN_BROWSER_FAST_TOOL', `unknown tool: ${request.params.name}`));
     } catch (error) {
       return errorResult(error);

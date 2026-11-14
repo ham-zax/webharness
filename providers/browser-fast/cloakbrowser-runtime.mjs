@@ -129,6 +129,7 @@ export class ManagedCloakBrowserRuntime {
             ...(fingerprint === undefined ? [] : [`--fingerprint=${fingerprint}`]),
             ...(platform === undefined ? [] : [`--fingerprint-platform=${platform}`]),
             '--class=google-chrome',
+            '--test-type',
             '--remote-debugging-port=0',
             '--remote-debugging-address=127.0.0.1'
           ]

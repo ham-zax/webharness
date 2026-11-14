@@ -212,13 +212,22 @@ NODE2
     HOME="$tmp/home" XDG_RUNTIME_DIR="$tmp/runtime" node "$ROOT/scripts/render-config.mjs" \
       --profile personal --env-file "$tmp/deployment.env" --state-dir "$switch_state" --repo-root "$ROOT" >/dev/null || rc=1
     grep -Fq 'WEBHARNESS_OAUTH_SINGLE_OWNER=0' "$switch_state/bridge.env" || rc=1
+    grep -Fq 'WEBHARNESS_OAUTH_SERVICE_IDENTITY=1' "$switch_state/bridge.env" || rc=1
+    WEBHARNESS_OAUTH_SINGLE_OWNER=1 bash -c '
+      set -a
+      source "$1"
+      test "$WEBHARNESS_OAUTH_SINGLE_OWNER" = 0
+    ' bash "$switch_state/bridge.env" || rc=1
+    grep -Fq 'sessionTtl = 43200' "$switch_state/1mcp/config.toml" || rc=1
+    HOME="$tmp/home" XDG_RUNTIME_DIR="$tmp/runtime" node "$ROOT/scripts/render-config.mjs" \
+      --profile restricted --env-file "$tmp/deployment.env" --state-dir "$switch_state" --repo-root "$ROOT" >/dev/null || rc=1
+    grep -Fq 'WEBHARNESS_OAUTH_SINGLE_OWNER=0' "$switch_state/bridge.env" || rc=1
     grep -Fq 'WEBHARNESS_OAUTH_SERVICE_IDENTITY=0' "$switch_state/bridge.env" || rc=1
     WEBHARNESS_OAUTH_SINGLE_OWNER=1 WEBHARNESS_OAUTH_SERVICE_IDENTITY=1 bash -c '
       set -a
       source "$1"
       test "$WEBHARNESS_OAUTH_SINGLE_OWNER" = 0 && test "$WEBHARNESS_OAUTH_SERVICE_IDENTITY" = 0
     ' bash "$switch_state/bridge.env" || rc=1
-    grep -Fq 'sessionTtl = 43200' "$switch_state/1mcp/config.toml" || rc=1
   fi
   rm -rf "$tmp"
   return "$rc"

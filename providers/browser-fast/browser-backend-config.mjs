@@ -90,6 +90,27 @@ function optionalStringArray(value, location) {
   return value;
 }
 
+function optionalProxy(value, location) {
+  if (value === undefined) return undefined;
+  if (typeof value === 'string') {
+    if (value.length === 0) throw configError('BROWSER_FAST_CONFIG_INVALID', `${location} must be a non-empty string or object`);
+    return value;
+  }
+  if (!isRecord(value)) throw configError('BROWSER_FAST_CONFIG_INVALID', `${location} must be a non-empty string or object`);
+  rejectUnknownKeys(value, new Set(['server', 'bypass', 'username', 'password']), location);
+  const server = optionalString(value.server, `${location}.server`);
+  if (server === undefined) throw configError('BROWSER_FAST_CONFIG_INVALID', `${location}.server is required`);
+  const bypass = optionalString(value.bypass, `${location}.bypass`);
+  const username = optionalString(value.username, `${location}.username`);
+  const password = optionalString(value.password, `${location}.password`);
+  return {
+    server,
+    ...(bypass === undefined ? {} : { bypass }),
+    ...(username === undefined ? {} : { username }),
+    ...(password === undefined ? {} : { password })
+  };
+}
+
 function resolveChrome(profileName) {
   return {
     browser: 'chrome',
@@ -119,7 +140,7 @@ function resolveManagedCloakBrowser(config, requestedProfile) {
   if (!isRecord(raw)) throw configError('BROWSER_FAST_CONFIG_INVALID', `cloakbrowser profile is not defined: ${profileName}`);
   rejectUnknownKeys(
     raw,
-    new Set(['fingerprint', 'platform', 'headless', 'humanize', 'humanPreset', 'timezone', 'locale', 'extensions']),
+    new Set(['fingerprint', 'platform', 'headless', 'humanize', 'humanPreset', 'timezone', 'locale', 'extensions', 'proxy', 'geoip']),
     `browser-fast config cloakbrowser.profiles.${profileName}`
   );
 
@@ -136,6 +157,9 @@ function resolveManagedCloakBrowser(config, requestedProfile) {
     throw configError('BROWSER_FAST_CONFIG_INVALID', `cloakbrowser profile ${profileName}.humanPreset must be default or careful`);
   }
 
+  const proxy = optionalProxy(raw.proxy, `cloakbrowser profile ${profileName}.proxy`);
+  const geoip = optionalBoolean(raw.geoip, `cloakbrowser profile ${profileName}.geoip`);
+
   const profile = {
     ...(raw.fingerprint === undefined ? {} : { fingerprint: raw.fingerprint }),
     ...(platform === undefined ? {} : { platform }),
@@ -144,7 +168,9 @@ function resolveManagedCloakBrowser(config, requestedProfile) {
     ...(humanPreset === undefined ? {} : { humanPreset }),
     ...(raw.timezone === undefined ? {} : { timezone: optionalString(raw.timezone, `cloakbrowser profile ${profileName}.timezone`) }),
     ...(raw.locale === undefined ? {} : { locale: optionalString(raw.locale, `cloakbrowser profile ${profileName}.locale`) }),
-    ...(raw.extensions === undefined ? {} : { extensions: optionalStringArray(raw.extensions, `cloakbrowser profile ${profileName}.extensions`) })
+    ...(raw.extensions === undefined ? {} : { extensions: optionalStringArray(raw.extensions, `cloakbrowser profile ${profileName}.extensions`) }),
+    ...(proxy === undefined ? {} : { proxy }),
+    ...(geoip === undefined ? {} : { geoip })
   };
 
   return {

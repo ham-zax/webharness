@@ -165,9 +165,28 @@ test('browser router supports explicit Linux Chrome profiles and rejects ambiguo
     /browser_profile requires an explicit browser_backend/
   );
   await assert.rejects(
-    router.call({ tool: 'list_pages', arguments: { browser_backend: 'chrome' } }),
-    /Linux-only/
+    router.call({ tool: 'list_pages', arguments: { browser_backend: 'firefox' } }),
+    /browser_backend must be chrome or cloakbrowser/
   );
+
+  const winCalls = [];
+  const winRouter = new BrowserRouter({
+    childFactory: async (target, config) => {
+      winCalls.push({ target, config });
+      return { alive: true, async callTool(tool, a) { return { tool, a }; }, async close() {} };
+    },
+    env: { DISPLAY: ':0' },
+    defaultTarget: 'windows',
+    windowsChromeEnsure: async opts => {
+      winCalls.push({ ensure: opts });
+      return { browserUrl: 'http://127.0.0.1:49999' };
+    }
+  });
+  await winRouter.call({ tool: 'list_pages', arguments: { browser_backend: 'cloakbrowser', browser_profile: 'x-main' } });
+  assert.deepEqual(winCalls[0], { ensure: { backend: 'cloakbrowser', profile: 'x-main' } });
+  assert.equal(winCalls[1].target, 'windows');
+  assert.match(winCalls[1].config.args.join(' '), /http:\/\/127\.0\.0\.1:49999/);
+  await winRouter.shutdown();
   await router.shutdown();
 });
 

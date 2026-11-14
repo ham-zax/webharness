@@ -6,29 +6,106 @@
 //        wh-browser <fast|devtools> schema <tool>      (full input schema)
 //        wh-browser <fast|devtools> <tool> ['<json>'|-] (- = read JSON from stdin)
 //        wh-browser <fast|devtools|all> stop           (stop daemon(s))
-//        wh-browser status                                 (running daemons)
+//        wh-browser status                             (running daemons)
+//        wh-browser profile list|add|remove ...        (manage CloakBrowser profiles)
+//        wh-browser proxy set <profile> <url|off>      (set or clear profile proxy)
+//        wh-browser open|login [profile] [url]         (launch visible CloakBrowser for manual login)
 const { spawn } = require("node:child_process");
+const { randomUUID } = require("node:crypto");
 const fs = require("node:fs");
 const net = require("node:net");
+const os = require("node:os");
 const path = require("node:path");
 
-const P = process.env.WH_PROVIDERS || path.resolve(__dirname, "..", "providers");
-const RUN = path.join(process.env.XDG_RUNTIME_DIR || "/tmp", "wh-browser");
+const ROOT = path.resolve(path.dirname(fs.realpathSync(__filename)), "..");
+const P = process.env.WH_PROVIDERS || path.join(ROOT, "providers");
+const STATE_HOME = process.env.XDG_STATE_HOME || path.join(os.homedir(), ".local", "state");
+const CONFIG_DIR = path.join(os.homedir(), ".config", "mcp-dev-bridge");
+const BROWSER_FAST_CONFIG = path.join(CONFIG_DIR, "browser-fast.json");
+const CLOAK_PROFILES_DIR = path.join(STATE_HOME, "mcp-dev-bridge", "cloakbrowser", "profiles");
+const LOCAL_SERVERS_FILE = path.join(CONFIG_DIR, "local-servers.json");
+const OWNER_GUI_ENV_FILE = process.env.MCP_OWNER_ENV_FILE || path.join(CONFIG_DIR, "owner", "gui.env");
+
 const IDLE_MS = Number(process.env.WH_BROWSER_IDLE_MS || 30 * 60 * 1000);
 const CALL_TIMEOUT_MS = 15 * 60 * 1000;
-const base = { XDG_RUNTIME_DIR: "/run/user/1000", WAYLAND_DISPLAY: "wayland-0", DISPLAY: ":0",
-  PULSE_SERVER: "unix:/mnt/wslg/PulseServer", GALLIUM_DRIVER: "d3d12" };
+const PROFILE_RE = /^[A-Za-z0-9._-]+$/;
+
+function safeRead(file) {
+  try { return fs.readFileSync(file, "utf8"); } catch { return ""; }
+}
+
+function isWslHost() {
+  if (process.env.WSL_DISTRO_NAME || process.env.WSL_INTEROP) return true;
+  return /microsoft|wsl/i.test(safeRead("/proc/sys/kernel/osrelease"));
+}
+
+function parseEnvFile(file) {
+  const out = {};
+  const text = safeRead(file);
+  if (!text) return out;
+  for (const rawLine of text.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#")) continue;
+    const eq = line.indexOf("=");
+    if (eq <= 0) continue;
+    const key = line.slice(0, eq).trim();
+    let val = line.slice(eq + 1).trim();
+    if ((val.startsWith("'") && val.endsWith("'")) || (val.startsWith('"') && val.endsWith('"'))) {
+      val = val.slice(1, -1);
+    }
+    if (key) out[key] = val;
+  }
+  return out;
+}
+
+function localServerEnv(serverName) {
+  const text = safeRead(LOCAL_SERVERS_FILE);
+  if (!text) return {};
+  try {
+    const parsed = JSON.parse(text);
+    const env = parsed?.mcpServers?.[serverName]?.env;
+    return env && typeof env === "object" && !Array.isArray(env) ? env : {};
+  } catch {
+    return {};
+  }
+}
+
+function buildDaemonEnv(tier) {
+  const serverName = tier === "fast" ? "browser-fast" : "browser-devtools";
+  const wsl = isWslHost();
+  const uid = typeof process.getuid === "function" ? process.getuid() : 1000;
+  const defaults = wsl
+    ? {
+        XDG_RUNTIME_DIR: `/run/user/${uid}`,
+        WAYLAND_DISPLAY: "wayland-0",
+        DISPLAY: ":0",
+        PULSE_SERVER: "unix:/mnt/wslg/PulseServer",
+        GALLIUM_DRIVER: "d3d12",
+      }
+    : {
+        XDG_RUNTIME_DIR: `/run/user/${uid}`,
+        DISPLAY: ":99",
+      };
+  const ownerGuiEnv = wsl ? parseEnvFile(OWNER_GUI_ENV_FILE) : {};
+  const configuredEnv = localServerEnv(serverName);
+  // Precedence: explicit caller process.env > local-servers.json > owner gui.env > host defaults.
+  return { ...defaults, ...ownerGuiEnv, ...configuredEnv, ...process.env };
+}
+
+const RUNTIME_DIR = process.env.XDG_RUNTIME_DIR || `/run/user/${typeof process.getuid === "function" ? process.getuid() : 1000}`;
+const RUN = path.join(RUNTIME_DIR, "wh-browser");
 const servers = {
-  fast: { dir: "browser-fast", env: {} },
-  devtools: { dir: "browser", env: {} },
+  fast: { dir: "browser-fast" },
+  devtools: { dir: "browser" },
 };
 const sock = (tier) => path.join(RUN, `${tier}.sock`);
 
 // ---------- daemon: owns one MCP server child, serves newline-JSON requests on a socket
 function daemon(tier) {
   const srv = servers[tier];
-  const child = spawn("node", [`${P}/${srv.dir}/server.mjs`], {
-    env: { ...process.env, ...base, ...srv.env }, stdio: ["pipe", "pipe", "ignore"] });
+  const child = spawn(process.execPath, [`${P}/${srv.dir}/server.mjs`], {
+    env: buildDaemonEnv(tier), stdio: ["pipe", "pipe", "ignore"]
+  });
   const pending = new Map(); let buf = ""; let id = 0;
   child.stdout.on("data", (d) => {
     buf += d; let i;
@@ -55,14 +132,20 @@ function daemon(tier) {
   const server = net.createServer((c) => {
     let data = "";
     c.on("data", async (d) => {
-      data += d; if (!data.endsWith("\n")) return;
-      touch();
-      const { method, params } = JSON.parse(data);
-      if (method === "shutdown") { c.end("{}\n"); return shutdown(); }
-      await ready;
-      const r = await req(method, params);
-      c.end(JSON.stringify(r) + "\n");
-      touch();
+      data += d;
+      let idx;
+      while ((idx = data.indexOf("\n")) >= 0) {
+        const line = data.slice(0, idx);
+        data = data.slice(idx + 1);
+        if (!line.trim()) continue;
+        touch();
+        const { method, params } = JSON.parse(line);
+        if (method === "shutdown") { c.end("{}\n"); return shutdown(); }
+        await ready;
+        const r = await req(method, params);
+        c.end(JSON.stringify(r) + "\n");
+        touch();
+      }
     });
   });
   try { fs.unlinkSync(sock(tier)); } catch {}
@@ -94,20 +177,222 @@ async function ensure(tier) {
   });
 }
 
+// ---------- profile + proxy config helpers
+function validProfileName(name) {
+  if (!name || name.length > 64 || name === "." || name === ".." || !PROFILE_RE.test(name)) {
+    throw new Error(`Invalid profile name: ${name}`);
+  }
+  return name;
+}
+
+function readBrowserFastConfig() {
+  if (!fs.existsSync(BROWSER_FAST_CONFIG)) {
+    return {
+      version: 2,
+      linux: { browser: "cloakbrowser", profile: "x-main" },
+      cloakbrowser: { profiles: { "x-main": { headless: false, humanize: true } } },
+    };
+  }
+  return JSON.parse(fs.readFileSync(BROWSER_FAST_CONFIG, "utf8"));
+}
+
+function writeBrowserFastConfig(cfg) {
+  fs.mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 });
+  const tmp = path.join(CONFIG_DIR, `.browser-fast.json.tmp.${process.pid}.${randomUUID()}`);
+  fs.writeFileSync(tmp, JSON.stringify(cfg, null, 2) + "\n", { mode: 0o600 });
+  fs.chmodSync(tmp, 0o600);
+  fs.renameSync(tmp, BROWSER_FAST_CONFIG);
+}
+
+function redactProxy(proxy) {
+  if (!proxy) return null;
+  if (typeof proxy === "string") {
+    try {
+      const u = new URL(proxy);
+      if (u.username || u.password) { u.username = "***"; u.password = "***"; }
+      return u.toString();
+    } catch { return "<configured>"; }
+  }
+  if (typeof proxy === "object") {
+    return {
+      server: proxy.server,
+      ...(proxy.bypass ? { bypass: proxy.bypass } : {}),
+      ...(proxy.username ? { auth: true } : {}),
+    };
+  }
+  return "<configured>";
+}
+
+async function profileLiveStatus(name) {
+  const portFile = path.join(CLOAK_PROFILES_DIR, name, "DevToolsActivePort");
+  if (!fs.existsSync(portFile)) return "stopped";
+  const [rawPort] = safeRead(portFile).trim().split(/\r?\n/);
+  const port = Number(rawPort);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) return "stale";
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/json/version`, { signal: AbortSignal.timeout(300) });
+    return res.ok ? `running:${port}` : "stale";
+  } catch {
+    return "stopped";
+  }
+}
+
+function requireV2CloakConfig() {
+  const cfg = readBrowserFastConfig();
+  if (cfg.version !== 2 || !cfg.cloakbrowser?.profiles) {
+    throw new Error(`Expected V2 CloakBrowser config at ${BROWSER_FAST_CONFIG}`);
+  }
+  return cfg;
+}
+
+async function handleProfileCommand(args) {
+  const [sub, name, ...rest] = args;
+  if (sub === "list") {
+    const cfg = readBrowserFastConfig();
+    if (cfg.version !== 2) {
+      console.log(JSON.stringify({ version: cfg.version, linux: cfg.linux }, null, 2));
+      return;
+    }
+    const profiles = await Promise.all(Object.entries(cfg.cloakbrowser?.profiles || {}).map(async ([key, p]) => ({
+      name: key,
+      default: cfg.linux?.browser === "cloakbrowser" && cfg.linux?.profile === key,
+      headless: p.headless ?? false,
+      humanize: p.humanize ?? true,
+      proxy: redactProxy(p.proxy),
+      geoip: p.geoip ?? false,
+      status: await profileLiveStatus(key),
+    })));
+    console.log(JSON.stringify({ default_browser: cfg.linux?.browser, default_profile: cfg.linux?.profile, profiles }, null, 2));
+    return;
+  }
+  if (sub === "add") {
+    validProfileName(name);
+    const cfg = requireV2CloakConfig();
+    if (cfg.cloakbrowser.profiles[name]) throw new Error(`Profile already exists: ${name}`);
+    const entry = { headless: false, humanize: true };
+    let setDefault = false;
+    for (let i = 0; i < rest.length; i += 1) {
+      const flag = rest[i];
+      if (flag === "--headless") entry.headless = true;
+      else if (flag === "--no-humanize") entry.humanize = false;
+      else if (flag === "--geoip") entry.geoip = true;
+      else if (flag === "--default") setDefault = true;
+      else if (flag === "--proxy") { entry.proxy = rest[++i]; if (!entry.proxy) throw new Error("--proxy requires a URL"); }
+      else throw new Error(`Unknown flag: ${flag}`);
+    }
+    cfg.cloakbrowser.profiles[name] = entry;
+    if (setDefault) cfg.linux = { browser: "cloakbrowser", profile: name };
+    writeBrowserFastConfig(cfg);
+    console.log(JSON.stringify({ added: name, default: setDefault, profile: { ...entry, proxy: redactProxy(entry.proxy) } }, null, 2));
+    return;
+  }
+  if (sub === "remove") {
+    validProfileName(name);
+    const cfg = requireV2CloakConfig();
+    if (!cfg.cloakbrowser.profiles[name]) throw new Error(`Profile not found: ${name}`);
+    if (cfg.linux?.profile === name) throw new Error(`Cannot remove active default profile ${name}`);
+    delete cfg.cloakbrowser.profiles[name];
+    writeBrowserFastConfig(cfg);
+    console.log(JSON.stringify({ removed: name }, null, 2));
+    return;
+  }
+  throw new Error("usage: wh-browser profile <list|add <name> [--headless] [--no-humanize] [--proxy URL] [--geoip] [--default]|remove <name>>");
+}
+
+function handleProxyCommand(args) {
+  const [sub, name, value, ...rest] = args;
+  if (sub !== "set" || !name || !value) {
+    throw new Error("usage: wh-browser proxy set <profile> <proxy-url|off> [--geoip|--no-geoip]");
+  }
+  validProfileName(name);
+  const cfg = requireV2CloakConfig();
+  const entry = cfg.cloakbrowser.profiles[name];
+  if (!entry) throw new Error(`Profile not found: ${name}`);
+  if (value === "off" || value === "none" || value === "clear") {
+    delete entry.proxy;
+    delete entry.geoip;
+  } else {
+    entry.proxy = value;
+  }
+  for (const flag of rest) {
+    if (flag === "--geoip") entry.geoip = true;
+    else if (flag === "--no-geoip") delete entry.geoip;
+    else throw new Error(`Unknown flag: ${flag}`);
+  }
+  writeBrowserFastConfig(cfg);
+  console.log(JSON.stringify({
+    profile: name,
+    proxy: redactProxy(entry.proxy),
+    geoip: entry.geoip ?? false,
+    note: "Active profile restarts automatically on the next browser-fast call.",
+  }, null, 2));
+}
+
+async function handleOpenCommand(args) {
+  let profile;
+  let url;
+  for (const arg of args) {
+    if (!url && /^https?:\/\//i.test(arg)) url = arg;
+    else if (!profile) profile = validProfileName(arg);
+    else if (!url) url = arg;
+    else throw new Error("usage: wh-browser open [profile] [url]");
+  }
+  await ensure("fast");
+  const observeArgs = { browser_target: "linux", browser_backend: "cloakbrowser", scope: "compact" };
+  if (profile) observeArgs.browser_profile = profile;
+  const obs = await call("fast", "tools/call", { name: "observe", arguments: observeArgs });
+  if (obs.error || obs.result?.isError) {
+    const text = obs.error?.message || obs.result?.content?.map((c) => c.text).join("\n") || "observe failed";
+    throw new Error(text);
+  }
+  const state = obs.result.structuredContent || JSON.parse(obs.result.content[0].text);
+  let activeTab = state.active_tab;
+  let finalUrl = state.origin;
+  if (url) {
+    const exec = await call("fast", "tools/call", {
+      name: "execute",
+      arguments: {
+        browser_target: "linux",
+        browser_backend: "cloakbrowser",
+        ...(state.browser_profile ? { browser_profile: state.browser_profile } : {}),
+        tab: activeTab,
+        actions: [{ op: "navigate", url }],
+        final_state: "compact",
+      },
+    });
+    if (exec.error || exec.result?.isError) {
+      const text = exec.error?.message || exec.result?.content?.map((c) => c.text).join("\n") || "navigate failed";
+      throw new Error(text);
+    }
+    const execState = exec.result.structuredContent || JSON.parse(exec.result.content[0].text);
+    activeTab = execState.final_state?.active_tab || activeTab;
+    finalUrl = execState.final_state?.origin || url;
+  }
+  console.log(JSON.stringify({
+    profile: state.browser_profile,
+    active_tab: activeTab,
+    url: finalUrl,
+    tabs: state.tabs?.length ?? 0,
+  }, null, 2));
+}
+
 async function main() {
-  const [tier, cmd, arg] = process.argv.slice(2);
+  const [tier, cmd, arg, ...rest] = process.argv.slice(2);
   if (tier === "__daemon") return daemon(cmd);
   if (tier === "status") {
     for (const t of Object.keys(servers)) console.log(`${t}: ${(await alive(t)) ? "running" : "stopped"}`);
     return;
   }
+  if (tier === "profile") return handleProfileCommand([cmd, arg, ...rest].filter((x) => x !== undefined));
+  if (tier === "proxy") return handleProxyCommand([cmd, arg, ...rest].filter((x) => x !== undefined));
+  if (tier === "open" || tier === "login") return handleOpenCommand([cmd, arg, ...rest].filter((x) => x !== undefined));
   if (cmd === "stop") {
     for (const t of tier === "all" ? Object.keys(servers) : [tier])
       if (await alive(t)) await call(t, "shutdown", {}).catch(() => {});
     return;
   }
   if (!servers[tier] || !cmd) {
-    console.error("usage: wh-browser <fast|devtools> <tools|schema <tool>|stop|<tool> [json|-]> | status");
+    console.error("usage: wh-browser <fast|devtools> <tools|schema <tool>|stop|<tool> [json|-]> | status | profile ... | proxy ... | open [profile] [url]");
     process.exit(2);
   }
   await ensure(tier);

@@ -138,7 +138,7 @@ This is long-lived access, not a promise that a client keeps its credentials or 
 
 The `server` profile approves the deployment's whole published tag set in one decision. Scope enforcement is unchanged: the grant is still the published tags, and per-request tag checks still apply.
 
-These lifetime and registration choices are scoped to the `server` profile. The renderer writes `sessionTtl = 525600` and sets `WEBHARNESS_OAUTH_SINGLE_OWNER=1` / `WEBHARNESS_OAUTH_SERVICE_IDENTITY=1` for `server`. Other profiles explicitly receive both flags as `0` so inherited server settings are cleared; `restricted`, `trusted-dev`, and `personal` keep the previous 30-day access-token lifetime, the 30-day registration lifetime, per-tag consent checkboxes, and replay-triggered family revocation. Re-rendering one state directory for another profile rewrites both `bridge.env` and `config.toml`, so a stale single-owner policy is not left behind.
+These lifetime and registration choices are scoped to the `server` profile. The renderer writes `sessionTtl = 525600` and sets `WEBHARNESS_OAUTH_SINGLE_OWNER=1` for `server`, while `restricted`, `trusted-dev`, and `personal` receive `WEBHARNESS_OAUTH_SINGLE_OWNER=0` and keep the previous 30-day access-token lifetime, the 30-day registration lifetime, per-tag consent checkboxes, and replay-triggered family revocation. Both `server` and `personal` set `WEBHARNESS_OAUTH_SERVICE_IDENTITY=1` so the local WebSession adapter can provision its dedicated service identity over loopback; `restricted` and `trusted-dev` set it to `0`. Re-rendering one state directory for another profile rewrites both `bridge.env` and `config.toml`, so a stale policy flag is not left behind.
 
 ## Upgrade
 

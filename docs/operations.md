@@ -267,9 +267,7 @@ For a normal CloakBrowser operation, use `browser_target="linux"` and omit `brow
 
 Use the same selector on `browser-devtools`. It attaches to the live CloakBrowser CDP endpoint, so all surfaces see the same cookies and authenticated session. If that managed profile is not running, initialize it once through `browser-fast` and retry; browser-devtools does not launch a second process against the CloakBrowser profile.
 
-For a Chrome operation, use `browser_target="linux"` with `browser_backend="chrome"`. On `browser-fast`, omit `browser_profile` for the existing shared Chrome behavior, or provide a stable name to create/reuse a persistent isolated profile beneath the bridge state directory. On `browser-devtools`, an explicit Chrome backend keeps the standalone Linux Chrome path; a named profile uses the corresponding persistent bridge-state directory. This does not change `browser-fast.json` or close a managed CloakBrowser runtime.
-
-That Linux Chrome mode does not launch today. `browser-fast` fails on the first `observe` with `BROWSER_FAST_OBSERVE_FAILED` and a tab identity from a second browser, and a named profile exits before writing `DevToolsActivePort`. `docs/designs/browser-fast-linux-chrome-repair.md` records the cause. Until the mode is repaired or retired, use managed CloakBrowser for every Linux browser task. Windows Chrome is unaffected.
+For a Chrome operation, use `browser_target="linux"` with `browser_backend="chrome"`. On `browser-fast`, omit `browser_profile` for the existing shared Chrome behavior, or provide a stable name to create/reuse a persistent isolated profile beneath the bridge state directory. On `browser-devtools`, an explicit Chrome backend keeps the standalone Linux Chrome path; a named profile uses the corresponding persistent bridge-state directory. This does not change `browser-fast.json` or close a managed CloakBrowser runtime. Managed CloakBrowser remains recommended on Linux whenever stealth, humanized input, or per-profile proxies are required.
 
 When more than one managed CloakBrowser profile exists and the configured default does not identify the desired one, set `browser_profile` together with `browser_backend="cloakbrowser"`. The named profile must be defined under `cloakbrowser.profiles`; unknown names fail instead of cloning state or falling back. Otherwise omit `browser_profile`; the configured profile, or the only configured CloakBrowser profile, is used.
 
@@ -289,10 +287,13 @@ wh-browser fast tools
 wh-browser fast schema observe
 ```
 
-For Linux browser work, use a distinct managed CloakBrowser profile for the local task:
+For Linux browser work, use a configured managed CloakBrowser profile (for example `x-main`, or add one with `wh-browser profile add <name>`):
 
 ```bash
-wh-browser fast observe '{"browser_target":"linux","browser_backend":"cloakbrowser","browser_profile":"local-agent-task","scope":"compact"}'
+wh-browser profile list
+wh-browser open x-main https://example.com
+wh-browser fast observe '{"browser_target":"linux","browser_backend":"cloakbrowser","browser_profile":"x-main","scope":"compact"}'
+wh-browser proxy set x-main socks5://user:pass@127.0.0.1:1080
 ```
 
 Reuse the returned `active_tab` and the same target, backend, and profile on later calls. Close only tabs created by that task. Use one access route per task. Concurrent bridge and standalone tasks need separate browser profiles or explicitly coordinated tab ownership. A different profile name does not isolate a shared Windows CDP browser.

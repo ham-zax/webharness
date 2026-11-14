@@ -533,10 +533,12 @@ export async function renderConfig(options) {
     `BRIDGE_STATE_DIR=${shellSingleQuote(stateDir)}`,
     // Single-owner server deployments approve one full-access decision and keep
     // connector registrations durable. Other profiles keep the per-tag consent
-    // form and the default registration lifetime. Emit explicit zeroes so a
-    // profile switch also clears policy inherited from a running parent shell.
+    // form and the default registration lifetime. Both server and personal
+    // deployments can run websession-adapter, so they enable the loopback-only
+    // service identity endpoint; restricted and trusted-dev keep it off. Emit
+    // explicit zeroes so a profile switch clears inherited parent-shell flags.
     `WEBHARNESS_OAUTH_SINGLE_OWNER=${isServer ? '1' : '0'}`,
-    `WEBHARNESS_OAUTH_SERVICE_IDENTITY=${isServer ? '1' : '0'}`,
+    `WEBHARNESS_OAUTH_SERVICE_IDENTITY=${isServer || isPersonal ? '1' : '0'}`,
     '',
   ].join('\n');
 

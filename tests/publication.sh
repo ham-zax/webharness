@@ -139,7 +139,11 @@ EOF
     # The 365-day single-owner policy is server-only; these profiles keep 30 days.
     grep -Fq 'sessionTtl = 43200' "$state/1mcp/config.toml" || { rm -rf "$tmp"; return 1; }
     grep -Fq 'WEBHARNESS_OAUTH_SINGLE_OWNER=0' "$state/bridge.env" || { rm -rf "$tmp"; return 1; }
-    grep -Fq 'WEBHARNESS_OAUTH_SERVICE_IDENTITY=0' "$state/bridge.env" || { rm -rf "$tmp"; return 1; }
+    if [ "$profile" = personal ]; then
+      grep -Fq 'WEBHARNESS_OAUTH_SERVICE_IDENTITY=1' "$state/bridge.env" || { rm -rf "$tmp"; return 1; }
+    else
+      grep -Fq 'WEBHARNESS_OAUTH_SERVICE_IDENTITY=0' "$state/bridge.env" || { rm -rf "$tmp"; return 1; }
+    fi
   done
   node - "$tmp/restricted/1mcp/mcp.json" "$tmp/trusted-dev/1mcp/mcp.json" "$tmp/personal/1mcp/mcp.json" "$tmp/personal/local-1mcp/mcp.json" "$ROOT" <<'NODE2'
 const fs = require('fs');

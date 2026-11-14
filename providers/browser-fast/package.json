@@ -12,8 +12,8 @@
   "dependencies": {
     "@modelcontextprotocol/client": "2.4.0",
     "@modelcontextprotocol/server": "2.4.0",
-    "agent-browser": "0.39.0",
-    "cloakbrowser": "0.6.5",
+    "agent-browser": "0.43.0",
+    "cloakbrowser": "0.7.2",
     "playwright-core": "1.64.0",
     "zod": "4.4.3"
   }

@@ -183,13 +183,13 @@ export function addBrowserTarget(tool) {
         [BROWSER_BACKEND_FIELD]: {
           type: 'string',
           enum: ['chrome', 'cloakbrowser'],
-          description: 'Linux only. Omit to use browser-fast.json; set explicitly to select Chrome or CloakBrowser.'
+          description: 'Select Chrome or CloakBrowser. Omit for the host default.'
         },
         [BROWSER_PROFILE_FIELD]: {
           type: 'string',
           minLength: 1,
           maxLength: 64,
-          description: 'Linux only. Named persistent profile; browser_backend must be explicit when this field is set.'
+          description: 'Optional named persistent profile. On Linux, browser_backend must be explicit when this field is set.'
         }
       }
     }
@@ -266,6 +266,7 @@ export class BrowserRouter {
     env = process.env,
     linuxBackendResolve = resolveLinuxBrowserBackend,
     cloakbrowserEndpointResolve = resolveCloakBrowserEndpoint,
+    windowsChromeEnsure = ensureWindowsChrome,
     linuxChromeProfilesRoot = DEFAULT_LINUX_CHROME_PROFILES_ROOT,
     // Resolved once so an invalid MCP_BROWSER_DEFAULT_TARGET fails at startup.
     defaultTarget = defaultBrowserTarget({ env })
@@ -275,11 +276,12 @@ export class BrowserRouter {
     }
     this.shutdownController = new AbortController();
     this.childFactory = childFactory
-      ?? ((target, config) => ChromeChild.start({ target, config, signal: this.shutdownController.signal }));
+      ?? ((target, config) => ChromeChild.start({ target, config, windowsChromeEnsure: this.windowsChromeEnsure, signal: this.shutdownController.signal }));
     this.env = env;
     this.defaultTarget = defaultTarget;
     this.linuxBackendResolve = linuxBackendResolve;
     this.cloakbrowserEndpointResolve = cloakbrowserEndpointResolve;
+    this.windowsChromeEnsure = windowsChromeEnsure;
     this.linuxChromeProfilesRoot = linuxChromeProfilesRoot;
     this.children = new Map();
     this.childIdentities = new Map();
@@ -417,6 +419,23 @@ export class BrowserRouter {
     }
   }
 
+  async windowsRoute(browserBackend, browserProfile) {
+    const profile = browserProfileName(browserProfile);
+    if (browserBackend !== undefined && !['chrome', 'cloakbrowser'].includes(browserBackend)) {
+      throw browserError('INVALID_ARGUMENT', 'browser_backend must be chrome or cloakbrowser');
+    }
+    if (browserBackend === undefined && profile === undefined) {
+      return { key: 'windows' };
+    }
+    const backend = browserBackend ?? 'chrome';
+    const chrome = await this.windowsChromeEnsure({ backend, profile });
+    return {
+      key: `windows:${backend}:${profile ?? 'default'}`,
+      identity: chrome.browserUrl,
+      config: childConfig('windows', this.env, [], { browserUrl: chrome.browserUrl })
+    };
+  }
+
   async call({ tool, arguments: args = {} } = {}) {
     if (typeof tool !== 'string' || tool.length === 0) throw new TypeError('tool is required');
     if (args === null || typeof args !== 'object' || Array.isArray(args)) throw new TypeError('tool arguments must be an object');
@@ -431,9 +450,6 @@ export class BrowserRouter {
     if (target !== 'windows' && target !== 'linux') {
       throw browserError('INVALID_BROWSER_TARGET', `expected windows or linux, got ${String(target)}`);
     }
-    if (target === 'windows' && (browserBackend !== undefined || browserProfile !== undefined)) {
-      throw browserError('INVALID_ARGUMENT', 'browser_backend and browser_profile are Linux-only for browser-devtools');
-    }
     for (const field of OS_TEMP_PATH_FIELDS) {
       if (!Object.hasOwn(upstreamArgs, field)) continue;
       const rejection = pathFormRejection(target, field, upstreamArgs[field]);
@@ -442,7 +458,7 @@ export class BrowserRouter {
 
     const route = target === 'linux'
       ? await this.linuxRoute(browserBackend, browserProfile)
-      : { key: 'windows' };
+      : await this.windowsRoute(browserBackend, browserProfile);
     const child = await this.child(target, route);
     return child.callTool(tool, upstreamArgs);
   }
