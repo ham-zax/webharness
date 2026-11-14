@@ -193,9 +193,9 @@ if (profile === 'server') {
   for (const required of ['terminal', 'dev', 'skill-library']) {
     if (!innerKeys.includes(required)) process.exit(1);
   }
-  // An owner-added headless browser-fast (docs/headless-server.md) is allowed only via MCP_LOCAL_SERVERS_FILE.
-  const excludedServers = ['browser-devtools', 'host', 'code', 'codedb'];
-  if (!ownerLocalServers) excludedServers.push('browser-fast');
+  // Owner-added headless browser-fast/browser-devtools (docs/headless-server.md) are allowed only via MCP_LOCAL_SERVERS_FILE.
+  const excludedServers = ['host', 'code', 'codedb'];
+  if (!ownerLocalServers) excludedServers.push('browser-fast', 'browser-devtools');
   for (const excluded of excludedServers) {
     if (innerKeys.includes(excluded)) process.exit(1);
   }
