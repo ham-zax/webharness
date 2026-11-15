@@ -33,3 +33,4 @@ Entries are workspace records, not authoritative runtime decisions.
 | 2026-11-15 | artifact | docs/aegis/work/2026-11-15-reusable-pairing/evidence-bundle-draft-pairing.json | 2026-11-15-reusable-pairing evidence pairing |
 | 2026-11-15 | artifact | docs/aegis/work/2026-11-15-reusable-pairing/gate-input-pack.json | 2026-11-15-reusable-pairing gate input pack |
 | 2026-11-15 | work | docs/aegis/work/2026-11-15-reusable-pairing/proof-bundle.md | 2026-11-15-reusable-pairing proof bundle |
+| 2026-11-15 | plan | docs/aegis/plans/2026-11-15-gemini-wire-tracing.md | Temporary Gemini connection tracing |

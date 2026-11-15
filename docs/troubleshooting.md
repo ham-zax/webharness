@@ -2,6 +2,38 @@
 
 Start with `webharness doctor` for configuration/reference-environment issues and `webharness status` for live lifecycle issues. Change one layer at a time.
 
+## Gemini repeats permission prompts despite Always allow
+
+Capture the server-side exchange before changing tool metadata or authentication:
+
+```bash
+node scripts/http-trace.mjs start 1800
+node scripts/http-trace.mjs status
+node scripts/http-trace.mjs stop
+```
+
+The control file changes tracing without restarting WebHarness.
+Tracing defaults off and expires automatically. The default window is 30 minutes,
+with a one-hour maximum. Captures live in the private bridge state directory,
+under `logs/http-wire-trace.log`, with up to three 10 MiB files. Each body is
+limited to 64 KiB. Oversized, incomplete, and unparseable bodies report omissions.
+Queue overflow reports dropped records rather than slowing forwarded requests.
+
+Captures record HTTP headers, JSON-RPC bodies, SSE events, response statuses,
+first-byte timing, completion/disconnects, and correlation IDs. Session identifiers
+and Authorization-header identities use fingerprints. Raw authorization headers,
+cookies, known credential fields, and
+OAuth request/response bodies are redacted or omitted. Tool arguments and results
+can contain private material, including credentials embedded in arbitrary text.
+Use harmless reproduction commands. Keep the trace local and private.
+
+Note the UTC time when the card appears. Click Always allow once, then note
+when execution starts. A card before any `tools/call` request places the wait
+inside the client. A request already received by the server needs inspection of
+its status, body, session fingerprint, and disconnect events. A new handshake
+alone does not prove that Gemini forgot permissions. These are application-level
+HTTP traces after TLS termination, not packet captures of Gemini's private state.
+
 ## A tool call times out around a minute
 
 That is usually a connector/RPC request-duration limit, not a WSL process limit.
