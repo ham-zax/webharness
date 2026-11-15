@@ -231,6 +231,11 @@ test('built-in instructions ship token-efficiency rules ahead of the owner conte
   await withClient({ ...env, MCP_OWNER_CONTEXT_FILE: contextFile }, async client => {
     const published = client.getInstructions();
     assert.match(published, /read call with targets \(up to 20\)/);
+    assert.match(published, /CodeMode: prefer one run_script for short workflows/);
+    assert.match(published, /Promise\.all for independent reads/);
+    assert.match(published, /Await dependent edits and checks in order/);
+    assert.match(published, /tool_batch for independent calls to one downstream server\/tool/);
+    assert.match(published, /Start long work detached or in Terminal/);
     assert.match(published, /review_changes once after the final related edit/);
     assert.match(published, /restart or reload/);
     assert.match(published, /80k-100k tokens/);
@@ -289,6 +294,9 @@ test('trusted-dev exposes structured exec alongside Bash and minimal schemas', a
     for (const tool of listed.tools) {
       assert.equal(JSON.stringify(tool.inputSchema).includes('max_output_bytes'), false);
       assert.equal(JSON.stringify(tool.inputSchema).includes('workspaceRoot'), false);
+      for (const hint of ['readOnlyHint', 'destructiveHint', 'idempotentHint', 'openWorldHint']) {
+        assert.equal(typeof tool.annotations?.[hint], 'boolean', `${tool.name}.${hint} must be explicit`);
+      }
     }
   });
 });
@@ -319,6 +327,7 @@ test('restricted omits unrestricted Pi exec and bash', async () => {
   await withClient(env, async client => {
     const listed = await client.listTools();
     assert.deepEqual(listed.tools.map(x => x.name).sort(), ['edit', 'list_directory', 'read', 'run_script', 'search', 'write']);
+    assert.equal(listed.tools.find(tool => tool.name === 'run_script').annotations.openWorldHint, false);
     const edit = listed.tools.find(x => x.name === 'edit');
     assertEditV2Schema(edit);
     assert.match(edit.inputSchema.properties.targets.items.properties.path.description, /workspace root/i);
@@ -330,6 +339,17 @@ test('personal user mode exposes file_ops alongside edit with user-path descript
   await withClient(env, async client => {
     const listed = await client.listTools();
     assert.deepEqual(listed.tools.map(x => x.name).sort(), ['bash', 'edit', 'exec', 'file_ops', 'import_file', 'list_directory', 'read', 'review_changes', 'run_script', 'search', 'wait', 'write']);
+    const readOnly = new Set(['read', 'list_directory', 'search', 'review_changes']);
+    const nonDestructive = new Set([...readOnly, 'import_file', 'wait']);
+    const external = new Set(['bash', 'exec', 'import_file', 'run_script', 'wait']);
+    for (const tool of listed.tools) {
+      assert.deepEqual(tool.annotations, {
+        readOnlyHint: readOnly.has(tool.name),
+        destructiveHint: !nonDestructive.has(tool.name),
+        idempotentHint: readOnly.has(tool.name),
+        openWorldHint: external.has(tool.name),
+      }, `${tool.name} must describe its full effect contract`);
+    }
     const read = listed.tools.find(x => x.name === 'read');
     assert.match(read.description, /UTF-8|text/i);
     assert.match(read.description, /1-based/i);

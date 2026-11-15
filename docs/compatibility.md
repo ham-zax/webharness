@@ -13,6 +13,18 @@ Shared tokens share cwd, optional turn fencing, and one revocation handle.
 
 ## Current provider identities
 
+Every outer Dev and Local tool declares all four MCP effect annotations.
+Dev `read`, `list_directory`, `search`, and `review_changes` declare read-only
+behavior. Dev `wait` changes its own durable records and is non-destructive.
+Local `tool_list` and `tool_schema` are read-only. Execution dispatchers and
+tools that can replace or delete content declare those effects explicitly.
+Annotations describe possible effects and do not grant authorization. Clients,
+including Gemini, own their permission prompts and saved approval settings.
+`run_script` declares external effects in unrestricted profiles because its
+nested `exec` and Bash calls can access the network. Native MCP instructions
+prefer CodeMode for related short workflows, parallelize independent reads,
+and keep dependent edits and checks ordered. Local batches target one route.
+
 The full Personal Workstation exposes these outer provider identities:
 
 ```text
@@ -41,7 +53,7 @@ the script still wins.
 
 Local is one authorization domain. Its five broker tools address downstream MCPs by logical `{server, tool}` identity. The maintained Personal Workstation composes public Local servers for `terminal`, `host`, `browser-fast`, `browser-devtools`, and owner-added MCPs, plus one fallback-only mirror of outer Dev.
 
-Unscoped `tool_list` excludes the fallback-only Dev mirror. Explicit read-only recovery inspection may still use `tool_list(server="dev")` and `tool_schema(server="dev", tool=...)`. Ordinary `tool_call` and `tool_batch` reject Dev. `fallback_dispatch` is reserved for an already-authorized operation whose normal writable MCP call is unavailable or unreliable; it can reach the hidden Dev mirror as well as public Local servers and forwards the downstream `CallToolResult` unchanged. Its `readOnlyHint` is intentionally retained for fallback transport compatibility and is not a promise that the selected downstream action is side-effect free. `tool_batch` applies several structured argument objects to one public `{server, tool}` route with bounded concurrency, and its member envelope adds attribution/status while each fulfilled downstream result remains intact.
+Unscoped `tool_list` excludes the fallback-only Dev mirror. Explicit read-only recovery inspection may still use `tool_list(server="dev")` and `tool_schema(server="dev", tool=...)`. Ordinary `tool_call` and `tool_batch` reject Dev. `fallback_dispatch` is reserved for an already-authorized operation whose normal writable MCP call is unavailable or unreliable; it can reach the hidden Dev mirror as well as public Local servers and forwards the downstream `CallToolResult` unchanged. Its explicit annotations declare possible mutation, deletion, and external effects. It does not claim to be read-only. `tool_batch` applies several structured argument objects to one public `{server, tool}` route with bounded concurrency, and its member envelope adds attribution/status while each fulfilled downstream result remains intact.
 
 The additive `skill-library` logical server exposes `find_skills` and `read_skill`
 in Personal and Server profiles. This changes neither the five outer Local tools

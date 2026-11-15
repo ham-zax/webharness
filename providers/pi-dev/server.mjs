@@ -70,7 +70,9 @@ const FILE_ACCESS_INSTRUCTIONS = [
 const EXECUTION_EFFICIENCY_INSTRUCTIONS = [
   'Execution efficiency (each result stays in context and is re-billed on every later turn):',
   '- Batch inspection: read several known files in one read call with targets (up to 20) and locate code with search first; avoid one call per file or per Git check.',
-  '- Code mode: when a task needs several dependent Dev steps (search, then read the hits, then edit, then verify), send one run_script instead of one call per step; intermediate results stay out of context.',
+  '- CodeMode: prefer one run_script for short workflows with related Dev calls. Use Promise.all for independent reads. Await dependent edits and checks in order. Print only the useful summary; intermediate results stay out of context.',
+  '- Use a direct tool for a single operation. Check command exit results before dependent steps; exec and bash can return failure text without throwing.',
+  '- When Local is available, use tool_batch for independent calls to one downstream server/tool. run_script calls Dev tools only and cannot call wait. Start long work detached or in Terminal, then observe it with wait.',
   '- Quiet output: send builds and test runs to a /tmp log and print only the exit status plus the tail or failing lines (normally 25 lines or fewer); never dump schemas, full diffs, or passing-test output. Call review_changes once after the final related edit instead of repeating Git status or diff.',
   '- Localized bugs: when the report names a file, line, and reproduction, read that scope and verify with a targeted test before widening the investigation. Do not skip validation.',
   '- Deployment: after changing a running service, decide whether it needs a restart or reload, then confirm with a harmless readiness check before claiming it is live.',
@@ -413,6 +415,7 @@ registerTool('search', {
 }));
 
 registerTool('edit', {
+  annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
   description: 'Apply unique, disjoint oldText replacements in existing files. Exact oldText always wins; fallback tolerates line endings, trailing whitespace and common Unicode punctuation/spaces. Merge edits sharing a line. Multi-file batches may partially apply; failures report affected paths. Returns +/- counts; diff=true returns diffs.',
   inputSchema: z.object({
     targets: z.array(z.object({
@@ -430,6 +433,7 @@ registerTool('edit', {
 }));
 
 registerTool('write', {
+  annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
   description: 'Create-only write; parent must exist unless mkdir_parents=true. overwrite=true atomically replaces an existing regular file. Symlinks and directories are refused. encoding=base64 writes binary content; for many files, write one base64 tar archive and extract it with exec. Content passes through model context, so keep it to small files.',
   inputSchema: z.object({
     path: modelPath,
@@ -496,6 +500,7 @@ if (pathMode === 'user') {
   }));
 
   registerTool('wait', {
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     description: 'Create, resume, or cancel one durable named condition/timer wait. Prefer this over polling or sleep loops. Arm with name+condition and resume later with name only. A pending wait stays durable and must be resumed by a later active model turn; it does not start one. A matched wait reports its evidence in the same call, including an already-satisfied condition at arm time. For long-running commands, start the process through Local server="terminal" with terminal_open, then use terminal_exit or terminal_output waits across short RPCs and inspect final output with terminal_read. timeout_seconds is the durable deadline (default 300s, max 24h); hold_seconds bounds only this invocation (default 10s, max 45s). Supports timer, Terminal output/exit, process exit, TCP listen, file exists/change, HTTP readiness, and user-systemd conditions. Terminal-output waits observe only output produced after arming and do not consume the Terminal model cursor.',
     inputSchema: waitInputSchema,
   }, async (args, extra) => invokeWait(async () => {
@@ -510,6 +515,7 @@ if (pathMode === 'user') {
   }));
 
   registerTool('file_ops', {
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     description: 'Move or delete existing regular files without following final-component symlinks. Batches are preflighted together but are not transactional; a later failure may leave earlier operations applied and is reported as partial or uncertain. Moves are same-filesystem hard-link plus guarded source unlink, never overwrite an existing destination, and do not fall back to copying across filesystems.',
     inputSchema: z.object({
       operations: z.array(z.discriminatedUnion('kind', [
@@ -533,6 +539,7 @@ if (pathMode === 'user') {
 
 if (mode === 'unrestricted') {
   registerTool('exec', {
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
     description: 'Run structured argv with no shell parsing; arguments are passed literally. Prefer for ordinary commands. Use only when runtime is known and comfortably below 45s. For longer noninteractive work (installs, builds) pass detach=true: it returns at once with a log path and an exit file to wait on with Dev wait file_exists, then read the log. For interactive or human-watched work use Local terminal_open, Dev wait, then terminal_read. Output is bounded; truncated output has a retained-file path.',
   inputSchema: z.object({
       argv: z.array(z.string()).min(1).max(256).describe('Executable name/path followed by literal arguments. Do not add shell quoting around individual elements.'),
@@ -560,6 +567,7 @@ if (mode === 'unrestricted') {
   }));
 
   registerTool('bash', {
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
     description: 'Run a noninteractive Bash program for pipes, redirects or other shell syntax; otherwise prefer exec. Use only when runtime is known and comfortably below 45s. For longer noninteractive work pass detach=true (returns job_id, pid, log_path, exit_path) and pair with Dev wait. For interactive, human-watched or persistent work use Local terminal_open, Dev wait, then terminal_read. Output is bounded; never bypass Terminal human ownership.',
   inputSchema: z.object({
       command: z.string().min(1),
@@ -603,7 +611,7 @@ registerTool('run_script', {
     readOnlyHint: false,
     destructiveHint: true,
     idempotentHint: false,
-    openWorldHint: false,
+    openWorldHint: mode === 'unrestricted',
   },
 }, async (args, extra) => invoke(async () => {
   const result = await runScript({

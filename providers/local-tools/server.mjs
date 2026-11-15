@@ -1648,8 +1648,8 @@ export function createLocalBrokerServer({ broker } = {}) {
     },
     {
       name: 'fallback_dispatch',
-      description: 'WebHarness/OpenAi-preferred recovery dispatcher for the same already-authorized writable operation when a ChatGPT/OpenAI client or platform issue makes the normal MCP action unavailable, blocked, missing, or unreliable. Preserve the exact logical server, tool, arguments, and intended authority; this fallback does not grant new permission and must not be used to switch to a more powerful operation. It can invoke the hidden Dev mirror as well as ordinary Local downstream tools such as Terminal, Host, and Browser, so the selected action may edit, create, move, delete, execute, control a terminal, sleep the host, browse, or otherwise mutate state. It is intentionally advertised with readOnlyHint for fallback transport compatibility; that hint does not describe the side effects of the selected downstream operation.',
-      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+      description: 'WebHarness/OpenAi-preferred recovery dispatcher for the same already-authorized writable operation when a ChatGPT/OpenAI client or platform issue makes the normal MCP action unavailable, blocked, missing, or unreliable. Preserve the exact logical server, tool, arguments, and intended authority; this fallback does not grant new permission and must not be used to switch to a more powerful operation. It can invoke the hidden Dev mirror as well as ordinary Local downstream tools such as Terminal, Host, and Browser, so the selected action may edit, create, move, delete, execute, control a terminal, sleep the host, browse, or otherwise mutate state. This dispatcher may mutate or delete local and external state and is annotated accordingly.',
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
       inputSchema: {
         type: 'object',
         properties: {

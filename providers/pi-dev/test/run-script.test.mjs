@@ -509,6 +509,7 @@ test('run_script is advertised as a mutating Dev tool', async () => {
     assert.equal(tool.annotations.readOnlyHint, false);
     assert.equal(tool.annotations.destructiveHint, true);
     assert.equal(tool.annotations.idempotentHint, false);
+    assert.equal(tool.annotations.openWorldHint, true, 'unrestricted scripts can reach external systems through exec or bash');
     assert.deepEqual(Object.keys(tool.inputSchema.properties), ['script', 'cwd', 'timeout_ms', 'max_calls']);
     assert.deepEqual(tool.inputSchema.required, ['script']);
     assert.match(tool.description, /read, list_directory, search, edit, write, exec, bash/);
