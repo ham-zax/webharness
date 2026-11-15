@@ -1,0 +1,19 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "taskId": "2026-11-15-reusable-pairing",
+  "currentTodo": "Commit the reviewed result on main and apply only the rendered Dev timeout",
+  "completedTodos": [
+    "133 adapter and 93 Pi shell/server/render tests pass",
+    "Independent final review found no code blockers; five stale documentation sections now corrected",
+    "uv test driver uses existing system Python with downloads disabled; three focused checks pass"
+  ],
+  "activeSlice": "pairing",
+  "evidenceRefs": [
+    "/tmp/webharness-final-adapter-tests.log",
+    "/tmp/webharness-final-pi-tests.log",
+    "/tmp/webharness-final-example-check.log"
+  ],
+  "blockedOn": null,
+  "nextStep": "Commit on main, update the live Dev requestTimeout without a restart, and report the commit receipt",
+  "updatedAt": "2026-11-15"
+}

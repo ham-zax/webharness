@@ -560,15 +560,20 @@ if (mode === 'unrestricted') {
   }));
 
   registerTool('bash', {
-    description: 'Run a noninteractive Bash program for pipes, redirects or other shell syntax; otherwise prefer exec. Use only when runtime is known and comfortably below 45s. For uncertain, longer or persistent work use Local terminal_open, Dev wait, then terminal_read. Output is bounded; never bypass Terminal human ownership.',
+    description: 'Run a noninteractive Bash program for pipes, redirects or other shell syntax; otherwise prefer exec. Use only when runtime is known and comfortably below 45s. For longer noninteractive work pass detach=true (returns job_id, pid, log_path, exit_path) and pair with Dev wait. For interactive, human-watched or persistent work use Local terminal_open, Dev wait, then terminal_read. Output is bounded; never bypass Terminal human ownership.',
   inputSchema: z.object({
       command: z.string().min(1),
       cwd: cwdPath.optional(),
       timeout_seconds: z.number().positive().max(300, {
         message: 'timeout_seconds must be from 1 to 300. A larger deadline is rejected because it cannot extend the connector window: start long work with Local terminal_open, observe it with Dev wait, then read output with terminal_read.'
-      }).optional().describe('Execution deadline: default 30s, max 300s; does not extend the connector window.')
+      }).optional().describe('Execution deadline: default 30s, max 300s; does not extend the connector window. Not allowed with detach.'),
+      detach: z.boolean().optional().describe('Start in the background with stdin closed and output to a log; returns job_id, pid, log_path and exit_path. Survives the call but not a WebHarness service restart.')
     })
   }, async (args, extra) => invoke(async () => {
+    if (args.detach) {
+      const result = await runBash({ ...pathPolicy, ...args, spoolTtlSeconds, stateDir }, extra.signal);
+      return { content: [{ type: 'text', text: renderDetachedText(result) }], structuredContent: result };
+    }
     const result = await runBash({
       ...pathPolicy,
       ...args,

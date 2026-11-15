@@ -29,8 +29,10 @@ test('the server instructions carry the same contract sentences', () => {
 test('the pairing prompt renders the pairing fields', () => {
   assert.ok(prompt.includes('Base: https://example.test'));
   assert.ok(prompt.includes('Pair code: ocean-4912-4yw6'));
-  assert.ok(prompt.includes('Redeem before: 2026-01-01T00:00:00.000Z (single use)'));
-  assert.ok(prompt.includes('Access expires: 2026-01-02T00:00:00.000Z'));
+  assert.ok(prompt.includes('Redeem before: 2026-01-01T00:00:00.000Z (reusable until this deadline)'));
+  assert.ok(prompt.includes('Access lasts 86400 seconds from the first successful redemption'));
+  assert.ok(prompt.includes('retry the same code before its deadline'));
+  assert.ok(prompt.includes('do not set independent WS_TURN_ID counters'));
   assert.ok(prompt.includes('Default remote cwd: /home/user/project'));
   assert.ok(prompt.includes('POST https://example.test/v1/pair?discover=1'));
   assert.ok(prompt.includes('{"code":"ocean-4912-4yw6"}'));

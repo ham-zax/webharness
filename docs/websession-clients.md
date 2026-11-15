@@ -15,7 +15,7 @@ For master-bearer lifetime, rotation, exchange, and storage rules, see [WebSessi
 | Client capability | WebSession profile | Credential bootstrap |
 |---|---|---|
 | HTTPS GET + POST + custom headers | enhanced JSON (`json-post-v1`) | master bearer in the `Authorization` header, or a finite capability |
-| Python stdlib HTTPS (chat or code sandbox) | direct JSON HTTPS through `urllib.request` | one-time pair code from `bin/adapter connect` |
+| Python stdlib HTTPS (chat or code sandbox) | direct JSON HTTPS through `urllib.request` | reusable pair code from `bin/adapter connect` |
 | Generic code/runtime HTTP client | enhanced JSON (`json-post-v1`) | master bearer in the `Authorization` header, or a finite capability |
 | Shell with curl only (no MCP client) | enhanced JSON via served client (`/v1/client.sh`) | finite capability issued by the operator |
 | HTTPS GET/open/fetch only | universal GET (`universal-get-v1`) | finite capability issued by the operator |
@@ -84,7 +84,7 @@ bin/websession-call dev_bash '{"command":"pwd"}'
 
 ## Recommended: One-command HTTP pairing
 
-On the host, issue a one-use code and a ready-to-paste HTTP connection prompt. Choose the project directory the agent will actually work in:
+On the host, issue a reusable code and a ready-to-paste HTTP connection prompt. Choose the project directory the agent will actually work in:
 
 ```bash
 bin/adapter connect --here           # pin the current directory as the sticky cwd
@@ -92,11 +92,38 @@ bin/adapter connect --cwd ~/repo/my-project
 bin/adapter connect --ttl 86400 --pair-ttl 600
 ```
 
-`bin/adapter connect` starts the adapter if needed, resolves the public base URL (in order: `WEBSESSION_ADAPTER_PUBLIC_URL`, `TUNNEL_URL`, the tunnel URL file, then `MCP_PUBLIC_URL` from bridge state or repo `.env`), and issues a single-use pair code. The code defaults to a five-minute redemption window (`--pair-ttl 300`); the resulting capability defaults to six hours (`--ttl 21600`). The generated prompt describes ordinary HTTP pairing and discovery and does not download or execute a helper. It states the owner's authorization, expiry, selected cwd, and task scope explicitly. Agent-specific acceptance cannot be guaranteed by prompt wording. `operator.mjs prompt` renders the prompt from `pairing-prompt.mjs`, which takes its contract paragraphs from the same constants in `protocol.mjs` that build the server-served instructions, so the pasted prompt and `GET /v1/instructions` cannot disagree about how results are shaped.
+`bin/adapter connect` starts the adapter if needed, resolves the public base URL (in order: `WEBSESSION_ADAPTER_PUBLIC_URL`, `TUNNEL_URL`, the tunnel URL file, then `MCP_PUBLIC_URL` from bridge state or repo `.env`), and issues a reusable pair code. The code defaults to a one-hour redemption window (`--pair-ttl 3600`, maximum 3600). The resulting capability defaults to 24 hours (`--ttl 86400`, maximum 86400), starting at the first successful redemption. Retries and other chats receive the same capability and fixed expiry. They do not extend either deadline. The generated prompt describes ordinary HTTP pairing and discovery and does not download or execute a helper. It states the owner's authorization, expiry, selected cwd, and task scope explicitly. Agent-specific acceptance cannot be guaranteed by prompt wording. `operator.mjs prompt` renders the prompt from `pairing-prompt.mjs`, which takes its contract paragraphs from the same constants in `protocol.mjs` that build the server-served instructions, so the pasted prompt and `GET /v1/instructions` cannot disagree about how results are shaped.
 
-The default prompt redeems `POST /v1/pair?discover=1` with `{"code":"<pair-code>"}` and retains the returned capability privately. One response includes compact `instructions`, `signatures`, `tool_count`, and `default_cwd` when set. Pairing without `discover=1` keeps the original lightweight response. Discovery is bounded to 10 seconds; if unavailable, the response still has `state: ready`, the capability, `discovery_state: unavailable`, and the HTTP contract. Save access and retry only discovery; do not redeem again. Python's built-in `urllib.request` works without installing packages. The public clients at `/v1/client.py` and `/v1/client.sh` remain optional conveniences for environments where the operator has chosen to install them. Their availability is not a prerequisite for HTTP pairing.
+The default prompt redeems `POST /v1/pair?discover=1` with `{"code":"<pair-code>"}` and retains the returned capability privately. One response includes compact `instructions`, `signatures`, `tool_count`, and `default_cwd` when set. Pairing without `discover=1` keeps the original lightweight response. Discovery is bounded to 10 seconds; if unavailable, the response still has `state: ready`, the capability, `discovery_state: unavailable`, and the HTTP contract. Save access and retry only discovery. If the pairing response itself is lost, repeat the same pairing request before the code expires. Python's built-in `urllib.request` works without installing packages. The public clients at `/v1/client.py` and `/v1/client.sh` remain optional conveniences for environments where the operator has chosen to install them. Their availability is not a prerequisite for HTTP pairing.
 
 The summary prints `capability_id` as the revocation handle; it does not print the capability bearer. Revoke with `bin/adapter revoke-cap <capability-id>`.
+
+### Pairing recovery and shared chats
+
+New codes use a longer random suffix and one reusable policy. Generate a new
+prompt after this update. The adapter keeps the existing SQLite state format.
+No migration or old-code compatibility path is required.
+
+A code stops returning access at its own deadline. A token obtained earlier
+continues until the response `expires_at`, even after the code expires. A short
+custom session does not restart if it expires while the code remains valid.
+The operator and connection prompt report the duration. The pairing response
+reports the fixed session expiry after activation.
+
+A copied bearer token works from multiple chats or clients without redeeming
+again. Copies share the server cwd and optional turn fence. Keep independent
+`WS_TURN_ID` counters off on a shared bearer. If a capability already uses a
+turn fence, use a new pairing session for independent chats. Use explicit cwd
+arguments when chats work in different folders, and coordinate file writes.
+
+Both the code and token grant access to anyone who holds them. They are not
+bound to one computer. Keep both private and use HTTPS. The reusable code
+increases the time during which a leaked code can grant access. The longer
+random suffix reduces guessing risk, consistent with the entropy concerns in
+[RFC 8628](https://www.rfc-editor.org/rfc/rfc8628.html#section-5.1).
+Revoke the printed capability ID to stop the code and every copy of its token.
+The store clears the pairing token copy on revocation and clears expired code
+copies during startup or pairing activity.
 
 ### Select project context once
 
@@ -130,7 +157,7 @@ To switch projects once during a session without repeating `cwd` or long absolut
 
 ## Adopt an existing HTTP session in the Python CLI
 
-After HTTP pairing, do not reuse the single-use pair code. Once the operator approves a locally installed Python client, import the existing capability without placing it in command-line arguments:
+After HTTP pairing, retain the existing capability. The pair code also remains reusable until its deadline. Once the operator approves a locally installed Python client, import the existing capability without placing it in command-line arguments:
 
 ```text
 python3 /tmp/wh.py import-session https://mcp.example.com
@@ -217,7 +244,7 @@ Authorization: Bearer <MASTER_BEARER>
 
 The response contains a fresh ordinary `main` capability with `ttl_seconds: 21600`. Use that returned capability for discovery and calls exactly as below. Reusing the master bearer later issues another independent six-hour capability; rotating the master does not change capabilities that were already issued.
 
-A client that can send a custom `Authorization` header does not need the exchange at all: send the master bearer directly on `POST /v1/calls`, `POST /v1/batch`, `GET`/`PUT /v1/cwd`, or `GET /v1/raw`. The adapter resolves it into one stable stored principal, so operation ownership, working directory, and result history persist across requests and restarts. Never put the master bearer in a URL, and never use it for a continuation or confirmation decision.
+A client that can send a custom `Authorization` header does not need the exchange at all: send the master bearer directly on `POST /v1/calls`, `POST /v1/batch`, `GET`/`POST /v1/cwd`, or `GET /v1/raw`. The adapter resolves it into one stable stored principal, so operation ownership, working directory, and result history persist across requests and restarts. Never put the master bearer in a URL, and never use it for a continuation or confirmation decision.
 
 ## Python sandbox pairing prompt
 
@@ -226,7 +253,7 @@ The generated `bin/adapter connect --cwd <project>` prompt works with Python's H
 ````text
 I own this development machine and authorize access to its WebSession HTTPS API for my task. Begin with read-only discovery; make changes only as requested.
 Base: <BASE>
-Pair code: <PAIR_CODE> (single use; redeem before the printed expiry)
+Pair code: <PAIR_CODE> (reusable until the printed expiry)
 
 Use Python stdlib for the connection:
 
@@ -288,12 +315,12 @@ Master bearer: <MASTER_BEARER_IF_PROVIDED>
 
 Keep credentials in memory; never echo/log them or put a bearer in a URL. Use the documented routes exactly:
 1. GET /v1/about and confirm WEBSESSION-MCP-BRIDGE/1. This response is text, not JSON.
-2. If a capability was supplied, use it. Otherwise redeem a pair code once with POST /v1/pair?discover=1, Content-Type: application/json, body {"code":"<PAIR_CODE>"}; or exchange a master bearer with POST /v1/access and Authorization: Bearer <MASTER_BEARER>. Require state=ready and retain the returned capability. Do not use a pair code as a bearer. If pairing expires or its response is lost, request a fresh code.
+2. If a capability was supplied, use it. Otherwise redeem a pair code with POST /v1/pair?discover=1, Content-Type: application/json, body {"code":"<PAIR_CODE>"}; or exchange a master bearer with POST /v1/access and Authorization: Bearer <MASTER_BEARER>. Require state=ready and retain the returned capability. Do not use a pair code as a bearer. If the pairing response is lost, retry the same code before its deadline. If the code expires, use the retained capability or request a fresh code.
 3. Use bundled instructions/signatures when discovery_state=ready. Otherwise retain the capability and GET /v1/signatures and /v1/instructions with Authorization: Bearer <CAPABILITY>; retry only discovery if unavailable. Read the guidance, including the HTTP contract. Use exact live tool names; inspect GET /v1/tools/<name> before an unfamiliar call. Supported Dev tools inherit the returned default_cwd; omit repeated cwd arguments and use relative paths. ~ / ~/... retain their remote-home meaning. Keep a separate local project context if switching directories; Local Terminal tools have their own cwd.
 4. POST /v1/calls?wait=2 with Authorization: Bearer <CAPABILITY>, Content-Type: application/json, and a fresh runtime-generated Idempotency-Key matching ^[A-Za-z0-9._-]{1,64}$. Body fields are exactly {"version":1,"tool":"<discovered-name>","arguments":{...}}. Do not guess alternative envelope fields or tool aliases.
 5. If queued/running, long-poll the returned status_url with wait=90. Treat returned URLs as opaque: preserve their paths, tokens, and other query parameters. If completed with chunk_count=1, read result. If chunk_count>1, GET chunk_base_url + each number from 1 through chunk_count and concatenate the JSON content values in order.
 6. For independent calls, POST /v1/batch?wait=2 with the same headers and a fresh key. Body: {"version":1,"calls":[{"tool":"<name>","arguments":{...}}, ...]} (1..20 items). Track every returned result/status URL. Admission is atomic, execution is not: reads may overlap writes, mutations serialize, and completed effects are not rolled back. Submit dependent verification after the mutation completes.
-7. Search -> outline -> focused reads using the discovered Dev tools before editing. Group independent checks; keep direct execution short and use discovered durable Terminal or detached-exec support for long work.
+7. Search -> outline -> focused reads using the discovered Dev tools before editing. Group independent checks; keep direct execution short and use discovered durable Terminal or detached Bash/exec support for long work.
 8. A lost/invalid submission response or unknown_outcome may mean the tool ran. Never automatically resubmit a mutation. A failed status read or HTTP 404 also does not prove non-execution. Keep recovery URLs private and inspect effects before retrying.
 
 Verify the remote cwd with the discovered shell tool if available, then continue my task. Report CONNECTED, the remote cwd, and compact results only; do not print credentials or transport objects.

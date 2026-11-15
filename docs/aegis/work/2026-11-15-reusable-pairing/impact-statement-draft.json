@@ -1,0 +1,16 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "affectedLayers": [
+    "authentication"
+  ],
+  "owners": [
+    "AdapterStore"
+  ],
+  "invariants": [
+    "Retries return one token and never extend deadlines. Fresh codes use one clean policy without schema migration or legacy handling."
+  ],
+  "compatBoundary": "Existing bearer tokens, POST pair body, operation nonce rules, and turn fences remain valid.",
+  "nonGoals": [
+    "No new transport, machine binding, independent chat lanes, or service restart."
+  ]
+}

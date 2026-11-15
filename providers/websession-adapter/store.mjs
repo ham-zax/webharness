@@ -13,9 +13,9 @@ const MASTER_BEARER_FILE = 'master-bearer.sha256';
 // generation derived from the bearer hash, so rotating the master retires the
 // previous generation instead of letting new requests inherit its operations.
 const MASTER_PRINCIPAL_PREFIX = 'master:';
-const PAIRING_CODE_RE = /^[a-z]{4,7}-[0-9]{4}-[a-z0-9]{4}$/;
+const PAIRING_CODE_RE = /^[a-z]{4,7}-[0-9]{4}-[a-z0-9]{12}$/;
 const PAIRING_TTL_MIN_SECONDS = 30;
-const PAIRING_TTL_MAX_SECONDS = 900;
+const PAIRING_TTL_MAX_SECONDS = 3600;
 const PAIRING_STALE_MS = 86_400_000;
 const PAIRING_WORDS = [
   'amber', 'birch', 'cedar', 'coral', 'delta', 'ember', 'fjord', 'frost',
@@ -37,7 +37,7 @@ function randomPairingCode() {
   const word = PAIRING_WORDS[randomInt(PAIRING_WORDS.length)];
   const digits = String(randomInt(0, 10_000)).padStart(4, '0');
   let suffix = '';
-  for (let index = 0; index < 4; index += 1) {
+  for (let index = 0; index < 12; index += 1) {
     suffix += PAIRING_SUFFIX_ALPHABET[randomInt(PAIRING_SUFFIX_ALPHABET.length)];
   }
   return `${word}-${digits}-${suffix}`;
@@ -177,6 +177,7 @@ export class AdapterStore {
       if (!operationColumns.includes(name)) this.db.exec(`ALTER TABLE operations ADD COLUMN ${name} ${definition}`);
     }
     this.db.exec('CREATE INDEX IF NOT EXISTS idx_operations_batch ON operations(principal_id, batch_id, batch_index)');
+    this._clearExpiredPairingTokens(Date.now());
     this._ensureMasterPrincipal();
   }
 
@@ -201,19 +202,24 @@ export class AdapterStore {
     return this.issueCapability('main', ttlSeconds, 86400, options);
   }
 
-  issuePairingCode({ ttlSeconds = 21600, pairTtlSeconds = 300, defaultCwd = null } = {}) {
+  _clearExpiredPairingTokens(now) {
+    this.db.prepare("UPDATE pairing_codes SET capability_token = '' WHERE expires_ms <= ? AND capability_token <> ''").run(now);
+  }
+
+  issuePairingCode({ ttlSeconds = 86400, pairTtlSeconds = 3600, defaultCwd = null } = {}) {
     const pairSeconds = Number(pairTtlSeconds);
     if (!Number.isInteger(pairSeconds) || pairSeconds < PAIRING_TTL_MIN_SECONDS || pairSeconds > PAIRING_TTL_MAX_SECONDS) {
       throw new Error(`pairing code TTL must be an integer from ${PAIRING_TTL_MIN_SECONDS} to ${PAIRING_TTL_MAX_SECONDS} seconds`);
     }
     const now = Date.now();
+    this._clearExpiredPairingTokens(now);
     this.db.prepare('DELETE FROM pairing_codes WHERE expires_ms <= ?').run(now - PAIRING_STALE_MS);
     const issued = this.issueMainCapability(ttlSeconds, { defaultCwd });
+    const pairExpiresMs = now + pairSeconds * 1000;
     const insert = this.db.prepare(`
       INSERT OR IGNORE INTO pairing_codes (code, capability_id, capability_token, created_ms, expires_ms, redeemed_ms)
       VALUES (?, ?, ?, ?, ?, NULL)
     `);
-    const pairExpiresMs = now + pairSeconds * 1000;
     let code;
     for (let attempt = 0; attempt < 8; attempt += 1) {
       const candidate = randomPairingCode();
@@ -228,6 +234,7 @@ export class AdapterStore {
       capabilityId: issued.id,
       expiresMs: issued.expiresMs,
       pairExpiresMs,
+      sessionTtlSeconds: ttlSeconds,
       defaultCwd: issued.defaultCwd,
     };
   }
@@ -235,21 +242,32 @@ export class AdapterStore {
   redeemPairingCode(code) {
     if (typeof code !== 'string' || !PAIRING_CODE_RE.test(code)) return undefined;
     const now = Date.now();
+    this._clearExpiredPairingTokens(now);
     this.db.exec('BEGIN IMMEDIATE');
     try {
       const row = this.db.prepare('SELECT * FROM pairing_codes WHERE code = ?').get(code);
-      if (!row || row.redeemed_ms !== null || row.expires_ms <= now || !row.capability_token) {
+      if (!row || row.expires_ms <= now || !row.capability_token) {
         this.db.exec('ROLLBACK');
         return undefined;
+      }
+      if (row.redeemed_ms === null) {
+        const capability = this.db.prepare('SELECT * FROM capabilities WHERE id = ?').get(row.capability_id);
+        if (!capability || capability.scope !== 'main' || capability.revoked_ms !== null || capability.non_expiring) {
+          this.db.exec('ROLLBACK');
+          return undefined;
+        }
+        // Before activation, the original lifetime is encoded by these timestamps.
+        // An unredeemed short session may outlive that provisional expiry via its code.
+        const ttlMs = capability.expires_ms - capability.created_ms;
+        if (!Number.isSafeInteger(ttlMs) || ttlMs < 60_000 || ttlMs > 86400_000) {
+          this.db.exec('ROLLBACK');
+          return undefined;
+        }
+        this.db.prepare('UPDATE capabilities SET expires_ms = ? WHERE id = ?').run(now + ttlMs, row.capability_id);
+        this.db.prepare('UPDATE pairing_codes SET redeemed_ms = ? WHERE code = ?').run(now, code);
       }
       const principal = this.activeCapabilityById(row.capability_id);
       if (!principal) {
-        this.db.exec('ROLLBACK');
-        return undefined;
-      }
-      const redeemed = this.db.prepare('UPDATE pairing_codes SET redeemed_ms = ?, capability_token = ? WHERE code = ? AND redeemed_ms IS NULL')
-        .run(now, '', code);
-      if (redeemed.changes !== 1) {
         this.db.exec('ROLLBACK');
         return undefined;
       }
@@ -363,6 +381,7 @@ export class AdapterStore {
 
   revokeCapability(id) {
     const result = this.db.prepare('UPDATE capabilities SET revoked_ms = COALESCE(revoked_ms, ?) WHERE id = ?').run(Date.now(), id);
+    this.db.prepare("UPDATE pairing_codes SET capability_token = '' WHERE capability_id = ?").run(id);
     return result.changes === 1;
   }
 

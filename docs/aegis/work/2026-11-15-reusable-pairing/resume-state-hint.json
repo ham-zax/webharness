@@ -1,0 +1,19 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "taskId": "2026-11-15-reusable-pairing",
+  "lastCheckpointRef": "docs/aegis/work/2026-11-15-reusable-pairing/todo-checkpoint-draft.json",
+  "resumeInstruction": "The user performs service restarts. Do not apply unrelated rendered configuration differences.",
+  "knownPartialWork": [
+    "133 adapter and 93 Pi shell/server/render tests pass",
+    "Independent final review found no code blockers; five stale documentation sections now corrected",
+    "uv test driver uses existing system Python with downloads disabled; three focused checks pass"
+  ],
+  "mustReadBeforeContinuing": [
+    "docs/aegis/work/2026-11-15-reusable-pairing/10-intent.md",
+    "docs/aegis/work/2026-11-15-reusable-pairing/20-checkpoint.md",
+    "docs/aegis/work/2026-11-15-reusable-pairing/todo-checkpoint-draft.json"
+  ],
+  "unsafeToAssume": [
+    "No public deployment or live readiness check for the changed code occurred. SQLite contention can still require a safe pairing retry."
+  ]
+}

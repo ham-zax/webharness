@@ -18,3 +18,18 @@ Entries are workspace records, not authoritative runtime decisions.
 | 2026-10-12 | artifact | docs/aegis/work/2026-10-12-skill-library-jev-and-fixes/resume-state-hint.json | 2026-10-12-skill-library-jev-and-fixes resume state hint |
 | 2026-10-14 | plan | docs/aegis/plans/2026-10-14-websession-curl-client.md | WebSession curl client and long-poll calls |
 | 2026-11-12 | plan | docs/aegis/plans/2026-11-12-verified-writes-and-call-diagnostics.md | Verified writes and call diagnostics |
+| 2026-11-15 | work | docs/aegis/work/2026-11-15-reusable-pairing/10-intent.md | Retry-safe reusable WebSession pairing intent |
+| 2026-11-15 | work | docs/aegis/work/2026-11-15-reusable-pairing/20-checkpoint.md | Retry-safe reusable WebSession pairing checkpoint |
+| 2026-11-15 | work | docs/aegis/work/2026-11-15-reusable-pairing/90-evidence.md | Retry-safe reusable WebSession pairing evidence |
+| 2026-11-15 | work | docs/aegis/work/2026-11-15-reusable-pairing/99-reflection.md | Retry-safe reusable WebSession pairing reflection |
+| 2026-11-15 | artifact | docs/aegis/work/2026-11-15-reusable-pairing/task-intent-draft.json | Retry-safe reusable WebSession pairing task intent draft |
+| 2026-11-15 | artifact | docs/aegis/work/2026-11-15-reusable-pairing/baseline-read-set-hint.json | Retry-safe reusable WebSession pairing baseline read-set hint |
+| 2026-11-15 | artifact | docs/aegis/work/2026-11-15-reusable-pairing/baseline-usage-draft.json | Retry-safe reusable WebSession pairing baseline usage draft |
+| 2026-11-15 | artifact | docs/aegis/work/2026-11-15-reusable-pairing/impact-statement-draft.json | Retry-safe reusable WebSession pairing impact statement draft |
+| 2026-11-15 | artifact | docs/aegis/work/2026-11-15-reusable-pairing/todo-checkpoint-draft.json | Retry-safe reusable WebSession pairing todo checkpoint draft |
+| 2026-11-15 | artifact | docs/aegis/work/2026-11-15-reusable-pairing/drift-check-draft.json | Retry-safe reusable WebSession pairing drift check draft |
+| 2026-11-15 | artifact | docs/aegis/work/2026-11-15-reusable-pairing/resume-state-hint.json | 2026-11-15-reusable-pairing resume state hint |
+| 2026-11-15 | plan | docs/aegis/plans/2026-11-15-reusable-pairing.md | Retry-safe reusable pairing |
+| 2026-11-15 | artifact | docs/aegis/work/2026-11-15-reusable-pairing/evidence-bundle-draft-pairing.json | 2026-11-15-reusable-pairing evidence pairing |
+| 2026-11-15 | artifact | docs/aegis/work/2026-11-15-reusable-pairing/gate-input-pack.json | 2026-11-15-reusable-pairing gate input pack |
+| 2026-11-15 | work | docs/aegis/work/2026-11-15-reusable-pairing/proof-bundle.md | 2026-11-15-reusable-pairing proof bundle |

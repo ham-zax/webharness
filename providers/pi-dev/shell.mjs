@@ -395,12 +395,18 @@ async function runCaptured({
 
 export async function runBash({
   command,
-  timeout_seconds = DEFAULT_TIMEOUT_SECONDS,
+  timeout_seconds,
+  detach = false,
   ...options
 }, signal) {
   if (typeof command !== 'string' || command.length === 0) {
     throw new Error('command must be a non-empty string');
   }
+  if (detach) {
+    if (timeout_seconds !== undefined) throw new Error('timeout_seconds does not apply to detach: true');
+    return runDetached({ argv: ['bash', '-lc', command], ...options });
+  }
+  timeout_seconds ??= DEFAULT_TIMEOUT_SECONDS;
   const ops = createLocalBashOperations();
   return runCaptured({
     ...options,

@@ -1,0 +1,9 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "candidateDocs": [
+    "providers/websession-adapter/store.mjs",
+    "docs/websession-clients.md"
+  ],
+  "whyRelevant": "Store owns pairing and revocation. Client documentation owns the HTTP contract.",
+  "missingAuthority": []
+}

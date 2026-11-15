@@ -8,6 +8,7 @@
       "args": [
         "__REPO_ROOT__/providers/pi-dev/server.mjs"
       ],
+      "requestTimeout": 240000,
       "env": {
         "MCP_DEV_SHELL_MODE": "unrestricted",
         "MCP_DEV_PATH_MODE": "user",

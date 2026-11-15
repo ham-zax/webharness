@@ -1,0 +1,16 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "taskId": "2026-11-15-reusable-pairing",
+  "requiredBaselineRefs": [
+    "providers/websession-adapter/store.mjs",
+    "docs/websession-clients.md"
+  ],
+  "deliveredContextRefs": [],
+  "acknowledgedBeforePlanRefs": [],
+  "citedInPlanRefs": [],
+  "missingRefs": [
+    "providers/websession-adapter/store.mjs",
+    "docs/websession-clients.md"
+  ],
+  "decision": "needs-baseline-readback"
+}

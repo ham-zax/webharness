@@ -265,12 +265,12 @@ test('tool result errors and byte limits remain enforced', () => {
   assert.throws(() => renderToolResult({ content: [{ type: 'image', data: 'A'.repeat(1024 * 1024), mimeType: 'image/png' }] }), /result_too_large/);
 });
 
-test('pairing codes redeem once, expire, follow revocation, wipe plaintext, and keep default_cwd', () => {
+test('pairing codes recover the same access, expire, follow revocation, and keep default_cwd', () => {
   const stateDir = mkdtempSync(join(tmpdir(), 'websession-pairing-'));
   const store = new AdapterStore(stateDir);
   try {
     const pairing = store.issuePairingCode({ ttlSeconds: 3600, pairTtlSeconds: 120, defaultCwd: '/tmp/pair-work' });
-    assert.match(pairing.code, /^[a-z]{4,7}-[0-9]{4}-[a-z0-9]{4}$/);
+    assert.match(pairing.code, /^[a-z]{4,7}-[0-9]{4}-[a-z0-9]{12}$/);
     assert.equal(pairing.defaultCwd, '/tmp/pair-work');
     assert.ok(pairing.pairExpiresMs <= pairing.expiresMs);
 
@@ -286,15 +286,16 @@ test('pairing codes redeem once, expire, follow revocation, wipe plaintext, and 
     assert.equal(principal.defaultCwd, '/tmp/pair-work');
     assert.equal(store.activeCapabilityById(pairing.capabilityId).defaultCwd, '/tmp/pair-work');
 
-    assert.equal(store.redeemPairingCode(pairing.code), undefined);
+    assert.deepEqual(store.redeemPairingCode(pairing.code), redeemed);
     const row = store.db.prepare('SELECT capability_token, redeemed_ms FROM pairing_codes WHERE code = ?').get(pairing.code);
-    assert.equal(row.capability_token, '');
+    assert.equal(row.capability_token, redeemed.token);
     assert.ok(row.redeemed_ms > 0);
 
     const expiring = store.issuePairingCode({ pairTtlSeconds: 60 });
     assert.equal(expiring.defaultCwd, null);
     store.db.prepare('UPDATE pairing_codes SET expires_ms = ? WHERE code = ?').run(Date.now() - 1, expiring.code);
     assert.equal(store.redeemPairingCode(expiring.code), undefined);
+    assert.equal(store.db.prepare('SELECT capability_token FROM pairing_codes WHERE code = ?').get(expiring.code).capability_token, '');
 
     const revoked = store.issuePairingCode({ ttlSeconds: 600 });
     store.revokeCapability(revoked.capabilityId);
@@ -305,7 +306,7 @@ test('pairing codes redeem once, expire, follow revocation, wipe plaintext, and 
     assert.equal(store.redeemPairingCode('amber-0000-abcdef'), undefined);
 
     assert.throws(() => store.issuePairingCode({ pairTtlSeconds: 29 }), /pairing code TTL/);
-    assert.throws(() => store.issuePairingCode({ pairTtlSeconds: 901 }), /pairing code TTL/);
+    assert.throws(() => store.issuePairingCode({ pairTtlSeconds: 3601 }), /pairing code TTL/);
     assert.throws(() => store.issuePairingCode({ pairTtlSeconds: 60.5 }), /pairing code TTL/);
     assert.throws(() => store.issueMainCapability(60, { defaultCwd: '' }), /default cwd/);
     assert.throws(() => store.issueMainCapability(60, { defaultCwd: '/tmp/a\0b' }), /default cwd/);
@@ -321,6 +322,53 @@ test('pairing codes redeem once, expire, follow revocation, wipe plaintext, and 
   }
 });
 
+test('pairing starts a fixed 24-hour session at first redemption and survives restart', t => {
+  const stateDir = mkdtempSync(join(tmpdir(), 'websession-pair-clock-'));
+  let now = Date.now();
+  t.mock.method(Date, 'now', () => now);
+  let store = new AdapterStore(stateDir);
+  try {
+    const issuedAt = now;
+    const pairing = store.issuePairingCode();
+    assert.equal(pairing.pairExpiresMs, issuedAt + 3600_000);
+    assert.equal(pairing.sessionTtlSeconds, 86400);
+    now += 3599_000;
+    const first = store.redeemPairingCode(pairing.code);
+    assert.equal(first.expiresMs, now + 86400_000);
+    store.close();
+    store = new AdapterStore(stateDir);
+    now += 500;
+    assert.deepEqual(store.redeemPairingCode(pairing.code), first);
+    now = pairing.pairExpiresMs;
+    assert.equal(store.redeemPairingCode(pairing.code), undefined);
+    assert.ok(store.resolveCapability(first.token), 'code expiry does not end the session');
+    now = first.expiresMs;
+    assert.equal(store.resolveCapability(first.token), undefined);
+  } finally {
+    store.close();
+    rmSync(stateDir, { recursive: true, force: true });
+  }
+});
+
+test('a short session can activate late in the pairing window but cannot restart after expiry', t => {
+  const stateDir = mkdtempSync(join(tmpdir(), 'websession-pair-short-'));
+  let now = Date.now();
+  t.mock.method(Date, 'now', () => now);
+  const store = new AdapterStore(stateDir);
+  try {
+    const pairing = store.issuePairingCode({ ttlSeconds: 60 });
+    now += 3500_000;
+    const redeemed = store.redeemPairingCode(pairing.code);
+    assert.ok(redeemed);
+    assert.equal(redeemed.expiresMs, now + 60_000);
+    now += 60_000;
+    assert.equal(store.redeemPairingCode(pairing.code), undefined);
+  } finally {
+    store.close();
+    rmSync(stateDir, { recursive: true, force: true });
+  }
+});
+
 test('operator pair prints pairing details and never the capability secret', () => {
   const stateDir = mkdtempSync(join(tmpdir(), 'websession-operator-pair-'));
   try {
@@ -330,10 +378,10 @@ test('operator pair prints pairing details and never the capability secret', () 
       encoding: 'utf8',
     });
     assert.equal(result.status, 0, result.stderr);
-    assert.match(result.stdout, /pair_code: [a-z]{4,7}-[0-9]{4}-[a-z0-9]{4}/);
+    assert.match(result.stdout, /pair_code: [a-z]{4,7}-[0-9]{4}-[a-z0-9]{12}/);
     assert.match(result.stdout, /capability_id: [0-9a-f-]{36}/);
     assert.match(result.stdout, /pair_expires_at: \d{4}-\d\d-\d\dT/);
-    assert.match(result.stdout, /expires_at: \d{4}-\d\d-\d\dT/);
+    assert.match(result.stdout, /session_ttl_seconds: 3600/);
     assert.match(result.stdout, /default_cwd: \/tmp\/operator-cwd/);
     assert.ok(!result.stdout.includes('capability: '));
 
@@ -348,6 +396,32 @@ test('operator pair prints pairing details and never the capability secret', () 
     } finally {
       store.close();
     }
+  } finally {
+    rmSync(stateDir, { recursive: true, force: true });
+  }
+});
+
+test('operator defaults to one-hour pairing and renders the selected session duration', () => {
+  const stateDir = mkdtempSync(join(tmpdir(), 'websession-pair-defaults-'));
+  const operatorPath = new URL('../operator.mjs', import.meta.url).pathname;
+  try {
+    const before = Date.now();
+    const issued = spawnSync(process.execPath, [operatorPath, 'pair'], {
+      env: { ...process.env, WEBSESSION_ADAPTER_STATE_DIR: stateDir }, encoding: 'utf8',
+    });
+    assert.equal(issued.status, 0, issued.stderr);
+    assert.match(issued.stdout, /session_ttl_seconds: 86400/);
+    const deadline = /^pair_expires_at: (.+)$/m.exec(issued.stdout)[1];
+    assert.ok(new Date(deadline).getTime() >= before + 3600_000);
+    assert.ok(new Date(deadline).getTime() <= Date.now() + 3600_000);
+    const code = /^pair_code: (.+)$/m.exec(issued.stdout)[1];
+    const prompt = spawnSync(process.execPath, [operatorPath, 'prompt', 'https://example.test', code, deadline, '600', '/tmp/project'], {
+      env: { ...process.env, WEBSESSION_ADAPTER_STATE_DIR: stateDir }, encoding: 'utf8',
+    });
+    assert.equal(prompt.status, 0, prompt.stderr);
+    assert.match(prompt.stdout, /Access lasts 600 seconds from the first successful redemption/);
+    assert.match(prompt.stdout, /reusable until this deadline/);
+    assert.doesNotMatch(prompt.stdout, /Access expires:|single use/);
   } finally {
     rmSync(stateDir, { recursive: true, force: true });
   }
@@ -424,7 +498,7 @@ async function startAdapterServer(t, stateDir, port, extraEnv = {}) {
   return child;
 }
 
-test('POST /v1/pair redeems one code, rejects replays, and validates its body', async t => {
+test('POST /v1/pair recovers lost responses, permits concurrent replays, and validates its body', async t => {
   const stateDir = mkdtempSync(join(tmpdir(), 'websession-pair-http-'));
   t.after(() => rmSync(stateDir, { recursive: true, force: true }));
   const store = new AdapterStore(stateDir);
@@ -441,6 +515,9 @@ test('POST /v1/pair redeems one code, rejects replays, and validates its body', 
     body: typeof body === 'string' ? body : JSON.stringify(body),
   });
 
+  // Discard the first successful response, as a caller with a dropped connection would.
+  const lost = await post({ code: pairing.code });
+  await lost.body.cancel();
   const response = await post({ code: pairing.code });
   assert.equal(response.status, 200);
   const value = await response.json();
@@ -449,11 +526,27 @@ test('POST /v1/pair redeems one code, rejects replays, and validates its body', 
   assert.equal(value.scope, 'main');
   assert.match(value.capability, /^[A-Za-z0-9_-]{43}$/);
   assert.equal(value.default_cwd, '/tmp/paired');
-  assert.equal(new Date(value.expires_at).getTime(), pairing.expiresMs);
+  const persisted = new AdapterStore(stateDir);
+  t.after(() => persisted.close());
+  assert.equal(new Date(value.expires_at).getTime(), persisted.activeCapabilityById(pairing.capabilityId).expiresMs);
 
   const replay = await post({ code: pairing.code });
-  assert.equal(replay.status, 404);
-  assert.deepEqual(await replay.json(), { protocol: 'WEBSESSION-MCP-BRIDGE/1', state: 'rejected', code: 'not_found' });
+  assert.equal(replay.status, 200);
+  assert.deepEqual(await replay.json(), value);
+  const parallel = await Promise.all(Array.from({ length: 4 }, () => post({ code: pairing.code }).then(res => res.json())));
+  for (const recovered of parallel) assert.deepEqual(recovered, value);
+
+  const readCwd = () => fetch(`http://127.0.0.1:${port}/v1/cwd`, { headers: { authorization: `Bearer ${value.capability}` } });
+  const clients = await Promise.all([readCwd(), readCwd()]);
+  for (const client of clients) {
+    assert.equal(client.status, 200);
+    assert.equal((await client.json()).default_cwd, '/tmp/paired');
+  }
+  persisted.db.prepare('UPDATE pairing_codes SET expires_ms = ? WHERE code = ?').run(Date.now(), pairing.code);
+  assert.equal((await post({ code: pairing.code })).status, 404);
+  assert.equal((await readCwd()).status, 200, 'the session outlives its pairing code');
+  persisted.revokeCapability(pairing.capabilityId);
+  assert.equal((await readCwd()).status, 401);
 
   const withoutCwd = await post({ code: plain.code });
   assert.equal(withoutCwd.status, 200);
@@ -1453,7 +1546,9 @@ test('pair discovery bundles live signatures and HTTP guidance without dispatchi
   const guidance = await (await fetch(`${base}/v1/instructions`, { headers: { authorization: `Bearer ${value.capability}` } })).json();
   assert.equal(guidance.instructions, value.instructions);
   assert.deepEqual(events, []);
-  assert.equal((await post('?discover=1')).status, 404);
+  const repeated = await post('?discover=1');
+  assert.equal(repeated.status, 200);
+  assert.deepEqual(await repeated.json(), value);
 });
 
 test('pairing retains access and recovery guidance when optional discovery fails', async t => {
@@ -1474,7 +1569,7 @@ test('pairing retains access and recovery guidance when optional discovery fails
   assert.equal(value.discovery_error, 'discovery_unavailable');
   assert.match(value.instructions, /POST \/v1\/calls/);
   assert.ok(store.resolveCapability(value.capability));
-  assert.equal(store.redeemPairingCode(pairing.code), undefined);
+  assert.equal(store.redeemPairingCode(pairing.code).token, value.capability);
 });
 
 test('discovery cancellation bounds a stalled upstream handshake', async t => {

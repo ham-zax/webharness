@@ -1,0 +1,15 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "taskId": "2026-11-15-reusable-pairing",
+  "taskIntentRef": "docs/aegis/work/2026-11-15-reusable-pairing/task-intent-draft.json",
+  "baselineRefs": [
+    "docs/websession-clients.md"
+  ],
+  "scopeStatus": "Pairing behavior, staged fixes, and local main integration match the user request.",
+  "compatStatus": "No schema migration or legacy path. Existing bearer and HTTP operation contracts remain valid.",
+  "retirementStatus": "No transport or execution owner retires.",
+  "newRiskSignals": [
+    "No blocking code findings in the final review. Expired pairing token copies clear on startup or pairing activity. The existing SQLite busy behavior remains."
+  ],
+  "decision": "continue"
+}

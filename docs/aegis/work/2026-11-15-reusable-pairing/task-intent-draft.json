@@ -1,0 +1,17 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "requestedOutcome": "Recover pairing after lost responses and reuse one code across chats for one hour, with a fixed 24-hour session after first redemption.",
+  "goal": "Recover pairing after lost responses and reuse one code across chats for one hour, with a fixed 24-hour session after first redemption.",
+  "successEvidence": [],
+  "stopCondition": "Stop when success evidence is satisfied or a blocker/risk requires pause.",
+  "nonGoals": [
+    "No new transport, machine binding, independent chat lanes, or service restart."
+  ],
+  "scope": "Pairing recovery, staged client review fixes, regression tests, and local integration on main. The user performs the service restart.",
+  "changeKinds": [
+    "bugfix"
+  ],
+  "riskHints": [
+    "Authentication and persisted expiry semantics"
+  ]
+}

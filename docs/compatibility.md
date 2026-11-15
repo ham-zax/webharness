@@ -2,6 +2,15 @@
 
 WebHarness treats the model-facing MCP surface as a public contract. Provider implementation paths and retained service/state names may stay stable for operational compatibility without being part of that contract.
 
+## Reusable HTTP pairing (2026-11-15)
+
+Fresh pairing codes default to one hour and can return the same bearer token
+repeatedly. The default token lifetime is 24 hours from first redemption.
+Retries never extend either expiry. The pair request and response shapes stay
+unchanged, and existing bearer tokens remain valid. Generate a fresh code and
+prompt for this policy. No state migration or legacy code path is added.
+Shared tokens share cwd, optional turn fencing, and one revocation handle.
+
 ## Current provider identities
 
 The full Personal Workstation exposes these outer provider identities:

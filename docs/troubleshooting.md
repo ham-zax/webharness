@@ -14,7 +14,7 @@ Treat direct Dev `exec`/`bash` as short-RPC work only. Use 45 seconds as the rou
 
 The Dev provider can accept a larger internal `timeout_seconds`, but that does not extend the model-facing connector lifetime. Do not put a long suite into one direct MCP `exec`/`bash` request and interpret a transport timeout as a command failure.
 
-A `timeout_seconds` value above 300 is rejected before the command runs, with `timeout_seconds must be from 1 to 300`. The cap is deliberate, because the deadline cannot outlive the connector window. Do not raise it. Use the Terminal and `wait` path above, or pass `detach=true` to `exec` and wait on its exit file.
+A `timeout_seconds` value above 300 is rejected before the command runs, with `timeout_seconds must be from 1 to 300`. The cap is deliberate, because the deadline cannot outlive the connector window. Do not raise it. Use the Terminal and `wait` path above, or pass `detach=true` to `exec` or `bash` and wait on its exit file.
 
 ## A browser tool call fails with `-32603 Error calling tool`
 

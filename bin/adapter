@@ -408,7 +408,7 @@ adapter_public_base() {
 }
 
 adapter_connect() {
-  local ttl=21600 pair_ttl=300 cwd=""
+  local ttl=86400 pair_ttl=3600 cwd=""
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --cwd)
@@ -448,12 +448,12 @@ adapter_connect() {
   install -d -m 700 "$ADAPTER_STATE_DIR"
   local out
   out="$(umask 077 && WEBSESSION_ADAPTER_STATE_DIR="$ADAPTER_STATE_DIR" node "$ADAPTER_OPERATOR" pair "$ttl" "$pair_ttl" ${cwd:+"$cwd"})"
-  local pair_code capability_id pair_expires_at expires_at
+  local pair_code capability_id pair_expires_at session_ttl_seconds
   pair_code="$(printf '%s\n' "$out" | sed -n 's/^pair_code: //p' | head -n 1)"
   capability_id="$(printf '%s\n' "$out" | sed -n 's/^capability_id: //p' | head -n 1)"
   pair_expires_at="$(printf '%s\n' "$out" | sed -n 's/^pair_expires_at: //p' | head -n 1)"
-  expires_at="$(printf '%s\n' "$out" | sed -n 's/^expires_at: //p' | head -n 1)"
-  if [ -z "$pair_code" ] || [ -z "$capability_id" ] || [ -z "$pair_expires_at" ] || [ -z "$expires_at" ]; then
+  session_ttl_seconds="$(printf '%s\n' "$out" | sed -n 's/^session_ttl_seconds: //p' | head -n 1)"
+  if [ -z "$pair_code" ] || [ -z "$capability_id" ] || [ -z "$pair_expires_at" ] || [ -z "$session_ttl_seconds" ]; then
     echo "WebSession pair output was not parseable; see $ADAPTER_LOG_FILE and bin/adapter auth-status" >&2
     return 1
   fi
@@ -463,14 +463,14 @@ WebSession pairing ready
   base:            $base
   capability_id:   $capability_id
   pair_expires_at: $pair_expires_at
-  session_expires: $expires_at
+  session_seconds: $session_ttl_seconds (from first redemption)
   default_cwd:     $default_cwd_display
   revoke:          bin/adapter revoke-cap $capability_id
 
 --- COPY PROMPT BELOW ---
 EOF
   WEBSESSION_ADAPTER_STATE_DIR="$ADAPTER_STATE_DIR" node "$ADAPTER_OPERATOR" prompt \
-    "$base" "$pair_code" "$pair_expires_at" "$expires_at" "${cwd:-}"
+    "$base" "$pair_code" "$pair_expires_at" "$session_ttl_seconds" "${cwd:-}"
   echo "--- END PROMPT ---"
 }
 

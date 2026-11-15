@@ -1,0 +1,12 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "baselineRefs": [
+    "docs/websession-clients.md"
+  ],
+  "impactStatement": "docs/aegis/work/2026-11-15-reusable-pairing/impact-statement-draft.json",
+  "compatPlan": "Existing bearer tokens, POST pair body, operation nonce rules, and turn fences remain valid.",
+  "retirementPlan": "No transport or execution owner retires.",
+  "evidenceBundle": [
+    "docs/aegis/work/2026-11-15-reusable-pairing/evidence-bundle-draft-pairing.json"
+  ]
+}

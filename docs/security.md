@@ -122,7 +122,11 @@ The WebSession adapter serves `/v1/client.sh` and `/v1/client.py` publicly as st
 `/v1/signatures` and `/v1/instructions` discovery accepts capabilities in the Authorization
 header, keeping them out of URLs and request-path logs.
 
-`bin/adapter connect` prints a short-lived, single-use pairing code. `POST /v1/pair` redeems it for a finite main capability; successful redemption clears the stored plaintext capability from the pairing row. Pair-code expiry is separate from capability expiry. Revoking the associated capability also prevents redemption. Treat an unredeemed pair code as temporary access, and share it only with the intended client.
+`bin/adapter connect` prints a reusable pairing code that defaults to one hour. `POST /v1/pair` returns the same finite main capability on retries. Its default 24-hour lifetime starts at first redemption and never extends on retry. Code expiry stops redemption without ending an already active session. Revoking the capability also blocks the code and every token copy.
+
+The private SQLite pairing row retains a plaintext token copy so a lost response can be recovered. Revocation clears that copy immediately. Startup and pairing activity clear copies whose codes expired. An idle adapter may retain an expired code's token copy on disk until one of those cleanup events. The SQLite file has mode `0600` inside a private directory. Protect backups and the account that owns this state.
+
+Anyone holding the code during its validity window, or the token before its expiry, can use the granted tools. Neither credential identifies a particular computer. Keep both private and use HTTPS. Shared tokens also share cwd, optional turn fences, and one revocation handle.
 
 The Python pairing client intentionally persists its capability in a private `0600` session file. Explicit `WS_CAP` usage keeps the supplied capability in memory instead. A capability's default cwd is context only; absolute and home-relative paths remain governed by the underlying Dev profile. Batch admission rolls back rejected submissions, but it cannot undo effects of tools that have begun execution. Read-only scheduling annotations are not an additional authorization boundary.
 

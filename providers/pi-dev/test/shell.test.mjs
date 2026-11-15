@@ -508,6 +508,25 @@ test('detached exec returns at once and records output and exit code', async () 
   assert.equal(await fs.readFile(result.log_path, 'utf8'), 'out a b\nerr\n');
 });
 
+test('detached Bash executes shell syntax, records its exit, and rejects a timeout', async () => {
+  const workspaceRoot = await tempDir('pi-bash-detach-root-');
+  const stateDir = await tempDir('pi-bash-detach-state-');
+  await assert.rejects(
+    runBash({ workspaceRoot, stateDir, command: 'true', detach: true, timeout_seconds: 5 }),
+    /timeout_seconds does not apply/,
+  );
+  const result = await runBash({
+    workspaceRoot, stateDir, detach: true,
+    command: 'printf "%s\\n" "a b" | tr a-z A-Z; exit 3',
+  });
+  assert.ok(Number.isSafeInteger(result.pid));
+  assert.equal(result.cwd, workspaceRoot);
+  assert.equal(path.dirname(result.log_path), path.join(stateDir, 'jobs'));
+  await waitFor(async () => fs.access(result.exit_path).then(() => true, () => false), 5000);
+  assert.equal(await fs.readFile(result.log_path, 'utf8'), 'A B\n');
+  assert.equal(await fs.readFile(result.exit_path, 'utf8'), '3\n');
+});
+
 test('detached exec reports a missing executable through the exit file', async () => {
   const result = await runExec({
     workspaceRoot: await tempDir('pi-exec-detach-missing-'),

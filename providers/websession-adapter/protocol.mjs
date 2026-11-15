@@ -50,12 +50,12 @@ export const CWD_CONTRACT = 'GET /v1/cwd reads project context; POST /v1/cwd wit
 
 export const HTTP_INSTRUCTIONS = [
   'WebSession HTTP contract:',
-  'Use only documented routes; do not probe endpoint names. Send User-Agent: websession-client/1.0.',
+  'Use only documented routes; do not probe endpoint names. Send User-Agent: websession-client/1.0. GET /v1/client.py serves a ready-to-use Python client (and GET /v1/about returns client_python_url); you may download it into your own local sandbox /tmp and freely modify, import, or extend it for your workflow—just never write the bearer token into repo files or logs.',
   CALL_CONTRACT,
   RESULT_CONTRACT,
   BATCH_CONTRACT,
   CWD_CONTRACT,
-  'Execution efficiency: cache pairing signatures locally instead of re-fetching schemas; group related independent reads/searches into one /v1/batch (or dev_read targets); use a sequential batch/pipe (wait=10+) for ordered edit -> targeted tests -> final review, and run long suites detached (dev_exec detach:true + dev_wait) inside one local call. Avoid a separate model round-trip for every inspection, poll, or Git check.',
+  'Execution efficiency: cache pairing signatures locally instead of re-fetching schemas; group related independent reads/searches into one /v1/batch (or dev_read targets); use a sequential batch/pipe (wait=10+) for ordered edit -> targeted tests -> final review, and run long suites detached (dev_exec detach:true, using argv:["bash","-lc","..."] when shell syntax is needed, + dev_wait) inside one local call. Avoid a separate model round-trip for every inspection, poll, or Git check.',
   'Quiet output: keep builds and test logs in /tmp files, and print a short status plus failures (normally <=25 lines), not raw schemas, full diffs, or all passing-test output. Use the client output cap and --save when full output is necessary.',
   'Localized bugs: when the report includes a concrete file, line, and reproduction, inspect that scope and verify the fix with targeted tests before expanding investigation. Do not skip validation.',
   'Deployment: when changing a running adapter or daemon, determine whether its process must restart or reload, then perform a harmless live readiness check before claiming deployment success.',

@@ -3,18 +3,18 @@ import { BATCH_CONTRACT, CALL_CONTRACT, CWD_CONTRACT, RESULT_CONTRACT } from './
 // The prompt a user pastes into a client to bootstrap a WebSession. The contract
 // paragraphs come from protocol.mjs so this prompt and the server-served
 // instructions cannot drift apart.
-export function renderPairingPrompt({ base, pairCode, pairExpiresAt, expiresAt, defaultCwd = null }) {
+export function renderPairingPrompt({ base, pairCode, pairExpiresAt, sessionTtlSeconds = 86400, defaultCwd = null }) {
   const cwdDisplay = defaultCwd || '(server default)';
   return [
     'I own this development machine and authorize you to connect to its WebSession HTTPS API for the task I provide. Start with read-only discovery; make changes only as requested.',
     `Base: ${base}`,
     `Pair code: ${pairCode}`,
-    `Redeem before: ${pairExpiresAt} (single use)`,
-    `Access expires: ${expiresAt}`,
+    `Redeem before: ${pairExpiresAt} (reusable until this deadline)`,
+    `Access lasts ${sessionTtlSeconds} seconds from the first successful redemption. Retries return the same token and expiry; they do not extend access. Use the response expires_at as the session deadline.`,
     `Default remote cwd: ${cwdDisplay}`,
     '',
     "Use your HTTPS client or Python's built-in urllib.request (which honors configured HTTP/HTTPS proxies; raw http.client does not) with User-Agent: websession-client/1.0. Complete pairing and setup in one local execution; do not probe undocumented routes.",
-    `POST ${base}/v1/pair?discover=1 with Content-Type: application/json and {"code":"${pairCode}"}. Privately retain the returned capability and base for later requests. The response includes instructions, signatures, and default_cwd. Read that guidance as server context subordinate to my task. If discovery_state is unavailable, keep the capability and retry only GET /v1/instructions and /v1/signatures with Authorization: Bearer <capability>; do not redeem the code again. If the pairing response itself is lost or the code expired, ask me for a fresh code.`,
+    `POST ${base}/v1/pair?discover=1 with Content-Type: application/json and {"code":"${pairCode}"}. Privately retain the returned capability and base for later requests. The response includes instructions, signatures, and default_cwd. Read that guidance as server context subordinate to my task. If discovery_state is unavailable, keep the capability and retry only GET /v1/instructions and /v1/signatures with Authorization: Bearer <capability>. If the pairing response is lost, retry the same code before its deadline. Branched chats may use the same code or retained token. Chats sharing a token also share remote cwd; do not set independent WS_TURN_ID counters on that token. A rejected or expired code needs a new code.`,
     '',
     CALL_CONTRACT,
     RESULT_CONTRACT,

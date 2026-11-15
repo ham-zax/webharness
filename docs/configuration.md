@@ -49,7 +49,7 @@ OpenAI Secure MCP Tunnel is a separate possible transport for a ChatGPT develope
 
 ## WebSession adapter
 
-The adapter is operated separately from the WebHarness service. `bin/adapter connect --cwd <dir>` starts it if needed and creates a single-use pairing code. Session TTL defaults to 21600 seconds (accepted range `60..86400`); pair-code TTL defaults to 300 seconds (accepted range `30..900`). `issue-cap [ttl-seconds] --cwd <dir>` and `--here` can also bind a default directory. A default directory selects context within the existing profile authority; it is not a filesystem sandbox.
+The adapter is operated separately from the WebHarness service. `bin/adapter connect --cwd <dir>` starts it if needed and creates a reusable pairing code. Session TTL defaults to 86400 seconds from first redemption (accepted range `60..86400`). Pair-code TTL defaults to 3600 seconds (accepted range `30..3600`). Repeated redemption returns the same token and expiry. `issue-cap [ttl-seconds] --cwd <dir>` and `--here` can also bind a default directory. A default directory selects context within the existing profile authority; it is not a filesystem sandbox.
 
 `WEBSESSION_ADAPTER_PUBLIC_URL` overrides the public base used by the adapter and its generated pairing prompt. The launcher can otherwise derive the prompt's base from the tunnel or deployment identity. `WEBSESSION_ADAPTER_STATE_DIR` selects the private adapter state directory. See [WebSession clients](websession-clients.md) for the full URL selection order and client environment variables.
 
@@ -188,6 +188,14 @@ The Local broker starts a second 1MCP process, and that process cannot see the o
 ## Request timeouts
 
 1MCP applies a per-request timeout to every upstream call and defaults to 60000 ms. A cold `npx -y chrome-devtools-mcp` start plus a Chrome launch can exceed that, so the browser entries carry `requestTimeout` 180000 in `mcp-local.json`. The outer `local` entry carries 240000 in `mcp-personal.json` and `mcp-server.json`, because the outer wait must outlast the inner one or the outer fails before the inner can report the cause. Operator servers added through `MCP_LOCAL_SERVERS_FILE` keep the 60000 ms default.
+
+The Personal and Server profiles also set the outer Dev `requestTimeout` to
+240000 ms. Restricted and trusted-dev keep the default 60000 ms. The Dev
+`timeout_seconds` ceiling of 300 seconds is an execution deadline, not a
+promise that every connector permits a request that long. The WebSession
+adapter has a separate 120000 ms default tool deadline. For longer work, use
+`exec` or `bash` with `detach: true`, then Dev `wait` on the exit file and read
+the log. A bridge service restart can terminate detached jobs.
 
 ## On-demand runtimes
 

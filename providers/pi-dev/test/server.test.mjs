@@ -280,7 +280,7 @@ test('trusted-dev exposes structured exec alongside Bash and minimal schemas', a
     const bash = listed.tools.find(x => x.name === 'bash');
     assert.match(bash.description, /output is bounded/i);
     assert.match(bash.description, /prefer exec/i);
-    assert.deepEqual(Object.keys(bash.inputSchema.properties).sort(), ['command', 'cwd', 'timeout_seconds']);
+    assert.deepEqual(Object.keys(bash.inputSchema.properties).sort(), ['command', 'cwd', 'detach', 'timeout_seconds']);
     const read = listed.tools.find(x => x.name === 'read');
     assert.deepEqual(Object.keys(read.inputSchema.properties).sort(), ['limit', 'mode', 'offset', 'path', 'targets']);
     const edit = listed.tools.find(x => x.name === 'edit');

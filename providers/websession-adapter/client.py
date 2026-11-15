@@ -706,7 +706,7 @@ def cmd_connect(args, compact=False):
     session = {"base": target_base, "cap": cap, "wait": 2}
     if cwd:
         session["cwd"] = cwd
-    # Persist access before optional discovery: the single-use code is already redeemed.
+    # Persist access before optional discovery, so discovery failures do not require pairing again.
     save_session(session)
     sig_data = paired
     guidance = paired.get("instructions")
