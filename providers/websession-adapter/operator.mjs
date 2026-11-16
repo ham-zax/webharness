@@ -24,6 +24,17 @@ try {
     ];
     if (issued.defaultCwd !== null) lines.push(`default_cwd: ${issued.defaultCwd}`);
     process.stdout.write(`${lines.join('\n')}\n`);
+  } else if (action === 'issue-permanent') {
+    const defaultCwd = process.argv[3] ? process.argv[3] : null;
+    const issued = store.issueNonExpiringCapability('main', { defaultCwd });
+    const lines = [
+      `capability_id: ${issued.id}`,
+      `capability: ${issued.token}`,
+      `scope: ${issued.scope}`,
+      'expires_at: never',
+    ];
+    if (issued.defaultCwd !== null) lines.push(`default_cwd: ${issued.defaultCwd}`);
+    process.stdout.write(`${lines.join('\n')}\n`);
   } else if (action === 'set-master') {
     const supplied = process.argv[3];
     const token = supplied === undefined ? randomBytes(32).toString('base64url') : supplied;
@@ -73,7 +84,7 @@ try {
     if (!store.revokeCapability(capabilityId)) throw new Error('capability ID was not found');
     process.stdout.write(`revoked_capability_id: ${capabilityId}\n`);
   } else {
-    throw new Error('usage: node operator.mjs issue [ttl-seconds] [default-cwd] | pair [ttl-seconds] [pair-ttl-seconds] [default-cwd] | prompt <base> <pair-code> <pair-expires-at> <ttl-seconds> [default-cwd] | set-master [bearer] | master-status | revoke-master | revoke <capability-id>');
+    throw new Error('usage: node operator.mjs issue [ttl-seconds] [default-cwd] | issue-permanent [default-cwd] | pair [ttl-seconds] [pair-ttl-seconds] [default-cwd] | prompt <base> <pair-code> <pair-expires-at> <ttl-seconds> [default-cwd] | set-master [bearer] | master-status | revoke-master | revoke <capability-id>');
   }
 } finally {
   store.close();

@@ -202,6 +202,21 @@ export class AdapterStore {
     return this.issueCapability('main', ttlSeconds, 86400, options);
   }
 
+  /**
+   * Issues a capability that does not expire. Revoke it by its capability id.
+   * Keep the token private; it carries the same authority as any main capability.
+   */
+  issueNonExpiringCapability(scope = 'main', options = {}) {
+    if (scope !== 'main') throw new Error('non-expiring capabilities must use the main scope');
+    const defaultCwd = normalizeDefaultCwd(options.defaultCwd);
+    const token = randomBytes(32).toString('base64url');
+    const id = randomUUID();
+    const now = Date.now();
+    this.db.prepare('INSERT INTO capabilities (id, token_hash, scope, created_ms, expires_ms, default_cwd, non_expiring) VALUES (?, ?, ?, ?, 0, ?, 1)')
+      .run(id, sha256(token), scope, now, defaultCwd);
+    return { id, token, scope, expiresMs: null, defaultCwd: defaultCwd ?? null };
+  }
+
   _clearExpiredPairingTokens(now) {
     this.db.prepare("UPDATE pairing_codes SET capability_token = '' WHERE expires_ms <= ? AND capability_token <> ''").run(now);
   }

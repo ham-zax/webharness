@@ -334,6 +334,34 @@ adapter_issue_capability() {
   WEBSESSION_ADAPTER_STATE_DIR="$ADAPTER_STATE_DIR" node "$ADAPTER_OPERATOR" issue "$ttl" ${cwd:+"$cwd"}
 }
 
+adapter_issue_permanent_capability() {
+  local cwd=""
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --cwd)
+        [ "$#" -ge 2 ] || { echo "usage: bin/adapter issue-permanent [--cwd <dir>|--here]" >&2; exit 2; }
+        cwd="$(adapter_resolve_cwd "$2")"
+        shift 2
+        ;;
+      --here)
+        cwd="$(pwd -P)"
+        shift
+        ;;
+      *)
+        echo "usage: bin/adapter issue-permanent [--cwd <dir>|--here]" >&2
+        exit 2
+        ;;
+    esac
+  done
+  [ -f "$ADAPTER_OPERATOR" ] || {
+    echo "adapter operator helper is missing: $ADAPTER_OPERATOR" >&2
+    exit 1
+  }
+  install -d -m 700 "$ADAPTER_STATE_DIR"
+  umask 077
+  WEBSESSION_ADAPTER_STATE_DIR="$ADAPTER_STATE_DIR" node "$ADAPTER_OPERATOR" issue-permanent ${cwd:+"$cwd"}
+}
+
 adapter_set_master_bearer() {
   [ -f "$ADAPTER_OPERATOR" ] || {
     echo "adapter operator helper is missing: $ADAPTER_OPERATOR" >&2
@@ -486,12 +514,13 @@ case "$ACTION" in
   identity-status) adapter_identity status ;;
   identity-revoke) adapter_identity revoke ;;
   issue-cap) adapter_issue_capability "${@:2}" ;;
+  issue-permanent) adapter_issue_permanent_capability "${@:2}" ;;
   set-master-bearer) adapter_set_master_bearer "${@:2}" ;;
   master-status) adapter_master_operator master-status ;;
   revoke-master) adapter_master_operator revoke-master ;;
   revoke-cap) adapter_revoke_capability "$@" ;;
   *)
-    echo "usage: bin/adapter start|stop|status|run|connect [--cwd <dir>|--here] [--ttl <seconds>] [--pair-ttl <seconds>]|auth|auth-status|identity-provision|identity-status|identity-revoke|issue-cap [ttl-seconds] [--cwd <dir>|--here]|set-master-bearer [bearer]|master-status|revoke-master|revoke-cap <capability-id>" >&2
+    echo "usage: bin/adapter start|stop|status|run|connect [--cwd <dir>|--here] [--ttl <seconds>] [--pair-ttl <seconds>]|auth|auth-status|identity-provision|identity-status|identity-revoke|issue-cap [ttl-seconds] [--cwd <dir>|--here]|issue-permanent [--cwd <dir>|--here]|set-master-bearer [bearer]|master-status|revoke-master|revoke-cap <capability-id>" >&2
     exit 2
     ;;
 esac

@@ -73,6 +73,28 @@ test('store hashes main capabilities, deduplicates nonce reuse, and scopes conti
   }
 });
 
+test('non-expiring capability stays active until revoked', (t) => {
+  const stateDir = mkdtempSync(join(tmpdir(), 'websession-adapter-permanent-'));
+  let now = Date.now();
+  t.mock.method(Date, 'now', () => now);
+  const store = new AdapterStore(stateDir);
+  try {
+    const issued = store.issueNonExpiringCapability('main', { defaultCwd: '/tmp/project' });
+    assert.equal(issued.expiresMs, null);
+    assert.equal(issued.defaultCwd, '/tmp/project');
+    now += 10 * 365 * 86400_000;
+    const principal = store.resolveCapability(issued.token);
+    assert.ok(principal);
+    assert.equal(principal.expiresMs, null);
+    assert.equal(principal.defaultCwd, '/tmp/project');
+    assert.equal(store.revokeCapability(issued.id), true);
+    assert.equal(store.resolveCapability(issued.token), undefined);
+  } finally {
+    store.close();
+    rmSync(stateDir, { recursive: true, force: true });
+  }
+});
+
 test('turn fences persist and reject queued calls from older turns', async () => {
   const stateDir = mkdtempSync(join(tmpdir(), 'websession-fence-'));
   let core = new OperationCore({ stateDir });

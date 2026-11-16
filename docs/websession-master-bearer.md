@@ -23,6 +23,23 @@ The same header works for `POST /v1/batch`, `GET`/`PUT /v1/cwd`, `GET /v1/raw`, 
 
 The master bearer is header-only. It is never accepted from a URL path, including the `/v1/s/{capability}/...` universal GET routes, even when its value happens to be 43 characters and therefore matches the ordinary capability shape. Ordinary capabilities keep working in those routes unchanged; only the master credential is refused there.
 
+## Non-expiring capability
+
+A non-expiring capability is an ordinary `main`-scope capability with no
+time-based expiry. It is individually revocable and does not rotate the master
+bearer:
+
+```bash
+bin/adapter issue-permanent --cwd ~/repo/my-project
+bin/adapter revoke-cap <capability-id>
+```
+
+Use it for a long-lived client that must not be re-paired. It carries the same
+authority as any `main` capability, so treat the token as a secret. The master
+bearer remains the password-equivalent bootstrap credential; the permanent
+capability is the narrower operational choice when one client needs stable
+access.
+
 ## Exchange for six-hour access
 
 The exchange path still works for clients that prefer a short-lived capability:

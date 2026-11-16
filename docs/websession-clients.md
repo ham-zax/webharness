@@ -68,6 +68,14 @@ Give the client the value after `capability:`. Do not give it `capability_id`; t
 bin/adapter revoke-cap <capability-id>
 ```
 
+For a client that must not be re-paired, issue a non-expiring capability:
+
+```bash
+bin/adapter issue-permanent --cwd ~/repo/my-project
+```
+
+It has the same `main` scope authority as a finite capability and never expires. Revoke it with `bin/adapter revoke-cap <capability-id>`. Keep the token private. A non-expiring capability is a long-lived secret, not a replacement for the master bearer's rotation rules.
+
 Treat the capability as a secret. Do not commit it, paste it into documentation, or ask the client to repeat it in its answer. When the HTTP access window is over, revoke outstanding finite capabilities as appropriate and stop the adapter explicitly:
 
 ```bash
