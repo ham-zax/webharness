@@ -55,7 +55,7 @@ async function lookupSiblingForCandidate({ pathMode, baseDir, candidate, formatR
         }
       }
 
-      // Case 2: joined multi-segment slug matches a sibling (e.g. "Ahmed Hamza/workout" -> "ahmed-hamza-workout").
+      // Case 2: joined multi-segment slug matches a sibling (e.g. "My Notes/todo" -> "my-notes-todo").
       if (missingSegments.length === 2) {
         const joinedNorm = normalizeLookupName(missingSegments.join(''));
         if (joinedNorm) {

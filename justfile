@@ -2,7 +2,7 @@
 # Every test recipe redirects verbose output to a temp log and prints only
 # counts and failing lines so LLM/agent context stays clean.
 
-set shell := ["bash", "-euo", "pipefail", "-c"]
+set shell := ["bash", "--norc", "-euo", "pipefail", "-c"]
 
 # List available recipes.
 default:
@@ -114,9 +114,19 @@ inspect-mcp METHOD="tools/list" *ARGS="":
 toolbox-check:
     bash scripts/check-personal-toolbox.sh
 
-# Render personal config.
-render PROFILE="personal":
-    node scripts/render-config.mjs --profile {{PROFILE}}
+# Render personal or server config safely without unquoted shell interpolation.
+render $PROFILE="personal":
+    node scripts/render-config.mjs --profile "$PROFILE"
+
+# Copy connector-policy template to ~/.config/mcp-dev-bridge only when missing (never overwrites local rules).
+init-connector-policy:
+    @mkdir -p "${HOME}/.config/mcp-dev-bridge"
+    @if [ ! -f "${HOME}/.config/mcp-dev-bridge/connector-policy.yaml" ]; then \
+      cp config/connector-policy.example.yaml "${HOME}/.config/mcp-dev-bridge/connector-policy.yaml"; \
+      echo "Installed starter connector-policy.yaml from template."; \
+    else \
+      echo "Kept existing ~/.config/mcp-dev-bridge/connector-policy.yaml."; \
+    fi
 
 # Check live WebHarness status.
 status:
@@ -151,9 +161,19 @@ ship $MSG:
     git commit -m "$MSG"
     git push origin main
 
-# Render personal config, reload websession-adapter, and trigger detached bridge restart.
-deploy PROFILE="personal":
-    node scripts/render-config.mjs --profile {{PROFILE}}
+# Render config, reload websession-adapter, and trigger detached bridge restart.
+deploy $PROFILE="personal":
+    node scripts/render-config.mjs --profile "$PROFILE"
     systemctl --user restart --no-block websession-adapter.service || true
     nohup bash -c 'sleep 1 && ./bin/webharness restart' >/tmp/wh-deploy-restart.log 2>&1 </dev/null &
     @echo "Detached bridge restart queued (log: /tmp/wh-deploy-restart.log). Verify with 'just status' in ~15s."
+
+# Pull latest main and redeploy the active profile on this host.
+update:
+    git pull --ff-only origin main
+    @profile=""; \
+      if [ -f "${HOME}/.local/state/mcp-dev-bridge/bridge.env" ]; then \
+        profile="$(grep -E '^MCP_BRIDGE_PROFILE=' "${HOME}/.local/state/mcp-dev-bridge/bridge.env" | tail -n 1 | cut -d= -f2- | tr -d "\"' \r" || true)"; \
+      fi; \
+      profile="${profile:-personal}"; \
+      just deploy "$profile"

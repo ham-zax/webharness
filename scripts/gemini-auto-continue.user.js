@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Gemini Auto-Continue (WebHarness)
 // @namespace    https://github.com/webharness
-// @version      1.2.2
-// @description  Safely auto-continue Gemini Web checkpoints and optionally auto-allow confirmation cards.
+// @version      1.3.0
+// @description  Safely auto-continue Gemini Web checkpoints; autoAllow starts ON (All) with no allowlist (approves any pending card unless disarmed).
 // @match        https://gemini.google.com/*
 // @grant        none
 // @run-at       document-idle
@@ -33,10 +33,11 @@
     errorBanner: '[role="alert"], .error-message, .snackbar-error',
   };
 
+  const isNewChatPath = (p) => /^\/app\/?$/.test(p);
   const saved = (() => { try { return JSON.parse(localStorage.getItem(STORE_KEY) || '{}'); } catch { return {}; } })();
   const state = {
-    armed: false,     // Auto-Continue: always OFF on page load
-    autoAllow: false, // Auto-Allow: always OFF on page load (no allowlist: approves any pending card when ON)
+    armed: true,      // Auto-Continue: ON by default (user can manually disarm anytime)
+    autoAllow: true,  // Auto-Allow: ON (All) by default with no allowlist — approves any pending card unless disarmed
     mode: saved.mode === 'nturns' ? 'nturns' : 'marker',
     maxTurns: Number(saved.maxTurns) > 0 ? Number(saved.maxTurns) : 5,
     turnsUsed: 0,
@@ -44,8 +45,11 @@
     prompt: typeof saved.prompt === 'string' && saved.prompt.trim() ? saved.prompt : 'Continue from the checkpoint.',
     collapsed: Boolean(saved.collapsed),
     url: location.pathname,
+    needsBaseline: !isNewChatPath(location.pathname),
     lastHandledKey: '', lastSentCount: 0, stableKey: '', stableSince: 0,
-    countdown: 0, countdownTimer: null, sending: false, status: 'Idle', lastRenderSig: '',
+    countdown: 0, countdownTimer: null, sending: false,
+    status: (saved.mode === 'nturns' ? 'Armed (N-Turns)' : 'Armed (Marker)'),
+    lastRenderSig: '',
   };
 
   const allowAttempts = new WeakMap(); // button -> { count, lastAt }
@@ -224,20 +228,35 @@
 
   const tick = () => {
     if (location.pathname !== state.url) {
-      state.url = location.pathname; state.turnsUsed = 0; state.allowsClicked = 0;
-      state.lastHandledKey = ''; state.lastSentCount = 0;
-      if (state.armed || state.autoAllow) disarm('Disarmed: chat changed', true);
+      const fromNewChat = isNewChatPath(state.url) && /^\/app\/.+/.test(location.pathname);
+      state.url = location.pathname;
+      if (!fromNewChat) {
+        clearCountdown();
+        state.turnsUsed = 0; state.allowsClicked = 0;
+        state.lastHandledKey = ''; state.lastSentCount = 0;
+        state.stableKey = ''; state.stableSince = 0;
+        state.armed = true; state.autoAllow = true;
+        state.needsBaseline = !isNewChatPath(location.pathname);
+        state.status = state.mode === 'marker' ? 'Armed (Marker)' : 'Armed (N-Turns)';
+        render(true);
+      }
       return;
     }
     if (!state.armed && !state.autoAllow) return;
     if (hasErrorBanner()) return disarm('Stopped: error banner', true);
-    if (handlePendingApprovals()) return;
+    if (handlePendingApprovals()) { state.needsBaseline = false; return; }
     if (!state.armed || state.countdownTimer || state.sending) return;
     if (state.turnsUsed >= state.maxTurns) return disarm(`Cap reached (${state.turnsUsed}/${state.maxTurns})`);
-    if (isBusy()) { state.stableKey = ''; state.stableSince = 0; return setStatus('Streaming / running...'); }
+    if (isBusy()) { state.needsBaseline = false; state.stableKey = ''; state.stableSince = 0; return setStatus('Streaming / running...'); }
 
     const snap = getLatestResponse();
     if (!snap.count || !snap.text) return;
+    if (state.needsBaseline) {
+      state.needsBaseline = false;
+      state.lastHandledKey = snap.key;
+      state.lastSentCount = snap.count;
+      return setStatus(state.mode === 'marker' ? 'Armed (Marker)' : 'Armed (N-Turns)');
+    }
     if (!(snap.count > state.lastSentCount || snap.key !== state.lastHandledKey)) return;
 
     if (snap.key !== state.stableKey) { state.stableKey = snap.key; state.stableSince = Date.now(); return setStatus('Waiting for stability...'); }
