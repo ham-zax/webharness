@@ -36,13 +36,17 @@ chmodSync(stateDir, 0o700);
 const operationCore = new OperationCore({ stateDir, mcpUrl, callbackUrl: oauthCallbackUrl, toolTimeoutMs });
 operationCore.start();
 
+let evidenceModeVerified = false;
+
 function rotateEvidenceIfNeeded() {
   try {
     if (statSync(evidencePath).size < maxEvidenceBytes) return;
     rmSync(rotatedEvidencePath, { force: true });
     renameSync(evidencePath, rotatedEvidencePath);
+    evidenceModeVerified = false;
   } catch (error) {
     if (error?.code !== 'ENOENT') throw error;
+    evidenceModeVerified = false;
   }
 }
 
@@ -62,7 +66,10 @@ function recordEvidence(req, url, route, extra = {}) {
     ...extra,
   };
   appendFileSync(evidencePath, `${JSON.stringify(entry)}\n`, { encoding: 'utf8', flag: 'a', mode: 0o600 });
-  chmodSync(evidencePath, 0o600);
+  if (!evidenceModeVerified) {
+    chmodSync(evidencePath, 0o600);
+    evidenceModeVerified = true;
+  }
   return entry;
 }
 
@@ -1203,6 +1210,10 @@ const server = createServer((req, res) => {
     sendText(res, 400, `WEBSESSION-PROBE/1\nstate: rejected\ncode: invalid_probe_request\nmessage: ${error.message}`);
   }
 });
+
+// Match client.py's keep-alive pool TTL so pooled sockets survive multi-step pauses.
+server.keepAliveTimeout = 65_000;
+server.headersTimeout = 66_000;
 
 server.listen(port, host, () => {
   process.stdout.write(`WebSession adapter probe listening on http://${host}:${port}\n`);

@@ -5,7 +5,7 @@ Environment:
   WS_BASE          WebSession base URL, e.g. https://mcp.example.com (overrides session file)
   WS_CAP           capability secret (overrides session file; stays in memory when set)
   WS_CWD           optional default remote working directory (overrides session file)
-  WS_WAIT          initial POST wait=N seconds, 0..90 (default 2)
+  WS_WAIT          initial POST wait=N seconds, 0..90 (default 15)
   WS_TURN_ID       optional monotonically increasing turn number
   WS_MAX_OUTPUT    display limit in UTF-8 bytes, default 4096 (0 prints everything)
   WH_SESSION_FILE  optional session file path, default ~/.wh/session.json (mode 0600)
@@ -145,6 +145,10 @@ def sticky_cwd():
     return cwd if isinstance(cwd, str) and cwd else None
 
 
+DEFAULT_WAIT_SECONDS = 15
+SLOW_WAIT_FLOOR_SECONDS = 30
+
+
 def effective_wait():
     raw = os.environ.get("WS_WAIT")
     if raw is not None:
@@ -155,14 +159,14 @@ def effective_wait():
             fail("WS_WAIT must be an integer from 0 to 90")
         return value
     if os.environ.get("WS_CAP", ""):
-        return 2
-    wait_val = load_session().get("wait", 2)
+        return DEFAULT_WAIT_SECONDS
+    wait_val = load_session().get("wait", DEFAULT_WAIT_SECONDS)
     if type(wait_val) is int and 0 <= wait_val <= MAX_WAIT_SECONDS:
         return wait_val
-    return 2
+    return DEFAULT_WAIT_SECONDS
 
 
-def preferred_slow_wait(floor=10):
+def preferred_slow_wait(floor=SLOW_WAIT_FLOOR_SECONDS):
     if "WS_WAIT" in os.environ:
         return effective_wait()
     return max(effective_wait(), floor)
@@ -294,7 +298,7 @@ def is_dev_command_call(tool_name, item_args):
     if tool_name in ("dev_exec", "dev_bash"):
         return True
     if tool_name == "local_fallback_dispatch" and isinstance(item_args, dict):
-        return item_args.get("server") == "dev" and item_args.get("tool") in ("exec", "bash")
+        return item_args.get("server") == "dev" and item_args.get("tool") in ("exec", "bash", "dev_exec", "dev_bash")
     return False
 
 
@@ -338,7 +342,7 @@ def with_wait(url, seconds):
     return urllib.parse.urlunsplit(parts._replace(query=urllib.parse.urlencode(query)))
 
 
-POOL_IDLE_TTL_SECONDS = 4.0
+POOL_IDLE_TTL_SECONDS = 45.0
 GET_RETRY_STATUSES = (502, 503, 504)
 GET_MAX_ATTEMPTS = 3
 
@@ -623,8 +627,14 @@ def resolve_operation(data, deadline):
 
 
 def apply_client_cwd(tool, arguments, cwd):
-    if cwd and tool in CWD_INJECT_TOOLS and "cwd" not in arguments:
+    if not cwd or tool not in CWD_INJECT_TOOLS:
+        return arguments
+    if "cwd" not in arguments:
         return {**arguments, "cwd": cwd}
+    if isinstance(arguments.get("cwd"), str):
+        resolved = resolve_remote_path(arguments["cwd"], cwd)
+        if resolved != arguments["cwd"]:
+            return {**arguments, "cwd": resolved}
     return arguments
 
 
@@ -703,7 +713,7 @@ def cmd_connect(args, compact=False):
     cwd = explicit_cwd if explicit_cwd is not None else paired.get("default_cwd")
     if cwd is not None and (not isinstance(cwd, str) or not cwd):
         cwd = None
-    session = {"base": target_base, "cap": cap, "wait": 2}
+    session = {"base": target_base, "cap": cap, "wait": DEFAULT_WAIT_SECONDS}
     if cwd:
         session["cwd"] = cwd
     # Persist access before optional discovery, so discovery failures do not require pairing again.
@@ -828,7 +838,7 @@ def cmd_import_session(args):
     cwd = explicit_cwd if explicit_cwd is not None else data.get("cwd", data.get("default_cwd"))
     if cwd is not None and (not isinstance(cwd, str) or not cwd or "\0" in cwd):
         fail("session cwd must be a non-empty string without NUL bytes")
-    wait = data.get("wait", 2)
+    wait = data.get("wait", DEFAULT_WAIT_SECONDS)
     if type(wait) is not int or not 0 <= wait <= MAX_WAIT_SECONDS:
         fail("session wait must be an integer from 0 to 90")
     session = {"base": base.rstrip("/"), "cap": cap, "wait": wait}
@@ -1191,7 +1201,7 @@ def cmd_batch(args, default_sequential=False):
         if not isinstance(item_args, dict):
             fail("batch[%d].arguments must be an object" % index)
         validated.append((item["tool"], prepare_batch_arguments(item["tool"], item_args)))
-    initial_wait = preferred_slow_wait(10)
+    initial_wait = preferred_slow_wait()
     deadline = time.monotonic() + POLL_SECONDS
     batch_payload = {
         "version": 1,
@@ -1286,7 +1296,7 @@ def cmd_llist(args):
         payload["query"] = positional[1]
     if entry_limit is not None:
         payload["limit"] = entry_limit
-    print(render_output(unwrap_mcp_text(call("local_tool_list", payload, wait_override=preferred_slow_wait(10))), limit))
+    print(render_output(unwrap_mcp_text(call("local_tool_list", payload, wait_override=preferred_slow_wait())), limit))
 
 
 def cmd_lschema(args):
@@ -1295,7 +1305,7 @@ def cmd_lschema(args):
     server_name, tool_name, rem = parse_local_route(args, usage)
     if rem:
         fail(usage)
-    raw = call("local_tool_schema", {"server": server_name, "tool": tool_name}, wait_override=preferred_slow_wait(10))
+    raw = call("local_tool_schema", {"server": server_name, "tool": tool_name}, wait_override=preferred_slow_wait())
     print(render_output(unwrap_mcp_text(raw), limit))
 
 
@@ -1312,7 +1322,7 @@ def cmd_lcall(args):
     raw = call(
         "local_tool_call",
         {"server": server_name, "tool": tool_name, "arguments": parsed_args},
-        wait_override=preferred_slow_wait(10),
+        wait_override=preferred_slow_wait(),
     )
     print(render_output(unwrap_mcp_text(raw), limit))
 
@@ -1349,7 +1359,7 @@ def cmd_lbatch(args):
     payload = {"server": server_name, "tool": tool_name, "calls": normalized_calls}
     if concurrency is not None:
         payload["concurrency"] = concurrency
-    raw = call("local_tool_batch", payload, wait_override=preferred_slow_wait(10))
+    raw = call("local_tool_batch", payload, wait_override=preferred_slow_wait())
     print(render_output(unwrap_mcp_text(raw), limit))
 
 

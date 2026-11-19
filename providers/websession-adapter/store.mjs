@@ -48,20 +48,20 @@ function validMasterBearer(value) {
 }
 
 function splitUtf8(text, maxBytes = CHUNK_BYTES) {
+  const buf = Buffer.from(text, 'utf8');
+  if (buf.length <= maxBytes) return [text];
   const chunks = [];
-  let current = '';
-  let currentBytes = 0;
-  for (const character of text) {
-    const bytes = Buffer.byteLength(character, 'utf8');
-    if (current && currentBytes + bytes > maxBytes) {
-      chunks.push(current);
-      current = '';
-      currentBytes = 0;
+  let offset = 0;
+  while (offset < buf.length) {
+    let end = Math.min(offset + maxBytes, buf.length);
+    if (end < buf.length) {
+      // Back up past UTF-8 continuation bytes (10xxxxxx) so multi-byte code points never split.
+      while (end > offset && (buf[end] & 0xc0) === 0x80) end -= 1;
+      if (end === offset) end = Math.min(offset + maxBytes, buf.length);
     }
-    current += character;
-    currentBytes += bytes;
+    chunks.push(buf.toString('utf8', offset, end));
+    offset = end;
   }
-  if (current || chunks.length === 0) chunks.push(current);
   return chunks;
 }
 
@@ -91,7 +91,10 @@ export class AdapterStore {
     this.db = new DatabaseSync(this._dbPath);
     chmodSync(this._dbPath, 0o600);
     this.db.exec(`
+      PRAGMA busy_timeout = 5000;
       PRAGMA journal_mode = WAL;
+      PRAGMA synchronous = FULL;
+      PRAGMA temp_store = MEMORY;
       PRAGMA foreign_keys = ON;
       CREATE TABLE IF NOT EXISTS capabilities (
         id TEXT PRIMARY KEY,

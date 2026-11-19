@@ -636,6 +636,9 @@ function startToolFixture(t, tools, runTool) {
 const CONCURRENCY_TOOLS = [
   { name: 'fixture_read', description: 'Read a file.', inputSchema: { type: 'object' }, annotations: { readOnlyHint: true } },
   { name: 'fixture_write', description: 'Write a file.', inputSchema: { type: 'object', properties: { cwd: { type: 'string' } } } },
+  // The fallback dispatcher advertises readOnlyHint for transport compatibility but can
+  // still mutate, so it must stay out of the concurrent lane.
+  { name: 'local_fallback_dispatch', description: 'Fallback dispatch.', inputSchema: { type: 'object' }, annotations: { readOnlyHint: true } },
 ];
 
 async function slowTool(name, args, events) {
@@ -748,6 +751,7 @@ test('read-only tools run during slow mutations while mutations stay serialized'
     assert.ok(access);
     assert.equal(core._readOnlyTools.has('fixture_read'), true);
     assert.equal(core._readOnlyTools.has('fixture_write'), false);
+    assert.equal(core._readOnlyTools.has('local_fallback_dispatch'), false, 'read-only hint must not put the mutating fallback in the concurrent lane');
 
     const submit = (tool, nonce) => core.submit(issued.token, nonce, parseRequest({ version: 1, tool, arguments: { path: '/tmp/x' } }), 'json-post-v1');
     const writeOne = submit('fixture_write', 'write-one');
@@ -1195,6 +1199,7 @@ test('a capability default cwd resolves missing cwd and relative paths across De
     { name: 'dev_list_directory', description: 'List directory.', inputSchema: { type: 'object' }, annotations: { readOnlyHint: true } },
     { name: 'dev_search', description: 'Search files.', inputSchema: { type: 'object' }, annotations: { readOnlyHint: true } },
     { name: 'dev_run_script', description: 'Run a script.', inputSchema: { type: 'object' } },
+    { name: 'local_fallback_dispatch', description: 'Fallback dispatch.', inputSchema: { type: 'object' }, annotations: { readOnlyHint: true } },
   ];
   const { server } = startToolFixture(t, tools, async (name, args) => {
     calls.push({ name, args });
@@ -1225,6 +1230,12 @@ test('a capability default cwd resolves missing cwd and relative paths across De
     await runOne('c-bash-2', 'dev_bash', { command: 'pwd', cwd: '/tmp/explicit' });
     assert.deepEqual(calls.at(-1).args, { command: 'pwd', cwd: '/tmp/explicit' });
 
+    await runOne('c-bash-rel', 'dev_bash', { command: 'pwd', cwd: 'sub' });
+    assert.deepEqual(calls.at(-1).args, { command: 'pwd', cwd: '/tmp/default-work/sub' });
+
+    await runOne('c-bash-dot', 'dev_bash', { command: 'pwd', cwd: '.' });
+    assert.deepEqual(calls.at(-1).args, { command: 'pwd', cwd: '/tmp/default-work' });
+
     await runOne('c-ls-1', 'dev_list_directory', {});
     assert.deepEqual(calls.at(-1).args, { path: '/tmp/default-work' });
 
@@ -1247,7 +1258,493 @@ test('a capability default cwd resolves missing cwd and relative paths across De
 
     await runOne('c-script-2', 'dev_run_script', { script: 'return 1;', cwd: '/tmp/explicit' });
     assert.deepEqual(calls.at(-1).args, { script: 'return 1;', cwd: '/tmp/explicit' });
+
+    // local_fallback_dispatch targeting server="dev" resolves defaultCwd identically,
+    // including omitted arguments and dev_* tool aliases, while leaving non-dev routes untouched.
+    await runOne('c-fb-bash', 'local_fallback_dispatch', { server: 'dev', tool: 'bash', arguments: { command: 'pwd' } });
+    assert.deepEqual(calls.at(-1).args, { server: 'dev', tool: 'bash', arguments: { command: 'pwd', cwd: '/tmp/default-work' } });
+
+    await runOne('c-fb-bash-alias', 'local_fallback_dispatch', { server: 'dev', tool: 'dev_bash', arguments: { command: 'pwd' } });
+    assert.deepEqual(calls.at(-1).args, { server: 'dev', tool: 'dev_bash', arguments: { command: 'pwd', cwd: '/tmp/default-work' } });
+
+    await runOne('c-fb-ls-omitted', 'local_fallback_dispatch', { server: 'dev', tool: 'list_directory' });
+    assert.deepEqual(calls.at(-1).args, { server: 'dev', tool: 'list_directory', arguments: { path: '/tmp/default-work' } });
+
+    await runOne('c-fb-edit', 'local_fallback_dispatch', { server: 'dev', tool: 'edit', arguments: { targets: [{ path: 'sub/y.mjs', edits: [] }] } });
+    assert.deepEqual(calls.at(-1).args, { server: 'dev', tool: 'edit', arguments: { targets: [{ path: '/tmp/default-work/sub/y.mjs', edits: [] }] } });
+
+    await runOne('c-fb-write', 'local_fallback_dispatch', { server: 'dev', tool: 'write', arguments: { path: 'fb.txt', content: 'ok' } });
+    assert.deepEqual(calls.at(-1).args, { server: 'dev', tool: 'write', arguments: { path: '/tmp/default-work/fb.txt', content: 'ok' } });
+
+    await runOne('c-fb-nondev', 'local_fallback_dispatch', { server: 'terminal', tool: 'terminal_open', arguments: { name: 't1', cwd: 'rel' } });
+    assert.deepEqual(calls.at(-1).args, { server: 'terminal', tool: 'terminal_open', arguments: { name: 't1', cwd: 'rel' } });
+
+    await runOne('c-fb-batch', 'local_fallback_dispatch', {
+      server: 'dev',
+      tool: 'write',
+      calls: [{ id: 'a', arguments: { path: 'one.txt', content: '1' } }, { id: 'b', arguments: { path: '/abs/two.txt', content: '2' } }],
+    });
+    assert.deepEqual(calls.at(-1).args, {
+      server: 'dev',
+      tool: 'write',
+      calls: [{ id: 'a', arguments: { path: '/tmp/default-work/one.txt', content: '1' } }, { id: 'b', arguments: { path: '/abs/two.txt', content: '2' } }],
+    });
+
+    // Heterogeneous fallback batch with omitted top-level server/tool resolves defaultCwd only on dev entries.
+    await runOne('c-fb-hetero', 'local_fallback_dispatch', {
+      sequential: true,
+      calls: [
+        { server: 'dev', tool: 'write', arguments: { path: 'h.txt', content: '1' } },
+        { server: 'dev', tool: 'bash', arguments: { command: 'pwd', cwd: 'sub' } },
+        { server: 'terminal', tool: 'terminal_open', arguments: { name: 't2', cwd: 'rel' } },
+      ],
+    });
+    assert.deepEqual(calls.at(-1).args, {
+      sequential: true,
+      calls: [
+        { server: 'dev', tool: 'write', arguments: { path: '/tmp/default-work/h.txt', content: '1' } },
+        { server: 'dev', tool: 'bash', arguments: { command: 'pwd', cwd: '/tmp/default-work/sub' } },
+        { server: 'terminal', tool: 'terminal_open', arguments: { name: 't2', cwd: 'rel' } },
+      ],
+    });
   } finally {
+    await core.close();
+    rmSync(stateDir, { recursive: true, force: true });
+  }
+});
+
+test('local_fallback_dispatch runs read-only and cross-server routes concurrently while keeping same-server writes FIFO', async t => {
+  const stateDir = mkdtempSync(join(tmpdir(), 'websession-fb-lanes-'));
+  const devBashEntered = deferred();
+  const devBashGate = deferred();
+  const events = [];
+  const { server } = startToolFixture(t, CONCURRENCY_TOOLS, async (_name, args) => {
+    const key = `${args.server}/${args.tool}:${args.arguments?.tag ?? ''}`;
+    events.push({ key, phase: 'start', at: Date.now() });
+    if (key === 'dev/bash:slow') {
+      devBashEntered.resolve();
+      await devBashGate.promise;
+    }
+    events.push({ key, phase: 'end', at: Date.now() });
+    return { content: [{ type: 'text', text: `ok:${key}` }] };
+  });
+  await once(server, 'listening');
+  t.after(() => {
+    server.closeAllConnections();
+    server.close();
+  });
+  const core = new OperationCore({
+    stateDir,
+    mcpUrl: `http://127.0.0.1:${server.address().port}/mcp`,
+    callbackUrl: 'http://127.0.0.1:9/callback',
+    toolTimeoutMs: 15000,
+  });
+  try {
+    const issued = core.store.issueMainCapability(120);
+    await core.permittedTools(issued.token);
+    assert.equal(core._readOnlyTools.has('local_fallback_dispatch'), false);
+
+    const submitFb = (nonce, serverName, tool, innerArgs) => core.submit(
+      issued.token,
+      nonce,
+      parseRequest({ version: 1, tool: 'local_fallback_dispatch', arguments: { server: serverName, tool, arguments: innerArgs } }),
+      'json-post-v1',
+    );
+
+    const slowDevBash = submitFb('fb-dev-bash', 'dev', 'bash', { tag: 'slow' });
+    const queuedDevEdit = submitFb('fb-dev-edit', 'dev', 'edit', { tag: 'after' });
+    await withinMs(devBashEntered.promise, 10_000, 'slow dev/bash did not start');
+    assert.equal(events.some(e => e.key === 'dev/edit:after'), false, 'same-server dev mutation waits behind slow dev/bash');
+
+    // Read-only Dev + Local routes AND cross-server mutations all finish while dev/bash is blocked.
+    const parallelOps = [
+      submitFb('fb-dev-read', 'dev', 'read', { tag: 'r1' }),
+      submitFb('fb-dev-wait', 'dev', 'wait', { tag: 'w1' }),
+      submitFb('fb-term-snap', 'terminal', 'terminal_read', { tag: 'tr1', snapshot: true }),
+      submitFb('fb-cm-search', 'codebase-memory-mcp', 'search_graph', { tag: 'cm1' }),
+      submitFb('fb-bf-observe', 'browser-fast', 'observe', { tag: 'o1' }),
+      submitFb('fb-bf-exec', 'browser-fast', 'execute', { tag: 'e1' }),
+      submitFb('fb-term-send', 'terminal', 'terminal_send', { tag: 's1' }),
+    ];
+    await withinMs(
+      Promise.all(parallelOps.map(op => core.waitForOperation(op.operation.id, 10_000))),
+      10_000,
+      'read-only or cross-server fallback calls were blocked by slow dev/bash',
+    );
+    for (const op of parallelOps) {
+      assert.equal(core.store.getOperation(op.operation.id).state, 'completed');
+    }
+    assert.equal(core.store.getOperation(slowDevBash.operation.id).state, 'running');
+    assert.equal(events.some(e => e.key === 'dev/edit:after'), false);
+
+    devBashGate.resolve();
+    await withinMs(
+      Promise.all([
+        core.waitForOperation(slowDevBash.operation.id, 10_000),
+        core.waitForOperation(queuedDevEdit.operation.id, 10_000),
+      ]),
+      10_000,
+      'dev mutations did not finish after releasing gate',
+    );
+    const bashEnd = events.findIndex(e => e.key === 'dev/bash:slow' && e.phase === 'end');
+    const editStart = events.findIndex(e => e.key === 'dev/edit:after' && e.phase === 'start');
+    assert.ok(bashEnd !== -1 && editStart > bashEnd, 'same-server dev mutation ran FIFO after dev/bash');
+
+    // browser-daily/tabs is concurrent only for list/omitted action; new/close serialize on browser-daily lane.
+    assert.equal(core._isConcurrentOperation({ tool: 'local_fallback_dispatch', request_json: JSON.stringify({ arguments: { server: 'browser-daily', tool: 'tabs' } }) }), true);
+    assert.equal(core._isConcurrentOperation({ tool: 'local_fallback_dispatch', request_json: JSON.stringify({ arguments: { server: 'browser-daily', tool: 'tabs', arguments: { action: 'list' } } }) }), true);
+    assert.equal(core._isConcurrentOperation({ tool: 'local_fallback_dispatch', request_json: JSON.stringify({ arguments: { server: 'browser-daily', tool: 'tabs', arguments: { action: 'new' } } }) }), false);
+    assert.equal(core._isConcurrentOperation({ tool: 'local_fallback_dispatch', request_json: JSON.stringify({ arguments: { server: 'browser-daily', tool: 'tabs', arguments: { action: 'close', tab: 1 } } }) }), false);
+
+    // local_tool_batch participates in read-only concurrency and per-server mutation lanes too.
+    assert.equal(core._isConcurrentOperation({ tool: 'local_tool_batch', request_json: JSON.stringify({ arguments: { server: 'browser-fast', tool: 'observe', calls: [{ arguments: {} }] } }) }), true);
+    assert.equal(core._isConcurrentOperation({ tool: 'local_tool_batch', request_json: JSON.stringify({ arguments: { server: 'browser-fast', tool: 'execute', calls: [{ arguments: {} }] } }) }), false);
+    assert.equal(core._mutationLaneKey({ principal_id: 'p1', tool: 'local_tool_batch', request_json: JSON.stringify({ arguments: { server: 'browser-fast', tool: 'execute', calls: [{ arguments: {} }] } }) }), 'p1:server:browser-fast');
+
+    // _isUnsuccessfulStep detects text-only batch failures without false-positiving on single-call JSON results.
+    assert.equal(core._isUnsuccessfulStep({
+      id: 'op-batch-text-err',
+      state: 'completed',
+      tool: 'local_fallback_dispatch',
+      request_json: JSON.stringify({ arguments: { server: 'dev', tool: 'write', calls: [{ id: 'a', arguments: {} }] } }),
+      result_text: 'call 0 (a): fulfilled (downstream isError)\nWRITE_FAILED: disk full',
+    }), true);
+    assert.equal(core._isUnsuccessfulStep({
+      id: 'op-batch-text-rej',
+      state: 'completed',
+      tool: 'local_tool_batch',
+      request_json: JSON.stringify({ arguments: { server: 'terminal', tool: 'terminal_send', calls: [{ arguments: {} }] } }),
+      result_text: 'call 0: rejected INNER_CALL_FAILED: timeout',
+    }), true);
+    assert.equal(core._isUnsuccessfulStep({
+      id: 'op-single-json-ok',
+      state: 'completed',
+      tool: 'local_fallback_dispatch',
+      request_json: JSON.stringify({ arguments: { server: 'custom', tool: 'search', arguments: { q: 'test' } } }),
+      result_text: JSON.stringify({ results: [{ status: 'rejected', item: 'PR #1' }] }),
+    }), false);
+    assert.equal(core._isUnsuccessfulStep({
+      id: 'op-batch-dev-bash-nonzero-text',
+      state: 'completed',
+      tool: 'local_fallback_dispatch',
+      request_json: JSON.stringify({ arguments: { server: 'dev', tool: 'bash', calls: [{ id: 'a', arguments: { command: 'false' } }, { id: 'b', arguments: { command: 'true' } }] } }),
+      result_text: 'call 0 (a): fulfilled\nboom\n[exit 1 · 0.01s]\ncall 1 (b): fulfilled\nok\n[exit 0 · 0.01s]',
+    }), true);
+    assert.equal(core._isUnsuccessfulStep({
+      id: 'op-batch-dev-bash-nonzero-json',
+      state: 'completed',
+      tool: 'local_fallback_dispatch',
+      request_json: JSON.stringify({ arguments: { server: 'dev', tool: 'exec', calls: [{ arguments: { argv: ['false'] } }, { arguments: { argv: ['true'] } }] } }),
+      result_text: JSON.stringify({
+        results: [
+          { index: 0, status: 'fulfilled', result: { content: [{ type: 'text', text: '[exit 2 · 0.01s]' }] } },
+          { index: 1, status: 'fulfilled', result: { content: [{ type: 'text', text: '[exit 0 · 0.01s]' }] } },
+        ],
+      }),
+    }), true);
+    assert.equal(core._isUnsuccessfulStep({
+      id: 'op-batch-dev-bash-all-zero-text',
+      state: 'completed',
+      tool: 'local_fallback_dispatch',
+      request_json: JSON.stringify({ arguments: { server: 'dev', tool: 'bash', calls: [{ arguments: { command: 'true' } }] } }),
+      result_text: 'call 0: fulfilled\nok\n[exit 0 · 0.01s]',
+    }), false);
+
+    // Heterogeneous local_fallback_dispatch batches: concurrency, multi-lane barriers, file-scoped checks, and failure detection.
+    assert.equal(core._isConcurrentOperation({
+      tool: 'local_fallback_dispatch',
+      request_json: JSON.stringify({
+        arguments: {
+          calls: [
+            { server: 'dev', tool: 'read', arguments: { path: '/tmp/a' } },
+            { server: 'browser-fast', tool: 'observe', arguments: {} },
+          ],
+        },
+      }),
+    }), true);
+    assert.equal(core._isConcurrentOperation({
+      tool: 'local_fallback_dispatch',
+      request_json: JSON.stringify({
+        arguments: {
+          server: 'dev',
+          tool: 'read',
+          calls: [
+            { arguments: { path: '/tmp/a' } },
+            { server: 'dev', tool: 'write', arguments: { path: '/tmp/b', content: 'x' } },
+          ],
+        },
+      }),
+    }), false);
+    assert.deepEqual(core._mutationLaneKeys({
+      principal_id: 'p1',
+      tool: 'local_fallback_dispatch',
+      request_json: JSON.stringify({
+        arguments: {
+          calls: [
+            { server: 'dev', tool: 'write', arguments: { path: '/tmp/a', content: '1' } },
+            { server: 'terminal', tool: 'terminal_send', arguments: { name: 't1', text: 'hi' } },
+          ],
+        },
+      }),
+    }).sort(), ['p1', 'p1:server:terminal']);
+    assert.equal(core._isFileScopedDevMutation({
+      tool: 'local_fallback_dispatch',
+      request_json: JSON.stringify({
+        arguments: {
+          server: 'dev',
+          tool: 'write',
+          calls: [
+            { arguments: { path: '/tmp/a', content: '1' } },
+            { server: 'terminal', tool: 'terminal_send', arguments: { name: 't1', text: 'hi' } },
+          ],
+        },
+      }),
+    }), false);
+    assert.equal(core._extractFileScopedPaths({
+      principal_id: issued.id,
+      tool: 'dev_write',
+      request_json: JSON.stringify({ arguments: { path: 'relative-without-default-cwd.txt', content: '1' } }),
+    }), null);
+    assert.equal(core._isUnsuccessfulStep({
+      id: 'op-hetero-text-err',
+      state: 'completed',
+      tool: 'local_fallback_dispatch',
+      request_json: JSON.stringify({
+        arguments: {
+          sequential: true,
+          calls: [
+            { id: 'w', server: 'dev', tool: 'write', arguments: { path: '/tmp/a', content: '1' } },
+            { id: 't', server: 'terminal', tool: 'terminal_send', arguments: { name: 't1', text: 'x' } },
+          ],
+        },
+      }),
+      result_text: 'call 0 (w) [dev/write]: fulfilled\nok\ncall 1 (t) [terminal/terminal_send]: fulfilled (downstream isError)\nboom',
+    }), true);
+    assert.equal(core._isUnsuccessfulStep({
+      id: 'op-hetero-bash-nonzero',
+      state: 'completed',
+      tool: 'local_fallback_dispatch',
+      request_json: JSON.stringify({
+        arguments: {
+          sequential: true,
+          calls: [
+            { id: 'cmd', server: 'dev', tool: 'bash', arguments: { command: 'exit 5' } },
+            { id: 'r', server: 'dev', tool: 'read', arguments: { path: '/tmp/a' } },
+          ],
+        },
+      }),
+      result_text: 'call 0 (cmd) [dev/bash]: fulfilled\nfailed\n[exit 5 · 0.01s]\ncall 1 (r) [dev/read]: fulfilled\nok',
+    }), true);
+    await new Promise(r => setImmediate(r));
+    assert.equal(core._tails.size, 0, 'all lane tails self-cleaned');
+    assert.equal(core._fileActive.size, 0, 'file-scoped barrier self-cleaned');
+  } finally {
+    devBashGate.resolve();
+    await core.close();
+    rmSync(stateDir, { recursive: true, force: true });
+  }
+});
+
+test('file-scoped dev writes/edits overlap for disjoint paths, serialize FIFO on same path, and drain before dev/bash', async t => {
+  const stateDir = mkdtempSync(join(tmpdir(), 'websession-file-barrier-'));
+  const w1Entered = deferred();
+  const w2Entered = deferred();
+  const releaseWrites = deferred();
+  const events = [];
+  const { server } = startToolFixture(t, CONCURRENCY_TOOLS, async (_name, args) => {
+    const tag = args.arguments?.tag ?? '';
+    events.push({ tag, phase: 'start' });
+    if (tag === 'w1') { w1Entered.resolve(); await releaseWrites.promise; }
+    if (tag === 'w2') { w2Entered.resolve(); await releaseWrites.promise; }
+    events.push({ tag, phase: 'end' });
+    return { content: [{ type: 'text', text: `ok:${tag}` }] };
+  });
+  await once(server, 'listening');
+  t.after(() => {
+    server.closeAllConnections();
+    server.close();
+  });
+  const core = new OperationCore({
+    stateDir,
+    mcpUrl: `http://127.0.0.1:${server.address().port}/mcp`,
+    callbackUrl: 'http://127.0.0.1:9/callback',
+    toolTimeoutMs: 15000,
+  });
+  try {
+    const issued = core.store.issueMainCapability(120);
+    await core.permittedTools(issued.token);
+    const submitFb = (nonce, tool, innerArgs) => core.submit(
+      issued.token,
+      nonce,
+      parseRequest({ version: 1, tool: 'local_fallback_dispatch', arguments: { server: 'dev', tool, arguments: innerArgs } }),
+      'json-post-v1',
+    );
+    const w1 = submitFb('w-1', 'write', { path: '/tmp/a.txt', content: '1', tag: 'w1' });
+    const w2 = submitFb('w-2', 'edit', { targets: [{ path: '/tmp/b.txt', edits: [] }], tag: 'w2' });
+    const sameFileEdit = submitFb('w-1-same', 'edit', { targets: [{ path: '/tmp/./a.txt', edits: [] }], tag: 'same-a' });
+    const afterBash = submitFb('b-after', 'bash', { command: 'true', tag: 'bash-after' });
+
+    // Disjoint file writes overlap while same-file edit waits behind w1 and bash waits behind all.
+    await withinMs(Promise.all([w1Entered.promise, w2Entered.promise]), 10_000, 'disjoint file-scoped writes did not overlap');
+    assert.equal(events.some(e => e.tag === 'same-a'), false, 'same-file edit must wait behind prior write to same path');
+    assert.equal(events.some(e => e.tag === 'bash-after'), false, 'exclusive bash waited for in-flight file writes');
+
+    releaseWrites.resolve();
+    await withinMs(
+      Promise.all([w1, w2, sameFileEdit, afterBash].map(op => core.waitForOperation(op.operation.id, 10_000))),
+      10_000,
+      'barrier operations did not finish',
+    );
+    const w1End = events.findIndex(e => e.tag === 'w1' && e.phase === 'end');
+    const w2End = events.findIndex(e => e.tag === 'w2' && e.phase === 'end');
+    const sameStart = events.findIndex(e => e.tag === 'same-a' && e.phase === 'start');
+    const sameEnd = events.findIndex(e => e.tag === 'same-a' && e.phase === 'end');
+    const bashStart = events.findIndex(e => e.tag === 'bash-after' && e.phase === 'start');
+    assert.ok(sameStart > w1End, 'same-file edit started only after write to same path finished');
+    assert.ok(bashStart > w1End && bashStart > w2End && bashStart > sameEnd, 'exclusive bash started only after all file writes ended');
+    await new Promise(r => setImmediate(r));
+    assert.equal(core._tails.size, 0);
+    assert.equal(core._fileActive.size, 0);
+    assert.equal(core._filePathTails.size, 0);
+    assert.equal(core._scheduledDefaultCwd.size, 0);
+  } finally {
+    releaseWrites.resolve();
+    await core.close();
+    rmSync(stateDir, { recursive: true, force: true });
+  }
+});
+
+test('queued file-scoped writes freeze defaultCwd at schedule time so mid-flight cwd changes cannot create a TOCTOU race', async t => {
+  const stateDir = mkdtempSync(join(tmpdir(), 'websession-cwd-toctou-'));
+  const bashEntered = deferred();
+  const releaseBash = deferred();
+  const seenWrites = [];
+  const { server } = startToolFixture(t, CONCURRENCY_TOOLS, async (name, args) => {
+    if (args.tool === 'bash') {
+      bashEntered.resolve();
+      await releaseBash.promise;
+      return { content: [{ type: 'text', text: 'bash-ok' }] };
+    }
+    seenWrites.push(args.arguments?.path);
+    return { content: [{ type: 'text', text: 'write-ok' }] };
+  });
+  await once(server, 'listening');
+  t.after(() => {
+    server.closeAllConnections();
+    server.close();
+  });
+  const core = new OperationCore({
+    stateDir,
+    mcpUrl: `http://127.0.0.1:${server.address().port}/mcp`,
+    callbackUrl: 'http://127.0.0.1:9/callback',
+    toolTimeoutMs: 15000,
+  });
+  try {
+    const issued = core.store.issueMainCapability(120, { defaultCwd: '/tmp/dir1' });
+    await core.permittedTools(issued.token);
+    const slowBash = core.submit(
+      issued.token,
+      'toctou-bash',
+      parseRequest({ version: 1, tool: 'local_fallback_dispatch', arguments: { server: 'dev', tool: 'bash', arguments: { command: 'sleep 1' } } }),
+      'json-post-v1',
+    );
+    await withinMs(bashEntered.promise, 10_000, 'slow bash did not start');
+
+    const w1 = core.submit(
+      issued.token,
+      'toctou-w1',
+      parseRequest({ version: 1, tool: 'local_fallback_dispatch', arguments: { server: 'dev', tool: 'write', arguments: { path: 'a.txt', content: '1' } } }),
+      'json-post-v1',
+    );
+    // Switch capability defaultCwd while w1 is queued behind slowBash.
+    core.store.updateCapabilityDefaultCwd(issued.id, '/tmp/dir2');
+    const w2 = core.submit(
+      issued.token,
+      'toctou-w2',
+      parseRequest({ version: 1, tool: 'local_fallback_dispatch', arguments: { server: 'dev', tool: 'write', arguments: { path: 'a.txt', content: '2' } } }),
+      'json-post-v1',
+    );
+    releaseBash.resolve();
+    await withinMs(
+      Promise.all([slowBash, w1, w2].map(op => core.waitForOperation(op.operation.id, 10_000))),
+      10_000,
+      'toctou operations did not finish',
+    );
+    assert.deepEqual(seenWrites.sort(), ['/tmp/dir1/a.txt', '/tmp/dir2/a.txt']);
+    assert.equal(core._scheduledDefaultCwd.size, 0);
+  } finally {
+    releaseBash.resolve();
+    await core.close();
+    rmSync(stateDir, { recursive: true, force: true });
+  }
+});
+
+test('sequential batches barrier on non-dev server lanes touched by their steps', async t => {
+  const stateDir = mkdtempSync(join(tmpdir(), 'websession-seq-lane-barrier-'));
+  const termEntered = deferred();
+  const releaseTerm = deferred();
+  const events = [];
+  const { server } = startToolFixture(t, CONCURRENCY_TOOLS, async (_name, args) => {
+    const tag = args.arguments?.tag ?? '';
+    events.push({ tag, phase: 'start' });
+    if (tag === 'standalone-term') {
+      termEntered.resolve();
+      await releaseTerm.promise;
+    }
+    events.push({ tag, phase: 'end' });
+    return { content: [{ type: 'text', text: `ok:${tag}` }] };
+  });
+  await once(server, 'listening');
+  t.after(() => {
+    server.closeAllConnections();
+    server.close();
+  });
+  const core = new OperationCore({
+    stateDir,
+    mcpUrl: `http://127.0.0.1:${server.address().port}/mcp`,
+    callbackUrl: 'http://127.0.0.1:9/callback',
+    toolTimeoutMs: 15000,
+  });
+  try {
+    const issued = core.store.issueMainCapability(120);
+    await core.permittedTools(issued.token);
+    const standalone = core.submit(
+      issued.token,
+      't-standalone',
+      parseRequest({ version: 1, tool: 'local_fallback_dispatch', arguments: { server: 'terminal', tool: 'terminal_send', arguments: { tag: 'standalone-term' } } }),
+      'json-post-v1',
+    );
+    await withinMs(termEntered.promise, 10_000, 'standalone terminal_send did not start');
+
+    const batch = core.submitBatch(
+      issued.token,
+      'seq-with-term',
+      [
+        parseRequest({ version: 1, tool: 'local_fallback_dispatch', arguments: { server: 'dev', tool: 'bash', arguments: { tag: 'batch-dev' } } }),
+        parseRequest({ version: 1, tool: 'local_fallback_dispatch', arguments: { server: 'terminal', tool: 'terminal_send', arguments: { tag: 'batch-term' } } }),
+      ],
+      null,
+      { sequential: true, stopOnError: true },
+    );
+    await new Promise(r => setTimeout(r, 30));
+    assert.equal(events.some(e => e.tag === 'batch-dev' || e.tag === 'batch-term'), false, 'sequential batch waited for active terminal lane');
+
+    releaseTerm.resolve();
+    await withinMs(
+      Promise.all([
+        core.waitForOperation(standalone.operation.id, 10_000),
+        ...batch.submissions.map(s => core.waitForOperation(s.operation.id, 10_000)),
+      ]),
+      10_000,
+      'sequential batch did not finish after terminal lane released',
+    );
+    const termEnd = events.findIndex(e => e.tag === 'standalone-term' && e.phase === 'end');
+    const batchTermStart = events.findIndex(e => e.tag === 'batch-term' && e.phase === 'start');
+    assert.ok(batchTermStart > termEnd, 'batch terminal step ran strictly after standalone terminal op');
+    await new Promise(r => setImmediate(r));
+    assert.equal(core._tails.size, 0);
+  } finally {
+    releaseTerm.resolve();
     await core.close();
     rmSync(stateDir, { recursive: true, force: true });
   }
@@ -1258,27 +1755,42 @@ test('a schema_input_invalid rejection names the offending field', async t => {
   t.after(() => rmSync(stateDir, { recursive: true, force: true }));
   // 1MCP answers a schema rejection with the bare text "schema_input_invalid", so the
   // adapter explains it from the same input schema it already listed.
-  const tools = [{
-    name: 'dev_file_ops',
-    description: 'Move or delete files.',
-    inputSchema: {
-      type: 'object',
-      required: ['operations'],
-      properties: {
-        operations: {
-          type: 'array',
-          minItems: 1,
-          items: {
-            oneOf: [
-              { type: 'object', required: ['kind', 'path', 'to'], properties: { kind: { const: 'move' }, path: { type: 'string' }, to: { type: 'string' } } },
-              { type: 'object', required: ['kind', 'path'], properties: { kind: { const: 'delete' }, path: { type: 'string' } } },
-            ],
+  const tools = [
+    {
+      name: 'dev_file_ops',
+      description: 'Move or delete files.',
+      inputSchema: {
+        type: 'object',
+        required: ['operations'],
+        properties: {
+          operations: {
+            type: 'array',
+            minItems: 1,
+            items: {
+              oneOf: [
+                { type: 'object', required: ['kind', 'path', 'to'], properties: { kind: { const: 'move' }, path: { type: 'string' }, to: { type: 'string' } } },
+                { type: 'object', required: ['kind', 'path'], properties: { kind: { const: 'delete' }, path: { type: 'string' } } },
+              ],
+            },
           },
+          cwd: { type: 'string' },
         },
-        cwd: { type: 'string' },
       },
     },
-  }];
+    {
+      name: 'local_fallback_dispatch',
+      description: 'Fallback dispatch.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          server: { type: 'string' },
+          tool: { type: 'string' },
+          arguments: { type: 'object' },
+          calls: { type: 'array', items: { type: 'object' } },
+        },
+      },
+    },
+  ];
   const { server } = startToolFixture(t, tools, async () => ({
     isError: true,
     content: [{ type: 'text', text: 'schema_input_invalid' }],
@@ -1310,6 +1822,59 @@ test('a schema_input_invalid rejection names the offending field', async t => {
     const accepted = await core.waitForOperation(submit({ operations: [{ kind: 'delete', path: 'a.txt' }] }).operation.id, 15000);
     assert.equal(accepted.state, 'tool_failed');
     assert.equal(accepted.error_text, 'schema_input_invalid');
+
+    // A schema_input_invalid rejection through local_fallback_dispatch also explains inner dev/* fields.
+    const fbRejectedSub = core.submit(
+      issued.token,
+      'c-schema-fb-bad',
+      parseRequest({ version: 1, tool: 'local_fallback_dispatch', arguments: { server: 'dev', tool: 'file_ops', arguments: { operations: [{ op: 'delete', path: 'a.txt' }] } } }),
+      'json-post-v1',
+    );
+    const fbRejected = await core.waitForOperation(fbRejectedSub.operation.id, 15000);
+    assert.equal(fbRejected.state, 'tool_failed');
+    assert.equal(fbRejected.error_text, 'schema_input_invalid: dev/file_ops: operations.0: missing required property "kind"');
+
+    // Batch-mode local_fallback_dispatch validates each entry's arguments instead of validating {}.
+    const fbBatchRejectedSub = core.submit(
+      issued.token,
+      'c-schema-fb-batch-bad',
+      parseRequest({
+        version: 1,
+        tool: 'local_fallback_dispatch',
+        arguments: {
+          server: 'dev',
+          tool: 'file_ops',
+          calls: [
+            { arguments: { operations: [{ kind: 'delete', path: 'ok.txt' }] } },
+            { arguments: { operations: [{ op: 'delete', path: 'bad.txt' }] } },
+          ],
+        },
+      }),
+      'json-post-v1',
+    );
+    const fbBatchRejected = await core.waitForOperation(fbBatchRejectedSub.operation.id, 15000);
+    assert.equal(fbBatchRejected.state, 'tool_failed');
+    assert.equal(fbBatchRejected.error_text, 'schema_input_invalid: dev/file_ops calls[1]: operations.0: missing required property "kind"');
+
+    // Heterogeneous batch with omitted top-level server/tool also explains inner dev/* fields.
+    const fbHeteroRejectedSub = core.submit(
+      issued.token,
+      'c-schema-fb-hetero-bad',
+      parseRequest({
+        version: 1,
+        tool: 'local_fallback_dispatch',
+        arguments: {
+          calls: [
+            { server: 'terminal', tool: 'terminal_list', arguments: {} },
+            { server: 'dev', tool: 'file_ops', arguments: { operations: [{ op: 'delete', path: 'bad.txt' }] } },
+          ],
+        },
+      }),
+      'json-post-v1',
+    );
+    const fbHeteroRejected = await core.waitForOperation(fbHeteroRejectedSub.operation.id, 15000);
+    assert.equal(fbHeteroRejected.state, 'tool_failed');
+    assert.equal(fbHeteroRejected.error_text, 'schema_input_invalid: dev/file_ops calls[1]: operations.0: missing required property "kind"');
   } finally {
     await core.close();
   }
@@ -1561,7 +2126,7 @@ test('pair discovery bundles live signatures and HTTP guidance without dispatchi
   assert.equal(value.tool_count, 1);
   assert.equal(value.default_cwd, '/tmp/project');
   assert.deepEqual(value.signatures, ['fixture_read()  Read a file.']);
-  assert.match(value.instructions, /POST \/v1\/calls\?wait=2/);
+  assert.match(value.instructions, /POST \/v1\/calls\?wait=15/);
   assert.match(value.instructions, /Idempotency-Key/);
   assert.match(value.instructions, /do not probe/);
   assert.ok(store.resolveCapability(value.capability));

@@ -146,7 +146,7 @@ test('authenticated discovery compacts 1MCP guidance and exposes the capability 
   assert.equal(instructionResponse.status, 200);
   const httpGuidance = (await instructionResponse.json()).instructions;
   assert.equal(httpGuidance, webSessionInstructions(compacted));
-  assert.match(httpGuidance, /POST \/v1\/calls\?wait=2/);
+  assert.match(httpGuidance, /POST \/v1\/calls\?wait=15/);
   assert.match(httpGuidance, /Idempotency-Key/);
   assert.match(httpGuidance, /do not probe endpoint names/);
 

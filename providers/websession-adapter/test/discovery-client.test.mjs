@@ -228,7 +228,7 @@ test('python client bounds multi-byte output and saves the exact result at 0600'
   assert.equal(statSync(path).mode & 0o777, 0o600);
   assert.equal(readFileSync(path, 'utf8').includes(capability), false);
   assert.equal(requests.length, 1);
-  assert.equal(requests[0].query.get('wait'), '2');
+  assert.equal(requests[0].query.get('wait'), '15');
   assert.equal(requests[0].headers.authorization, `Bearer ${capability}`);
 });
 
@@ -437,7 +437,7 @@ test('python client long-polls queued status with one initiator and no 1.5s slee
   const posts = requests.filter(entry => entry.method === 'POST');
   const gets = requests.filter(entry => entry.method === 'GET');
   assert.equal(posts.length, 1);
-  assert.equal(posts[0].query.get('wait'), '2');
+  assert.equal(posts[0].query.get('wait'), '15');
   assert.equal(gets.length, 2);
   assert.ok(Number(gets[0].query.get('wait')) <= 89);
   assert.ok(Number(gets[0].query.get('wait')) >= 0);
@@ -470,7 +470,7 @@ test('python client reports lost creation responses as unknown without resubmitt
   assert.equal(run.status, 2, run.stderr);
   assert.match(run.stderr, /submission outcome unknown; do not retry/);
   assert.equal(requests.length, 1);
-  assert.equal(requests[0].query.get('wait'), '2');
+  assert.equal(requests[0].query.get('wait'), '15');
 });
 
 test('python client treats post-persist server errors as unknown and keeps client errors definite', async (t) => {
@@ -733,7 +733,7 @@ function runPythonInput(args, env = {}, input = '') {
   });
 }
 
-test('python client connect exchanges pair code, writes 0600 session file without leaking secret, and uses wait=2 fast path', async (t) => {
+test('python client connect exchanges pair code, writes 0600 session file without leaking secret, and uses wait=15 fast path', async (t) => {
   const dir = mkdtempSync(join(tmpdir(), 'wh-py-session-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const sessionFile = join(dir, 'nested', 'session.json');
@@ -788,7 +788,7 @@ test('python client connect exchanges pair code, writes 0600 session file withou
   const saved = JSON.parse(readFileSync(sessionFile, 'utf8'));
   assert.equal(saved.cap, issuedSecret);
   assert.equal(saved.cwd, '/home/ubuntu/repo/webharness');
-  assert.equal(saved.wait, 2);
+  assert.equal(saved.wait, 15);
 
   // Pair POST must not carry Authorization or Idempotency-Key, and all requests carry User-Agent.
   const pairReq = requests.find(r => r.path === '/v1/pair' && r.body.includes('cedar-4821-k9xm'));
@@ -813,7 +813,7 @@ test('python client connect exchanges pair code, writes 0600 session file withou
   assert.equal(fastCall.status, 0, fastCall.stderr);
   assert.equal(fastCall.stdout, 'ok-fast\n');
   const callPost = requests.find(r => r.path === '/v1/calls');
-  assert.equal(callPost.query.get('wait'), '2');
+  assert.equal(callPost.query.get('wait'), '15');
   assert.equal(callPost.headers.authorization, `Bearer ${issuedSecret}`);
   assert.deepEqual(JSON.parse(callPost.body), {
     version: 1,
@@ -1051,7 +1051,7 @@ test('Python import-session privately adopts redeemed access without a network r
   assert.ok(!(imported.stdout + imported.stderr).includes(secret));
   assert.equal(requests.length, 0);
   assert.equal(statSync(sessionFile).mode & 0o777, 0o600);
-  assert.deepEqual(JSON.parse(readFileSync(sessionFile, 'utf8')), { base, cap: secret, cwd: '/project', wait: 2 });
+  assert.deepEqual(JSON.parse(readFileSync(sessionFile, 'utf8')), { base, cap: secret, cwd: '/project', wait: 15 });
   const called = await runPythonInput(['sh', 'pwd'], env);
   assert.equal(called.status, 0, called.stderr);
   assert.equal(called.stdout, 'project-ready\n');
@@ -1172,11 +1172,20 @@ test('Python client supports pipe/sequential batch, local shortcuts, pull (/v1/r
   assert.equal(treeOut.status, 0, treeOut.stderr);
   assert.deepEqual(calls.at(-1).parsed.arguments, { path: '/workspace/app/src', depth: 3, include_vendor: true });
 
-  // lcall auto-unwraps local_tool_call and uses wait=10 floor when WS_WAIT is unset.
+  // call resolves relative cwd against sticky cwd while keeping absolute cwd untouched.
+  const relCwdOut = await runPythonInput(['call', 'dev_bash', '{"command":"pwd","cwd":"sub"}'], env);
+  assert.equal(relCwdOut.status, 0, relCwdOut.stderr);
+  assert.deepEqual(calls.at(-1).parsed.arguments, { command: 'pwd', cwd: '/workspace/app/sub' });
+
+  const dotCwdOut = await runPythonInput(['call', 'dev_bash', '{"command":"pwd","cwd":"."}'], env);
+  assert.equal(dotCwdOut.status, 0, dotCwdOut.stderr);
+  assert.deepEqual(calls.at(-1).parsed.arguments, { command: 'pwd', cwd: '/workspace/app' });
+
+  // lcall auto-unwraps local_tool_call and uses wait=30 floor when WS_WAIT is unset.
   const lcallOut = await runPythonInput(['lcall', 'browser-fast/observe', '{"scope":"compact"}'], env);
   assert.equal(lcallOut.status, 0, lcallOut.stderr);
   assert.equal(lcallOut.stdout, 'browser-fast.observe:{"scope":"compact"}\n');
-  assert.equal(calls.at(-1).wait, '10');
+  assert.equal(calls.at(-1).wait, '30');
 
   // lbatch normalizes plain argument objects into {arguments: ...}.
   const lbatchOut = await runPythonInput(['lbatch', 'browser-fast', 'observe', '[{"tab":"t1"},{"id":"b","arguments":{"tab":"t2"}}]', '--concurrency', '2'], env);
@@ -1188,14 +1197,14 @@ test('Python client supports pipe/sequential batch, local shortcuts, pull (/v1/r
     calls: [{ arguments: { tab: 't1' } }, { id: 'b', arguments: { tab: 't2' } }],
   });
 
-  // pipe sets sequential:true with wait=10.
+  // pipe sets sequential:true with wait=30.
   const pipeOk = await runPythonInput(['pipe'], env, JSON.stringify([
     { tool: 'dev_edit', arguments: { targets: [{ path: 'a.js', edits: [{ oldText: 'x', newText: 'y' }] }] } },
     { tool: 'dev_review_changes', arguments: {} },
   ]));
   assert.equal(pipeOk.status, 0, pipeOk.stderr);
   assert.equal(batches.at(-1).parsed.sequential, true);
-  assert.equal(batches.at(-1).wait, '10');
+  assert.equal(batches.at(-1).wait, '30');
 
   // Failed sequential pipeline still prints earlier completed mutations before exiting 1.
   const pipeFail = await runPythonInput(['pipe'], env, JSON.stringify([

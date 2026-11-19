@@ -1,17 +1,84 @@
 import { createHash } from 'node:crypto';
+import { homedir } from 'node:os';
 import { posix } from 'node:path';
 import { requestHash, AdapterStore } from './store.mjs';
 import { callMcpTool, closeMcpPools, findMcpTool, listMcpTools } from './mcp-client.mjs';
 import { explainSchemaViolation } from './schema-hint.mjs';
+import { isKnownReadOnlyRoute } from '../../lib/local-route-policy.mjs';
 
 const MAX_RESULT_BYTES = 1024 * 1024;
 const DEV_COMMAND_FAILURE_FOOTER = /^\[(?:exit (?!0(?:\]| · ))-?\d+|timed out after [0-9.]+s|cancelled|terminated)(?: · [0-9.]+s)?\]$/;
 // dev_run_script takes the same base directory as the shell and file tools: Dev applies
 // it to the script's nested calls, which never pass through this rewrite themselves.
 const DEFAULT_CWD_TOOLS = new Set(['dev_bash', 'dev_exec', 'dev_review_changes', 'dev_file_ops', 'dev_run_script']);
+// fallback_dispatch advertises readOnlyHint for client transport compatibility while the
+// selected downstream operation can still mutate, so it must never join _readOnlyTools
+// unconditionally; _isConcurrentOperation inspects its routed {server, tool} instead.
+const SERIALIZED_TOOLS = new Set(['local_fallback_dispatch']);
+const ROUTED_LOCAL_TOOLS = new Set(['local_fallback_dispatch', 'local_tool_call', 'local_tool_batch']);
 const OPTIONAL_PATH_CWD_TOOLS = new Set(['dev_list_directory', 'dev_search']);
 const RELATIVE_PATH_TOOLS = new Set(['dev_read', 'dev_write', 'dev_list_directory', 'dev_search']);
 const TARGET_PATH_TOOLS = new Set(['dev_read', 'dev_edit']);
+
+function normalizeDevInnerTool(tool) {
+  if (typeof tool !== 'string' || !tool) return null;
+  return tool.startsWith('dev_') ? tool.slice(4) : tool;
+}
+
+const FILE_SCOPED_DEV_TOOLS = new Set(['write', 'edit']);
+
+function unwrapLocalRoute(tool, rawArguments) {
+  if (!ROUTED_LOCAL_TOOLS.has(tool)) return null;
+  if (!rawArguments || typeof rawArguments !== 'object' || Array.isArray(rawArguments)) return null;
+  const server = typeof rawArguments.server === 'string' && rawArguments.server ? rawArguments.server : undefined;
+  const toolName = typeof rawArguments.tool === 'string' && rawArguments.tool ? rawArguments.tool : undefined;
+  const args = rawArguments.arguments;
+  const calls = Array.isArray(rawArguments.calls) ? rawArguments.calls : undefined;
+  const allowHeterogeneous = tool === 'local_fallback_dispatch';
+  if (!(allowHeterogeneous && calls !== undefined) && (!server || !toolName)) return null;
+  return {
+    server,
+    tool: toolName,
+    arguments: args && typeof args === 'object' && !Array.isArray(args) ? args : undefined,
+    hadArguments: args !== undefined,
+    calls,
+    allowHeterogeneous,
+  };
+}
+
+function resolveBatchEntryRoute(route, entry) {
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return null;
+  const server = (route.allowHeterogeneous && typeof entry.server === 'string' && entry.server)
+    ? entry.server
+    : route.server;
+  const tool = (route.allowHeterogeneous && typeof entry.tool === 'string' && entry.tool)
+    ? entry.tool
+    : route.tool;
+  if (!server || !tool) return null;
+  const rawArgs = entry.arguments;
+  return {
+    server,
+    tool,
+    arguments: rawArgs && typeof rawArgs === 'object' && !Array.isArray(rawArgs) ? rawArgs : undefined,
+    hadArguments: rawArgs !== undefined,
+  };
+}
+
+function isDevCommandRoute(server, tool) {
+  if (server !== 'dev') return false;
+  const baseTool = normalizeDevInnerTool(tool);
+  return baseTool === 'exec' || baseTool === 'bash';
+}
+
+function parseOperationRoute(operation) {
+  if (!operation || !ROUTED_LOCAL_TOOLS.has(operation.tool)) return null;
+  try {
+    const parsed = JSON.parse(operation.request_json);
+    return unwrapLocalRoute(operation.tool, parsed?.arguments);
+  } catch {
+    return null;
+  }
+}
 
 function resolveAgainstDefaultCwd(rawPath, defaultCwd) {
   if (typeof rawPath !== 'string' || !rawPath) return rawPath;
@@ -23,13 +90,45 @@ export function applyDefaultCwd(tool, rawArguments, defaultCwd) {
   if (!defaultCwd || !rawArguments || typeof rawArguments !== 'object' || Array.isArray(rawArguments)) {
     return rawArguments;
   }
+  const routed = unwrapLocalRoute(tool, rawArguments);
+  if (routed) {
+    if (routed.calls) {
+      let changed = false;
+      const nextCalls = routed.calls.map(entry => {
+        const resolved = resolveBatchEntryRoute(routed, entry);
+        if (!resolved || resolved.server !== 'dev') return entry;
+        const baseTool = normalizeDevInnerTool(resolved.tool);
+        if (!baseTool) return entry;
+        if (resolved.hadArguments && resolved.arguments === undefined) return entry;
+        const innerArgs = resolved.arguments ?? {};
+        const nextInner = applyDefaultCwd(`dev_${baseTool}`, innerArgs, defaultCwd);
+        if (nextInner === innerArgs) return entry;
+        changed = true;
+        return { ...entry, arguments: nextInner };
+      });
+      return changed ? { ...rawArguments, calls: nextCalls } : rawArguments;
+    }
+    if (routed.server !== 'dev') return rawArguments;
+    const baseTool = normalizeDevInnerTool(routed.tool);
+    if (!baseTool) return rawArguments;
+    if (routed.hadArguments && routed.arguments === undefined) return rawArguments;
+    const innerArgs = routed.arguments ?? {};
+    const nextInner = applyDefaultCwd(`dev_${baseTool}`, innerArgs, defaultCwd);
+    if (nextInner === innerArgs) return rawArguments;
+    return { ...rawArguments, arguments: nextInner };
+  }
   let updated = rawArguments;
   const clone = () => {
     if (updated === rawArguments) updated = { ...rawArguments };
     return updated;
   };
-  if (DEFAULT_CWD_TOOLS.has(tool) && rawArguments.cwd === undefined) {
-    clone().cwd = defaultCwd;
+  if (DEFAULT_CWD_TOOLS.has(tool)) {
+    if (rawArguments.cwd === undefined) {
+      clone().cwd = defaultCwd;
+    } else if (typeof rawArguments.cwd === 'string') {
+      const resolved = resolveAgainstDefaultCwd(rawArguments.cwd, defaultCwd);
+      if (resolved !== rawArguments.cwd) clone().cwd = resolved;
+    }
   }
   if (OPTIONAL_PATH_CWD_TOOLS.has(tool) && rawArguments.path === undefined) {
     clone().path = defaultCwd;
@@ -81,14 +180,73 @@ export function renderToolResult(result) {
 
 function isDevCommandOperation(operation) {
   if (operation.tool === 'dev_exec' || operation.tool === 'dev_bash') return true;
-  if (operation.tool !== 'local_fallback_dispatch') return false;
-  try {
-    const parsed = JSON.parse(operation.request_json);
-    return parsed?.arguments?.server === 'dev'
-      && (parsed?.arguments?.tool === 'exec' || parsed?.arguments?.tool === 'bash');
-  } catch {
-    return false;
+  const route = parseOperationRoute(operation);
+  if (!route || route.server !== 'dev') return false;
+  const baseTool = normalizeDevInnerTool(route.tool);
+  return baseTool === 'exec' || baseTool === 'bash';
+}
+
+function normalizeTargetPath(rawPath) {
+  if (typeof rawPath !== 'string' || !rawPath || rawPath.includes('\0')) return null;
+  if (rawPath === '~') return posix.normalize(homedir());
+  if (rawPath.startsWith('~/')) {
+    return posix.resolve(homedir(), rawPath.slice(2));
   }
+  return posix.normalize(rawPath);
+}
+
+function extractSingleFileScopedPaths(baseTool, args) {
+  if (!args || typeof args !== 'object' || Array.isArray(args)) return null;
+  if (baseTool === 'write') {
+    const normalized = normalizeTargetPath(args.path);
+    return normalized ? [normalized] : null;
+  }
+  if (baseTool === 'edit') {
+    if (!Array.isArray(args.targets) || args.targets.length === 0) return null;
+    const paths = [];
+    for (const target of args.targets) {
+      if (!target || typeof target !== 'object' || Array.isArray(target)) return null;
+      const normalized = normalizeTargetPath(target.path);
+      if (!normalized) return null;
+      paths.push(normalized);
+    }
+    return paths;
+  }
+  return null;
+}
+
+const BATCH_CALL_HEADER = /^call (\d+)(?: \([^\n]+\))?(?: \[([^\]\n]+)\])?: (?:fulfilled(?: \(downstream isError\))?|rejected [A-Z0-9_]+:.*)$/;
+
+function isHeaderSectionDevCommand(callIndex, routeTag, route) {
+  if (routeTag) {
+    const slash = routeTag.indexOf('/');
+    if (slash > 0) {
+      return isDevCommandRoute(routeTag.slice(0, slash), routeTag.slice(slash + 1));
+    }
+  }
+  if (route?.calls && Number.isInteger(callIndex) && callIndex >= 0 && callIndex < route.calls.length) {
+    const resolved = resolveBatchEntryRoute(route, route.calls[callIndex]);
+    if (resolved) return isDevCommandRoute(resolved.server, resolved.tool);
+  }
+  return Boolean(route && isDevCommandRoute(route.server, route.tool));
+}
+
+function hasUnsuccessfulDevCommandInBatchText(text, route) {
+  if (typeof text !== 'string' || text.length === 0) return false;
+  const lines = text.split('\n');
+  let section = [];
+  let checkCurrent = false;
+  for (const line of lines) {
+    const match = BATCH_CALL_HEADER.exec(line);
+    if (match) {
+      if (checkCurrent && section.length > 0 && hasUnsuccessfulCommandFooter(section.join('\n'))) return true;
+      section = [];
+      checkCurrent = isHeaderSectionDevCommand(Number.parseInt(match[1], 10), match[2], route);
+    } else if (checkCurrent) {
+      section.push(line);
+    }
+  }
+  return checkCurrent && section.length > 0 && hasUnsuccessfulCommandFooter(section.join('\n'));
 }
 
 export function hasUnsuccessfulCommandFooter(text) {
@@ -119,11 +277,16 @@ export class OperationCore {
     this.toolTimeoutMs = toolTimeoutMs;
     this._active = new Map();
     this._tails = new Map();
+    this._fileActive = new Map();
+    this._filePathTails = new Map();
+    this._scheduledDefaultCwd = new Map();
     this._readOnlyTools = new Set([
       'dev_read',
       'dev_list_directory',
       'dev_search',
       'dev_review_changes',
+      // dev_wait is non-readOnly in pi-dev (arming/cancel writes durable wait state),
+      // but stays concurrent here so waits never deadlock behind a running dev_bash/dev_exec.
       'dev_wait',
       'local_tool_list',
       'local_tool_schema',
@@ -158,7 +321,7 @@ export class OperationCore {
       signal,
     });
     for (const tool of listed.tools) {
-      if (tool?.annotations?.readOnlyHint === true && typeof tool.name === 'string') this._readOnlyTools.add(tool.name);
+      if (tool?.annotations?.readOnlyHint === true && typeof tool.name === 'string' && !SERIALIZED_TOOLS.has(tool.name)) this._readOnlyTools.add(tool.name);
     }
     return { principal, tools: listed.tools, instructions: listed.instructions };
   }
@@ -327,20 +490,49 @@ export class OperationCore {
 
   _isUnsuccessfulStep(operation) {
     if (!operation || operation.state !== 'completed') return true;
-    if (isDevCommandOperation(operation)) {
+    const route = parseOperationRoute(operation);
+    const isLocalBatch = operation.tool === 'local_tool_batch'
+      || (operation.tool === 'local_fallback_dispatch' && Array.isArray(route?.calls));
+    if (!isLocalBatch && isDevCommandOperation(operation)) {
       const tail = operation.result_text ?? this.store.getOperationTailText(operation.id) ?? '';
       if (hasUnsuccessfulCommandFooter(tail)) return true;
     }
-    if (operation.tool === 'local_tool_batch') {
+    if (isLocalBatch) {
       const full = operation.result_text ?? this.store.getOperationResult(operation.id) ?? '';
       try {
         const parsed = JSON.parse(full);
-        const results = parsed?.structuredContent?.results;
-        if (Array.isArray(results) && results.some(entry => entry?.status === 'rejected' || entry?.result?.isError === true)) {
-          return true;
+        const results = parsed?.structuredContent?.results ?? parsed?.results;
+        const parsedServer = parsed?.structuredContent?.server ?? parsed?.server;
+        const parsedTool = parsed?.structuredContent?.tool ?? parsed?.tool;
+        if (Array.isArray(results)) {
+          for (let i = 0; i < results.length; i += 1) {
+            const entry = results[i];
+            if (entry?.status === 'rejected' || entry?.result?.isError === true) return true;
+            if (entry?.status === 'fulfilled') {
+              const idx = Number.isInteger(entry.index) ? entry.index : i;
+              const reqEntry = route?.calls?.[idx] ? resolveBatchEntryRoute(route, route.calls[idx]) : null;
+              const entryServer = entry.server ?? parsedServer ?? reqEntry?.server ?? route?.server;
+              const entryTool = entry.tool ?? parsedTool ?? reqEntry?.tool ?? route?.tool;
+              if (isDevCommandRoute(entryServer, entryTool)) {
+                const content = Array.isArray(entry?.result?.content) ? entry.result.content : [];
+                const entryText = content
+                  .filter(block => block?.type === 'text' && typeof block.text === 'string')
+                  .map(block => block.text)
+                  .join('\n');
+                if (hasUnsuccessfulCommandFooter(entryText)) return true;
+              }
+            }
+          }
         }
       } catch {
-        // Non-JSON result text uses normal state checking.
+        // Text-only batch results render as "call <index>[ (<id>)][ [<server>/<tool>]]: rejected <CODE>: ..."
+        // or "call <index>[ (<id>)][ [<server>/<tool>]]: fulfilled (downstream isError)".
+        if (/^call \d+(?: \([^\n]+\))?(?: \[[^\]\n]+\])?: (?:rejected [A-Z0-9_]+:|fulfilled \(downstream isError\)$)/m.test(full)) {
+          return true;
+        }
+        if (hasUnsuccessfulDevCommandInBatchText(full, route)) {
+          return true;
+        }
       }
     }
     return false;
@@ -369,7 +561,12 @@ export class OperationCore {
       this._active.set(id, promise);
     }
 
-    this._enqueuePrincipal(principalId, async () => {
+    const laneKeys = new Set([principalId]);
+    for (const op of operations) {
+      for (const key of this._mutationLaneKeys(op)) laneKeys.add(key);
+    }
+
+    this._enqueueLanes([...laneKeys], async () => {
       try {
         let failedPrior = false;
         for (const op of this.store.getBatchOperations(principalId, batchId)) {
@@ -404,13 +601,27 @@ export class OperationCore {
     });
   }
 
-  _enqueuePrincipal(principalId, taskFn) {
-    const previous = this._tails.get(principalId) ?? Promise.resolve();
+  _enqueueLanes(laneKeys, taskFn) {
+    const keys = [...new Set(laneKeys)];
+    const deps = [];
+    for (const key of keys) {
+      const prev = this._tails.get(key);
+      if (prev) deps.push(prev);
+      const priorFiles = this._fileActive.get(key);
+      if (priorFiles) deps.push(...priorFiles);
+    }
     let current;
     const cleanup = () => {
-      if (this._tails.get(principalId) === current) this._tails.delete(principalId);
+      for (const key of keys) {
+        if (this._tails.get(key) === current) this._tails.delete(key);
+      }
     };
-    current = previous.then(taskFn).then(
+    const barrier = deps.length === 0
+      ? Promise.resolve()
+      : deps.length === 1
+        ? deps[0].catch(() => {})
+        : Promise.allSettled(deps);
+    current = barrier.then(taskFn).then(
       value => {
         cleanup();
         return value;
@@ -419,8 +630,70 @@ export class OperationCore {
         cleanup();
       },
     );
-    this._tails.set(principalId, current);
+    for (const key of keys) {
+      this._tails.set(key, current);
+    }
     return current;
+  }
+
+  _enqueuePrincipal(principalId, taskFn) {
+    return this._enqueueLanes([principalId], taskFn);
+  }
+
+  // File-scoped Dev mutations (dev_write / dev_edit) wait behind any prior exclusive Dev
+  // op (bash/exec/file_ops/run_script/batch) and drain before any later exclusive op.
+  // Disjoint target paths overlap while same-path writes/edits chain FIFO in submission order.
+  _enqueueFileScoped(principalId, targetPaths, taskFn) {
+    const uniquePaths = [...new Set(targetPaths)];
+    const deps = [];
+    const previousExclusive = this._tails.get(principalId);
+    if (previousExclusive) deps.push(previousExclusive);
+    let pathMap = this._filePathTails.get(principalId);
+    if (!pathMap) {
+      pathMap = new Map();
+      this._filePathTails.set(principalId, pathMap);
+    }
+    for (const targetPath of uniquePaths) {
+      const prevForPath = pathMap.get(targetPath);
+      if (prevForPath) deps.push(prevForPath);
+    }
+    let set = this._fileActive.get(principalId);
+    if (!set) {
+      set = new Set();
+      this._fileActive.set(principalId, set);
+    }
+    const barrier = deps.length === 0
+      ? Promise.resolve()
+      : deps.length === 1
+        ? deps[0].catch(() => {})
+        : Promise.allSettled(deps);
+    let promise;
+    const cleanup = () => {
+      set.delete(promise);
+      if (set.size === 0 && this._fileActive.get(principalId) === set) {
+        this._fileActive.delete(principalId);
+      }
+      for (const targetPath of uniquePaths) {
+        if (pathMap.get(targetPath) === promise) pathMap.delete(targetPath);
+      }
+      if (pathMap.size === 0 && this._filePathTails.get(principalId) === pathMap) {
+        this._filePathTails.delete(principalId);
+      }
+    };
+    promise = barrier.then(taskFn).then(
+      value => {
+        cleanup();
+        return value;
+      },
+      () => {
+        cleanup();
+      },
+    );
+    set.add(promise);
+    for (const targetPath of uniquePaths) {
+      pathMap.set(targetPath, promise);
+    }
+    return promise;
   }
 
   confirm(operationId, confirmationCapability, challenge) {
@@ -481,15 +754,145 @@ export class OperationCore {
     return this.store.getOperation(operationId);
   }
 
+  _isReadOnlyLocalRoute(server, tool, args, hadArguments) {
+    if (server === 'dev') {
+      const baseTool = normalizeDevInnerTool(tool);
+      return Boolean(baseTool && this._readOnlyTools.has(`dev_${baseTool}`));
+    }
+    return isKnownReadOnlyRoute(server, tool, args, { hadArguments });
+  }
+
+  _isConcurrentOperation(operation) {
+    if (!operation) return true;
+    if (this._readOnlyTools.has(operation.tool)) return true;
+    const route = parseOperationRoute(operation);
+    if (!route) return false;
+    if (route.calls) {
+      return route.calls.length > 0 && route.calls.every(entry => {
+        const resolved = resolveBatchEntryRoute(route, entry);
+        if (!resolved) return false;
+        return this._isReadOnlyLocalRoute(resolved.server, resolved.tool, resolved.arguments, resolved.hadArguments);
+      });
+    }
+    return this._isReadOnlyLocalRoute(route.server, route.tool, route.arguments, route.hadArguments);
+  }
+
+  _isFileScopedDevMutation(operation) {
+    if (!operation) return false;
+    if (operation.tool === 'dev_write' || operation.tool === 'dev_edit') return true;
+    const route = parseOperationRoute(operation);
+    if (!route) return false;
+    if (route.calls) {
+      return route.calls.length > 0 && route.calls.every(entry => {
+        const resolved = resolveBatchEntryRoute(route, entry);
+        if (!resolved || resolved.server !== 'dev') return false;
+        const baseTool = normalizeDevInnerTool(resolved.tool);
+        return Boolean(baseTool && FILE_SCOPED_DEV_TOOLS.has(baseTool));
+      });
+    }
+    if (route.server !== 'dev') return false;
+    const baseTool = normalizeDevInnerTool(route.tool);
+    return Boolean(baseTool && FILE_SCOPED_DEV_TOOLS.has(baseTool));
+  }
+
+  _extractFileScopedPaths(operation, defaultCwdOverride = undefined) {
+    if (!operation) return null;
+    let parsedArgs;
+    try {
+      parsedArgs = JSON.parse(operation.request_json)?.arguments;
+    } catch {
+      return null;
+    }
+    const effectiveCwd = defaultCwdOverride !== undefined
+      ? defaultCwdOverride
+      : this.store.activeCapabilityById(operation.principal_id)?.defaultCwd;
+    const effectiveArgs = applyDefaultCwd(operation.tool, parsedArgs, effectiveCwd);
+    let paths = null;
+    if (operation.tool === 'dev_write') {
+      paths = extractSingleFileScopedPaths('write', effectiveArgs);
+    } else if (operation.tool === 'dev_edit') {
+      paths = extractSingleFileScopedPaths('edit', effectiveArgs);
+    } else {
+      const route = unwrapLocalRoute(operation.tool, effectiveArgs);
+      if (!route) return null;
+      if (route.calls) {
+        if (route.calls.length === 0) return null;
+        paths = [];
+        for (const entry of route.calls) {
+          const resolved = resolveBatchEntryRoute(route, entry);
+          if (!resolved || resolved.server !== 'dev') return null;
+          const baseTool = normalizeDevInnerTool(resolved.tool);
+          if (!baseTool || !FILE_SCOPED_DEV_TOOLS.has(baseTool)) return null;
+          const entryPaths = extractSingleFileScopedPaths(baseTool, resolved.arguments);
+          if (!entryPaths) return null;
+          paths.push(...entryPaths);
+        }
+      } else {
+        if (route.server !== 'dev') return null;
+        const baseTool = normalizeDevInnerTool(route.tool);
+        if (!baseTool || !FILE_SCOPED_DEV_TOOLS.has(baseTool)) return null;
+        paths = extractSingleFileScopedPaths(baseTool, route.arguments);
+      }
+    }
+    // Only overlap file-scoped mutations when every target path is absolute after
+    // applying defaultCwd/tilde expansion; unresolved relative paths could alias an
+    // absolute path to the same file when no capability defaultCwd is configured.
+    if (!paths || paths.length === 0 || paths.some(targetPath => !targetPath.startsWith('/'))) {
+      return null;
+    }
+    return paths;
+  }
+
+  _mutationLaneKeys(operation) {
+    if (!operation) return [];
+    const route = parseOperationRoute(operation);
+    if (!route) return [operation.principal_id];
+    if (route.calls) {
+      if (route.calls.length === 0) {
+        return [route.server && route.server !== 'dev'
+          ? `${operation.principal_id}:server:${route.server}`
+          : operation.principal_id];
+      }
+      const keys = new Set();
+      for (const entry of route.calls) {
+        const resolved = resolveBatchEntryRoute(route, entry);
+        if (!resolved || resolved.server === 'dev') {
+          keys.add(operation.principal_id);
+        } else {
+          keys.add(`${operation.principal_id}:server:${resolved.server}`);
+        }
+      }
+      return [...keys];
+    }
+    if (route.server && route.server !== 'dev') {
+      return [`${operation.principal_id}:server:${route.server}`];
+    }
+    return [operation.principal_id];
+  }
+
+  _mutationLaneKey(operation) {
+    return this._mutationLaneKeys(operation)[0] ?? operation?.principal_id;
+  }
+
   _schedule(operationId) {
     if (this._active.has(operationId)) return this._active.get(operationId);
     const operation = this.store.getOperation(operationId);
-    const concurrent = !operation || this._readOnlyTools.has(operation.tool);
+    const scheduledDefaultCwd = operation
+      ? (this.store.activeCapabilityById(operation.principal_id)?.defaultCwd ?? null)
+      : null;
+    if (operation) this._scheduledDefaultCwd.set(operationId, scheduledDefaultCwd);
+    const concurrent = this._isConcurrentOperation(operation);
+    const fileScopedPaths = !concurrent && this._isFileScopedDevMutation(operation)
+      ? this._extractFileScopedPaths(operation, scheduledDefaultCwd)
+      : null;
     const execution = concurrent
       ? Promise.resolve().then(() => this._run(operationId))
-      : this._enqueuePrincipal(operation.principal_id, () => this._run(operationId));
+      : fileScopedPaths
+        ? this._enqueueFileScoped(operation.principal_id, fileScopedPaths, () => this._run(operationId))
+        : this._enqueueLanes(this._mutationLaneKeys(operation), () => this._run(operationId));
     this._active.set(operationId, execution);
     execution.catch(() => {}).finally(() => {
+      this._scheduledDefaultCwd.delete(operationId);
       if (this._active.get(operationId) === execution) this._active.delete(operationId);
     });
     return execution;
@@ -518,7 +921,10 @@ export class OperationCore {
     }
 
     const request = JSON.parse(operation.request_json);
-    const requestArguments = applyDefaultCwd(operation.tool, request.arguments, principal.defaultCwd);
+    const effectiveDefaultCwd = this._scheduledDefaultCwd.has(operationId)
+      ? this._scheduledDefaultCwd.get(operationId)
+      : principal.defaultCwd;
+    const requestArguments = applyDefaultCwd(operation.tool, request.arguments, effectiveDefaultCwd);
     let dispatchStarted = false;
     let result;
     try {
@@ -567,15 +973,43 @@ export class OperationCore {
     const message = boundedError(error);
     if (message !== 'schema_input_invalid') return message;
     try {
-      const schema = (await findMcpTool({
+      const lookup = targetTool => findMcpTool({
         mcpUrl: this.mcpUrl,
         stateDir: this.store.stateDir,
         callbackUrl: this.callbackUrl,
         timeoutMs: this.toolTimeoutMs,
         signal: AbortSignal.timeout(5000),
-      }, tool))?.inputSchema;
+      }, targetTool);
+      const schema = (await lookup(tool))?.inputSchema;
       const detail = explainSchemaViolation(schema, args);
       if (detail) return `${message}: ${tool}: ${detail}`;
+      const routed = unwrapLocalRoute(tool, args);
+      if (routed) {
+        if (routed.calls) {
+          const schemaCache = new Map();
+          for (let i = 0; i < routed.calls.length; i += 1) {
+            const resolved = resolveBatchEntryRoute(routed, routed.calls[i]);
+            if (!resolved || resolved.server !== 'dev') continue;
+            const baseTool = normalizeDevInnerTool(resolved.tool);
+            if (!baseTool) continue;
+            if (resolved.hadArguments && resolved.arguments === undefined) continue;
+            let innerSchema = schemaCache.get(baseTool);
+            if (innerSchema === undefined) {
+              innerSchema = (await lookup(`dev_${baseTool}`))?.inputSchema ?? null;
+              schemaCache.set(baseTool, innerSchema);
+            }
+            const innerDetail = explainSchemaViolation(innerSchema, resolved.arguments ?? {});
+            if (innerDetail) return `${message}: dev/${baseTool} calls[${i}]: ${innerDetail}`;
+          }
+        } else if (routed.server === 'dev') {
+          const baseTool = normalizeDevInnerTool(routed.tool);
+          if (baseTool) {
+            const innerSchema = (await lookup(`dev_${baseTool}`))?.inputSchema;
+            const innerDetail = explainSchemaViolation(innerSchema, routed.arguments ?? {});
+            if (innerDetail) return `${message}: dev/${baseTool}: ${innerDetail}`;
+          }
+        }
+      }
     } catch {
       // The schema could not be read; the upstream message still stands.
     }
