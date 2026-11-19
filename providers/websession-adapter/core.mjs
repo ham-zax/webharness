@@ -3,7 +3,7 @@ import { homedir } from 'node:os';
 import { posix } from 'node:path';
 import { requestHash, AdapterStore } from './store.mjs';
 import { callMcpTool, closeMcpPools, findMcpTool, listMcpTools } from './mcp-client.mjs';
-import { explainSchemaViolation } from './schema-hint.mjs';
+import { explainSchemaViolation, looksLikeSchemaValidationError } from '../../lib/schema-hint.mjs';
 import { isKnownReadOnlyRoute } from '../../lib/local-route-policy.mjs';
 
 const MAX_RESULT_BYTES = 1024 * 1024;
@@ -971,7 +971,7 @@ export class OperationCore {
   // a round trip on GET /v1/tools/<name>. Any other failure keeps its own message.
   async _describeToolFailure(error, tool, args) {
     const message = boundedError(error);
-    if (message !== 'schema_input_invalid') return message;
+    if (!looksLikeSchemaValidationError(message) || /invalid arguments for tool/i.test(message)) return message;
     try {
       const lookup = targetTool => findMcpTool({
         mcpUrl: this.mcpUrl,

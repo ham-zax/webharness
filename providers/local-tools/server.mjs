@@ -9,7 +9,7 @@ import { getDefaultEnvironment } from '@modelcontextprotocol/client/stdio';
 import { Server } from '@modelcontextprotocol/server';
 import { StdioServerTransport, serveStdio } from '@modelcontextprotocol/server/stdio';
 import { hasActiveRuntimeLeases } from '../../lib/runtime-leases.mjs';
-import { explainSchemaViolation } from '../../lib/schema-hint.mjs';
+import { explainSchemaViolation, looksLikeSchemaValidationError } from '../../lib/schema-hint.mjs';
 import { createStdioErrorReporter } from '../../lib/stdio-diagnostics.mjs';
 import {
   DEV_ROUTE_ARG_HINTS,
@@ -148,11 +148,6 @@ function routeSchemaHint(server, tool) {
 }
 
 const SCHEMA_HINT_LOOKUP_TIMEOUT_MS = 2_000;
-
-function looksLikeSchemaValidationError(text) {
-  return typeof text === 'string'
-    && /(?:^|\b)(?:schema_input_invalid|input validation error:|invalid arguments for tool\b|mcp error -32602\b|invalid params\b)/i.test(text);
-}
 
 function formatSchemaValidationHint(server, tool, detail) {
   const baseHint = routeSchemaHint(server, tool);
@@ -1804,11 +1799,11 @@ export class LocalToolBroker {
     if (stopOnError !== undefined && !sequential) {
       throw brokerError('INVALID_ARGUMENT', 'stop_on_error requires sequential: true');
     }
-    if (concurrency !== undefined && sequential) {
-      throw brokerError('INVALID_ARGUMENT', 'concurrency cannot be combined with sequential: true');
-    }
     const effectiveStopOnError = sequential ? (stopOnError ?? true) : false;
     if (concurrency !== undefined) normalizeBatchConcurrency(concurrency, calls.length);
+    if (sequential && concurrency !== undefined && concurrency > 1) {
+      throw brokerError('INVALID_ARGUMENT', 'concurrency > 1 cannot be combined with sequential: true');
+    }
 
     const defaultRoute = allowHeterogeneous
       ? null

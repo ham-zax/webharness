@@ -8,8 +8,8 @@ import {
   requirePiStablePath,
   resolveUserPath,
   resolveWorkspaceEntry,
-  suggestNearestSibling,
 } from './boundary.mjs';
+import { suggestNearestSibling } from './path-hints.mjs';
 
 export const DEFAULT_LIST_LIMIT = 200;
 export const MAX_LIST_LIMIT = 1000;

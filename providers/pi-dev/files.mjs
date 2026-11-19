@@ -14,9 +14,9 @@ import {
   resolveExistingWorkspacePath,
   resolveNewWorkspacePath,
   resolveWorkspaceEntry,
-  resolveUserPath,
-  suggestNearestSibling
+  resolveUserPath
 } from './boundary.mjs';
+import { suggestNearestSibling } from './path-hints.mjs';
 import { withMutationPath, withMutationPaths } from './mutation-coordinator.mjs';
 
 function normalizeLineEndings(text) {

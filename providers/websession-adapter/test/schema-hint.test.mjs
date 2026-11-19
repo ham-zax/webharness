@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { explainSchemaViolation } from '../schema-hint.mjs';
+import { explainSchemaViolation, looksLikeSchemaValidationError } from '../../../lib/schema-hint.mjs';
 
 // The shapes below are the ones Dev's Zod schemas project to, so the explainer is
 // exercised against what 1MCP actually validates.
@@ -81,4 +81,12 @@ test('at most three violations are reported', () => {
   const schema = { type: 'object', required: ['a', 'b', 'c', 'd'] };
   const detail = explainSchemaViolation(schema, {});
   assert.equal(detail.split('; ').length, 3);
+});
+
+test('looksLikeSchemaValidationError matches MCP/1MCP/Zod schema failures without matching generic domain errors', () => {
+  assert.equal(looksLikeSchemaValidationError('schema_input_invalid'), true);
+  assert.equal(looksLikeSchemaValidationError('Input validation error: Invalid arguments for tool exec: argv'), true);
+  assert.equal(looksLikeSchemaValidationError('MCP error -32602: Invalid params'), true);
+  assert.equal(looksLikeSchemaValidationError('ENOENT: missing file'), false);
+  assert.equal(looksLikeSchemaValidationError('invalid arguments passed to remote API'), false);
 });

@@ -4,6 +4,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { McpServer } from '@modelcontextprotocol/server';
 import { StdioServerTransport, serveStdio } from '@modelcontextprotocol/server/stdio';
+// Kept local so providers/pi-dev stays self-contained in smaller-profile exports.
 import { createStdioErrorReporter } from './stdio-diagnostics.mjs';
 import { z } from 'zod';
 import { canonicalDefaultCwd, canonicalWorkspaceRoot, resolveUserCwd, resolveWorkspaceCwd } from './boundary.mjs';

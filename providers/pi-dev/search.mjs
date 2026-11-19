@@ -6,8 +6,8 @@ import {
   canonicalWorkspaceRoot,
   resolveUserPath,
   resolveWorkspaceEntry,
-  suggestNearestSibling,
 } from './boundary.mjs';
+import { suggestNearestSibling } from './path-hints.mjs';
 
 export const DEFAULT_SEARCH_MAX_RESULTS = 80;
 export const MAX_SEARCH_MAX_RESULTS = 500;

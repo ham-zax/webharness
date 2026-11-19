@@ -1560,7 +1560,7 @@ test('_lookupSchemaViolation aborts promptly on caller signal and never wakes de
     listLiveServerTools: async (_s, _c, opts) => new Promise((_resolve, reject) => {
       opts?.signal?.addEventListener('abort', () => { abortedLookup = true; reject(new Error('aborted')); }, { once: true });
     }),
-    listServerTools: async s => { if (s === 'dead') wokeDead = true; return { tools: [] }; },
+    listServerTools: async s => { if (s === 'dead') wokeDead = true; return { tools: [{ name: 'op' }] }; },
     callServerTool: async () => ({ content: [] }),
     listTools: async () => ({ tools: [] }),
     callTool: async () => ({ content: [] }),
@@ -1582,9 +1582,17 @@ test('_lookupSchemaViolation aborts promptly on caller signal and never wakes de
   assert.equal(abortedLookup, true);
   assert.ok(elapsed < 500, `lookup abort took too long: ${elapsed}ms`);
 
-  // 3. sequential: true rejects explicit concurrency.
+  // 3. sequential: true rejects concurrency > 1 while accepting explicit concurrency: 1.
   await assert.rejects(
     () => broker.batchWithAllowedServers({ sequential: true, concurrency: 2, calls: [{ server: 'slow', tool: 'op', arguments: {} }] }, new Set(['slow'])),
     { code: 'INVALID_ARGUMENT' },
   );
+  const seqOne = await broker.batchWithAllowedServers(
+    { sequential: true, concurrency: 1, calls: [{ server: 'slow', tool: 'op', arguments: {} }] },
+    new Set(['slow']),
+    undefined,
+    { allowHeterogeneous: true },
+  );
+  assert.equal(seqOne.sequential, true);
+  assert.equal(seqOne.results[0].status, 'fulfilled');
 });
