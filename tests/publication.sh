@@ -37,6 +37,9 @@ test_public_structure() {
   [ -f "$ROOT/providers/terminal/mcp-server.mjs" ] && \
   [ -f "$ROOT/lib/runtime-leases.mjs" ] && \
   [ -f "$ROOT/providers/local-tools/server.mjs" ] && \
+  [ -f "$ROOT/providers/local-tools/broker.mjs" ] && \
+  [ -f "$ROOT/providers/local-tools/stdio-pool.mjs" ] && \
+  [ -f "$ROOT/providers/local-tools/logger.mjs" ] && \
   [ -f "$ROOT/providers/browser/server.mjs" ] && \
   [ -f "$ROOT/providers/browser-fast/server.mjs" ] && \
   [ -f "$ROOT/scripts/render-config.mjs" ] && \

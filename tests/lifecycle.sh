@@ -91,8 +91,12 @@ test_1mcp_clean_tool_namespacing_is_guarded() {
   contains "$helper" 'MCP error -32000: interaction_capacity_exceeded' &&
   ! contains "$helper" 'templateTypes\.js' &&
   contains "$ROOT/providers/local-tools/server.mjs" 'DirectLocalServerPool' &&
-  ! contains "$ROOT/providers/local-tools/server.mjs" 'InnerDirect1Mcp' &&
-  ! contains "$ROOT/providers/local-tools/server.mjs" 'ONE_MCP_URI_SEPARATOR'
+  contains "$ROOT/providers/local-tools/stdio-pool.mjs" 'DirectLocalServerPool' &&
+  ! grep -Eq 'InnerDirect1Mcp|ONE_MCP_URI_SEPARATOR|LazyInner1Mcp|INNER_RELOAD_TOOL|1mcp_1mcp_mcp_reload|_directMode|parseQualifiedName' \
+    "$ROOT/providers/local-tools/server.mjs" \
+    "$ROOT/providers/local-tools/broker.mjs" \
+    "$ROOT/providers/local-tools/stdio-pool.mjs" \
+    "$ROOT/providers/local-tools/logger.mjs"
 }
 
 test_shared_bridge_runtime_installer_is_used() {

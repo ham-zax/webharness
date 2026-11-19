@@ -660,6 +660,9 @@ test_personal_runtime_files_have_no_machine_home() {
     "$ROOT/providers/terminal/tmux.mjs" \
     "$ROOT/providers/terminal/broker.mjs" \
     "$ROOT/providers/local-tools/server.mjs" \
+    "$ROOT/providers/local-tools/broker.mjs" \
+    "$ROOT/providers/local-tools/stdio-pool.mjs" \
+    "$ROOT/providers/local-tools/logger.mjs" \
     "$ROOT/providers/browser/server.mjs" \
     "$ROOT/providers/browser-fast/server.mjs" \
     "$ROOT/config/templates/mcp-local.json" >/dev/null
