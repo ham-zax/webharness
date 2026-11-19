@@ -106,9 +106,9 @@ test('model-facing broker exposes discovery, call, fallback, and batch', async t
   const batch = tools.find(tool => tool.name === 'tool_batch');
   assert.equal(call.annotations.readOnlyHint, false);
   assert.equal(call.annotations.openWorldHint, true);
-  assert.equal(fallback.annotations.readOnlyHint, false);
-  assert.equal(fallback.annotations.destructiveHint, true);
-  assert.equal(fallback.annotations.openWorldHint, true);
+  assert.equal(fallback.annotations.readOnlyHint, true);
+  assert.equal(fallback.annotations.destructiveHint, false);
+  assert.equal(fallback.annotations.openWorldHint, false);
   for (const tool of tools) {
     for (const hint of ['readOnlyHint', 'destructiveHint', 'idempotentHint', 'openWorldHint']) {
       assert.equal(typeof tool.annotations?.[hint], 'boolean', `${tool.name}.${hint} must be explicit`);
@@ -933,6 +933,228 @@ test('Local call and fallback preserve verified Dev receipts and correlation acr
     assert.ok(records.some(row => row.event === 'call_completed' && row.call_id === id && row.outcome === 'success'));
   }
   assert.doesNotMatch(JSON.stringify(records), /private-payload/);
+});
+
+test('fallback_dispatch reaches every Dev operation and ordinary Local routes', async t => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'local-fallback-reach-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const fixture = await writeFixtureMcpServer(dir, 'alpha', { modern: true });
+  const cfgPath = path.join(dir, 'mcp.json');
+  await fs.writeFile(cfgPath, JSON.stringify({ version: '1.0.0', mcpServers: {
+    dev: { type: 'stdio', protocolVersion: '2026-07-28', command: process.execPath,
+      args: [path.resolve(import.meta.dirname, '../../pi-dev/server.mjs')], env: {
+        MCP_DEV_PATH_MODE: 'user', MCP_DEV_DEFAULT_CWD: dir,
+        MCP_DEV_STATE_DIR: path.join(dir, 'state'), MCP_DEV_SHELL_MODE: 'unrestricted',
+        MCP_DEV_TERMINAL_SOCKET: path.join(dir, 'terminal.sock'),
+      } },
+    alpha: { type: 'stdio', protocolVersion: '2026-07-28', command: process.execPath, args: [fixture.script] },
+  } }));
+  const pool = new DirectLocalServerPool({ configPath: cfgPath, idleMs: 0 });
+  const broker = new LocalToolBroker({ inner: pool, configPath: cfgPath, fallbackOnlyServers: ['dev'] });
+  const server = createLocalBrokerServer({ broker });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const client = new Client({ name: 'local-fallback-reach', version: '1.0.0' });
+  t.after(async () => { await client.close(); await server.close(); await broker.shutdown(); });
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+
+  const dispatch = async (serverName, tool, args) => {
+    const result = await client.callTool({ name: 'fallback_dispatch', arguments: { server: serverName, tool, arguments: args } });
+    assert.notEqual(result.isError, true, `${serverName}/${tool}: ${JSON.stringify(result)}`);
+    return result;
+  };
+
+  await dispatch('dev', 'bash', { command: 'printf bash-ok', cwd: dir });
+  await dispatch('dev', 'exec', { argv: ['printf', 'exec-ok'], cwd: dir });
+
+  await fs.writeFile(path.join(dir, 'move-me'), 'x');
+  await dispatch('dev', 'file_ops', { operations: [{ kind: 'move', path: 'move-me', to: 'moved' }], cwd: dir });
+  assert.equal(await fs.readFile(path.join(dir, 'moved'), 'utf8'), 'x');
+
+  const script = await dispatch('dev', 'run_script', { script: "return await tools.read({ path: 'moved' });", cwd: dir });
+  assert.match(script.content[0].text, /x/);
+
+  const waited = await dispatch('dev', 'wait', { name: 'reach-wait', condition: { kind: 'file_exists', path: path.join(dir, 'moved') } });
+  assert.match(waited.content[0].text, /reach-wait/);
+
+  const local = await dispatch('alpha', 'ping_alpha', { msg: 'local-ok' });
+  assert.match(local.content[0].text, /alpha:local-ok/);
+
+  // Prefixed dev_* tool names normalize cleanly without wasting a round trip.
+  const prefixed = await dispatch('dev', 'dev_exec', { argv: ['printf', 'prefixed-ok'], cwd: dir });
+  assert.match(prefixed.content[0].text, /prefixed-ok/);
+  const schemaPrefixed = await client.callTool({ name: 'tool_schema', arguments: { server: 'dev', tool: 'dev_read' } });
+  assert.notEqual(schemaPrefixed.isError, true);
+  assert.equal(schemaPrefixed.structuredContent.tool, 'read');
+
+  // Read-only fallback calls report not_applicable; validation failures report not_started (never unknown).
+  const readRes = await dispatch('dev', 'read', { path: path.join(dir, 'moved') });
+  assert.equal(readRes._meta['webharness/mutation-state'], 'not_applicable');
+  const badServer = await client.callTool({ name: 'fallback_dispatch', arguments: { server: 'missing', tool: 'noop', arguments: {} } });
+  assert.equal(badServer.isError, true);
+  assert.equal(badServer._meta['webharness/mutation-state'], 'not_started');
+
+  // Parallel fallback_dispatch calls execute concurrently across disjoint writes and reads.
+  const parallelWrites = await Promise.all([1, 2, 3, 4].map(i =>
+    dispatch('dev', 'write', { path: path.join(dir, `p-${i}.txt`), content: `val-${i}\n`, overwrite: true })
+  ));
+  for (let i = 0; i < 4; i += 1) {
+    assert.equal(parallelWrites[i]._meta['webharness/mutation-state'], 'published');
+    assert.equal(await fs.readFile(path.join(dir, `p-${i + 1}.txt`), 'utf8'), `val-${i + 1}\n`);
+  }
+
+  // Batch mode on fallback_dispatch works for both Dev (fallback-only) and public Local servers.
+  const batchDev = await client.callTool({
+    name: 'fallback_dispatch',
+    arguments: {
+      server: 'dev',
+      tool: 'read',
+      concurrency: 4,
+      calls: [1, 2, 3].map(i => ({ id: `r${i}`, arguments: { path: path.join(dir, `p-${i}.txt`) } })),
+    },
+  });
+  assert.notEqual(batchDev.isError, true, JSON.stringify(batchDev));
+  assert.equal(batchDev._meta['webharness/mutation-state'], 'not_applicable');
+  assert.equal(batchDev.structuredContent.results.length, 3);
+  assert.deepEqual(batchDev.structuredContent.results.map(r => r.id), ['r1', 'r2', 'r3']);
+  assert.match(batchDev.structuredContent.results[1].result.content[0].text, /val-2/);
+
+  const batchLocal = await client.callTool({
+    name: 'fallback_dispatch',
+    arguments: {
+      server: 'alpha',
+      tool: 'ping_alpha',
+      calls: [{ id: 'a', arguments: { msg: 'one' } }, { id: 'b', arguments: { msg: 'two' } }],
+    },
+  });
+  assert.notEqual(batchLocal.isError, true);
+  assert.deepEqual(batchLocal.structuredContent.results.map(r => r.result.content[0].text), ['alpha:one', 'alpha:two']);
+
+  const ambiguous = await client.callTool({
+    name: 'fallback_dispatch',
+    arguments: { server: 'alpha', tool: 'ping_alpha', arguments: { msg: 'x' }, calls: [{ arguments: { msg: 'y' } }] },
+  });
+  assert.equal(ambiguous.isError, true);
+  assert.equal(ambiguous.structuredContent.error.code, 'INVALID_ARGUMENT');
+
+  // Auto-learning: once a server's tools are listed, annotations.readOnlyHint is used automatically.
+  broker._recordToolAnnotations('alpha', [{ name: 'ping_alpha', annotations: { readOnlyHint: true } }]);
+  const learnedRead = await dispatch('alpha', 'ping_alpha', { msg: 'learned' });
+  assert.equal(learnedRead._meta['webharness/mutation-state'], 'not_applicable');
+
+  // Hybrid argument-aware classification: terminal_read is read-only only with snapshot:true.
+  assert.equal(broker.isReadOnlyRoute('terminal', 'terminal_read', { name: 's1' }), false);
+  assert.equal(broker.isReadOnlyRoute('terminal', 'terminal_read', { name: 's1', snapshot: true }), true);
+  assert.equal(broker.isReadOnlyRoute('browser-daily', 'tabs', { action: 'list' }), true);
+  assert.equal(broker.isReadOnlyRoute('browser-daily', 'tabs', { action: 'new', url: 'https://example.com' }), false);
+
+  // Heterogeneous + sequential fallback_dispatch batch spans dev + local servers and honors stop_on_error.
+  const heteroSeq = await client.callTool({
+    name: 'fallback_dispatch',
+    arguments: {
+      sequential: true,
+      stop_on_error: true,
+      calls: [
+        { id: 'w', server: 'dev', tool: 'write', arguments: { path: path.join(dir, 'seq.txt'), content: 'seq-ok\n', overwrite: true } },
+        { id: 'ping', server: 'alpha', tool: 'ping_alpha', arguments: { msg: 'after-write' } },
+        { id: 'fail-cmd', server: 'dev', tool: 'bash', arguments: { command: 'exit 7', cwd: dir } },
+        { id: 'skipped', server: 'dev', tool: 'write', arguments: { path: path.join(dir, 'never.txt'), content: 'nope', overwrite: true } },
+      ],
+    },
+  });
+  assert.notEqual(heteroSeq.isError, true, JSON.stringify(heteroSeq));
+  assert.equal(heteroSeq.structuredContent.sequential, true);
+  assert.equal(heteroSeq.structuredContent.results.length, 4);
+  assert.equal(heteroSeq.structuredContent.results[0].status, 'fulfilled');
+  assert.equal(heteroSeq.structuredContent.results[0].server, 'dev');
+  assert.equal(heteroSeq.structuredContent.results[1].status, 'fulfilled');
+  assert.equal(heteroSeq.structuredContent.results[1].server, 'alpha');
+  assert.match(heteroSeq.structuredContent.results[1].result.content[0].text, /alpha:after-write/);
+  assert.equal(heteroSeq.structuredContent.results[2].status, 'fulfilled');
+  assert.match(heteroSeq.structuredContent.results[2].result.content[0].text, /\[exit 7/);
+  assert.equal(heteroSeq.structuredContent.results[3].status, 'rejected');
+  assert.equal(heteroSeq.structuredContent.results[3].error.code, 'SKIPPED_AFTER_PRIOR_FAILURE');
+  await assert.rejects(() => fs.stat(path.join(dir, 'never.txt')), /ENOENT/);
+
+  // stop_on_error: false continues past a non-zero Dev command in sequential mode.
+  const heteroContinue = await client.callTool({
+    name: 'fallback_dispatch',
+    arguments: {
+      sequential: true,
+      stop_on_error: false,
+      calls: [
+        { id: 'fail-cmd', server: 'dev', tool: 'bash', arguments: { command: 'exit 3', cwd: dir } },
+        { id: 'still-runs', server: 'alpha', tool: 'ping_alpha', arguments: { msg: 'continued' } },
+      ],
+    },
+  });
+  assert.equal(heteroContinue.structuredContent.results[1].status, 'fulfilled');
+  assert.match(heteroContinue.structuredContent.results[1].result.content[0].text, /alpha:continued/);
+
+  // Invalid concurrency is rejected even when sequential: true.
+  const badSeqConcurrency = await client.callTool({
+    name: 'fallback_dispatch',
+    arguments: {
+      sequential: true,
+      concurrency: 0,
+      calls: [{ server: 'alpha', tool: 'ping_alpha', arguments: { msg: 'nope' } }],
+    },
+  });
+  assert.equal(badSeqConcurrency.isError, true);
+  assert.equal(badSeqConcurrency.structuredContent.error.code, 'INVALID_ARGUMENT');
+
+  // Single-call mode rejects batch-only concurrency option, and schema omits contradictory defaults.
+  const badSingleConcurrency = await client.callTool({
+    name: 'fallback_dispatch',
+    arguments: { server: 'alpha', tool: 'ping_alpha', arguments: { msg: 'x' }, concurrency: 2 },
+  });
+  assert.equal(badSingleConcurrency.isError, true);
+  assert.equal(badSingleConcurrency.structuredContent.error.code, 'INVALID_ARGUMENT');
+  const { tools: listedBrokerTools } = await client.listTools();
+  const fbSchema = listedBrokerTools.find(tool => tool.name === 'fallback_dispatch').inputSchema.properties;
+  assert.equal(fbSchema.concurrency.default, undefined);
+  assert.equal(fbSchema.sequential.default, undefined);
+  assert.equal(fbSchema.stop_on_error.default, undefined);
+});
+
+test('browser-daily/tabs classifies only list/omitted action as read-only for single calls and batches', async t => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'local-bd-tabs-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const bdFixture = await writeFixtureMcpServer(dir, 'browser_daily', { modern: true });
+  const cfgPath = path.join(dir, 'mcp.json');
+  await fs.writeFile(cfgPath, JSON.stringify({ version: '1.0.0', mcpServers: {
+    'browser-daily': { type: 'stdio', protocolVersion: '2026-07-28', command: process.execPath, args: [bdFixture.script] },
+  } }));
+  const pool = new DirectLocalServerPool({ configPath: cfgPath, idleMs: 0 });
+  const broker = new LocalToolBroker({ inner: pool, configPath: cfgPath });
+  const server = createLocalBrokerServer({ broker });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const client = new Client({ name: 'local-bd-tabs-test', version: '1.0.0' });
+  t.after(async () => { await client.close(); await server.close(); await broker.shutdown(); });
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+
+  const callTabs = args => client.callTool({
+    name: 'fallback_dispatch',
+    arguments: { server: 'browser-daily', tool: 'tabs', ...(args === undefined ? {} : { arguments: args }) },
+  });
+  assert.equal((await callTabs(undefined))._meta['webharness/mutation-state'], 'not_applicable');
+  assert.equal((await callTabs({}))._meta['webharness/mutation-state'], 'not_applicable');
+  assert.equal((await callTabs({ action: 'list' }))._meta['webharness/mutation-state'], 'not_applicable');
+  assert.equal((await callTabs({ action: 'new', url: 'https://example.com' }))._meta['webharness/mutation-state'], 'unknown');
+  assert.equal((await callTabs({ action: 'close', tab: 1 }))._meta['webharness/mutation-state'], 'unknown');
+
+  const batchList = await client.callTool({
+    name: 'tool_batch',
+    arguments: { server: 'browser-daily', tool: 'tabs', calls: [{ arguments: {} }, { arguments: { action: 'list' } }] },
+  });
+  assert.equal(batchList._meta['webharness/mutation-state'], 'not_applicable');
+
+  const batchMixed = await client.callTool({
+    name: 'tool_batch',
+    arguments: { server: 'browser-daily', tool: 'tabs', calls: [{ arguments: { action: 'list' } }, { arguments: { action: 'close', tab: 1 } }] },
+  });
+  assert.equal(batchMixed._meta['webharness/mutation-state'], 'unknown');
 });
 
 test('DirectLocalServerPool wakes only the addressed server and negotiates both modern 2026-07-28 and legacy stdio servers', async t => {
