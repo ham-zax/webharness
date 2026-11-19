@@ -14,7 +14,8 @@ import {
   resolveExistingWorkspacePath,
   resolveNewWorkspacePath,
   resolveWorkspaceEntry,
-  resolveUserPath
+  resolveUserPath,
+  suggestNearestSibling
 } from './boundary.mjs';
 import { withMutationPath, withMutationPaths } from './mutation-coordinator.mjs';
 
@@ -467,9 +468,22 @@ export function extractOutline(text, totalBytes = Buffer.byteLength(text, 'utf8'
 
 async function readFilePage({ pathMode, defaultCwd, workspaceRoot, path }, signal) {
   const policy = await resolveFilePolicy({ pathMode, workspaceRoot, defaultCwd });
-  const target = policy.pathMode === 'user'
-    ? await resolveUserPath(policy.root, path)
-    : await resolveWorkspaceEntry(policy.root, path);
+  let target;
+  try {
+    target = policy.pathMode === 'user'
+      ? await resolveUserPath(policy.root, path)
+      : await resolveWorkspaceEntry(policy.root, path);
+  } catch (error) {
+    if (error?.code === 'ENOENT') {
+      const suggestion = await suggestNearestSibling({ pathMode: policy.pathMode, baseDir: policy.root, requested: path, expectFile: true });
+      if (suggestion) {
+        const err = new Error(`ENOENT: ${path} does not exist; did you mean ${suggestion}?`);
+        err.code = 'ENOENT';
+        throw err;
+      }
+    }
+    throw error;
+  }
   try {
     const stat = await fs.stat(target);
     if (stat.isDirectory()) {

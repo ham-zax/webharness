@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 import { z } from 'zod';
+import { callId as makeCallId, traceCall } from '../call-diagnostics.mjs';
 import { renderScriptText } from '../render.mjs';
 import { runScript, scriptToolTable, truncateScriptText, withDefaultCwd } from '../run-script.mjs';
 import { SCRIPT_MAX_CONCURRENT } from '../script-limits.mjs';
@@ -200,6 +201,25 @@ test('nested script calls receive distinct callId#n identifiers for log attribut
   }));
   assert.equal(result.status, 'completed');
   assert.deepEqual(seenIds, ['parent-123#1', 'parent-123#2']);
+});
+
+test('nested script calls retain parentUuid#n through traceCall diagnostics', async () => {
+  const parentUuid = makeCallId();
+  const records = [];
+  const stateDir = await tempDir('pi-dev-script-trace-');
+  const result = await runScript(scriptFixture({
+    read: async (_args, extra) => traceCall({
+      id: extra.callId, layer: 'dev-worker', tool: 'read', mutating: false, allowStep: true,
+      log: row => records.push(row),
+    }, async () => textResult('ok')),
+  }, {
+    stateDir,
+    callId: parentUuid,
+    script: 'await tools.read({}); await tools.read({}); return "traced";',
+  }));
+  assert.equal(result.status, 'completed');
+  const startedIds = records.filter(r => r.event === 'call_started').map(r => r.call_id);
+  assert.deepEqual(startedIds, [`${parentUuid}#1`, `${parentUuid}#2`]);
 });
 
 test('read-only calls overlap and a mutation waits for them', async () => {

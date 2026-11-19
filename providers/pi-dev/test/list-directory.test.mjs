@@ -337,3 +337,50 @@ test('listing fails closed when pinned directory access is unavailable, without 
   });
   await assert.rejects(() => runListDirectory({ workspaceRoot, path: '.', depth: 2, limit: 1 }), /Pinned directory access is unavailable/);
 });
+
+test('ENOENT suggests the nearest normalized sibling when one exists', async t => {
+  const root = await tempDir('pi-list-suggest-');
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  await fs.mkdir(path.join(root, 'repo', 'webharness'), { recursive: true });
+  await fs.mkdir(path.join(root, 'repo', 'ahmed-hamza-workout'), { recursive: true });
+
+  await assert.rejects(
+    () => runListDirectory({ pathMode: 'user', defaultCwd: root, path: 'repo/web-harness' }),
+    /^Error: ENOENT: repo\/web-harness does not exist; did you mean repo\/webharness\?$/,
+  );
+  await assert.rejects(
+    () => runListDirectory({ pathMode: 'user', defaultCwd: root, path: 'repo/Ahmed Hamza/workout' }),
+    /^Error: ENOENT: repo\/Ahmed Hamza\/workout does not exist; did you mean repo\/ahmed-hamza-workout\?$/,
+  );
+  await assert.rejects(
+    () => runListDirectory({ workspaceRoot: root, path: 'repo/web_harness' }),
+    /^Error: ENOENT: repo\/web_harness does not exist; did you mean repo\/webharness\?$/,
+  );
+  // Absolute path intended relative to user defaultCwd (e.g. "/repo/web-harness").
+  const realRoot = await fs.realpath(root);
+  await assert.rejects(
+    () => runListDirectory({ pathMode: 'user', defaultCwd: root, path: '/repo/web-harness' }),
+    new RegExp(`^Error: ENOENT: /repo/web-harness does not exist; did you mean ${realRoot.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/repo/webharness\\?$`),
+  );
+
+  // Regular file sibling is NOT suggested for list_directory (expectDirectory: true).
+  await fs.writeFile(path.join(root, 'repo', 'notes_file'), 'hi');
+  await assert.rejects(
+    () => runListDirectory({ workspaceRoot: root, path: 'repo/notes-file' }),
+    /^Error: ENOENT: repo\/notes-file does not exist; list the parent directory instead$/,
+  );
+
+  // Workspace mode must never suggest a symlink target escaping workspaceRoot (no existence oracle).
+  const outside = await tempDir('pi-list-outside-secret-');
+  t.after(() => fs.rm(outside, { recursive: true, force: true }));
+  await fs.mkdir(path.join(outside, 'secret_dir'));
+  await fs.symlink(outside, path.join(root, 'escape_dir'));
+  await assert.rejects(
+    () => runListDirectory({ workspaceRoot: root, path: 'escape-dir/secret_dir' }),
+    /^Error: ENOENT: escape-dir\/secret_dir does not exist; list the parent directory instead$/,
+  );
+  await assert.rejects(
+    () => runListDirectory({ workspaceRoot: root, path: 'escape-dir' }),
+    /^Error: ENOENT: escape-dir does not exist; list the parent directory instead$/,
+  );
+});

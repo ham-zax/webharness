@@ -98,4 +98,22 @@ test('search supports literal mode, globs, single-file target, max_results cap, 
     () => runSearch({ pathMode: 'workspace', workspaceRoot, pattern: '[unclosed-regex' }),
     /INVALID_ARGUMENT/
   );
+
+  // Sibling suggestion works inside workspace and never leaks out-of-workspace symlinks.
+  const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'pi-search-outside-'));
+  try {
+    await fs.writeFile(path.join(outside, 'secret.txt'), 'secret\n');
+    await fs.mkdir(path.join(workspaceRoot, 'webharness'));
+    await fs.symlink(outside, path.join(workspaceRoot, 'escape_dir'));
+    await assert.rejects(
+      () => runSearch({ pathMode: 'workspace', workspaceRoot, pattern: 'x', path: 'web-harness' }),
+      /^Error: ENOENT: web-harness does not exist; did you mean webharness\?$/
+    );
+    await assert.rejects(
+      () => runSearch({ pathMode: 'workspace', workspaceRoot, pattern: 'x', path: 'escape-dir/secret.txt' }),
+      /^Error: ENOENT: escape-dir\/secret\.txt does not exist; list the parent directory instead$/
+    );
+  } finally {
+    await fs.rm(outside, { recursive: true, force: true });
+  }
 });

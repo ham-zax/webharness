@@ -78,6 +78,48 @@ function runGit(cwd, args, signal, {
   });
 }
 
+const SINGLE_REV_PATTERN = /^[A-Za-z0-9_@][A-Za-z0-9._/@^~+{}-]*$/;
+
+function validateRevEndpoint(part, original) {
+  if (!part || part.startsWith('-') || part.includes('..') || !SINGLE_REV_PATTERN.test(part)) {
+    throw new Error(`INVALID_ARGUMENT: invalid Git revision or range: ${original}`);
+  }
+}
+
+function validateRev(rev) {
+  if (typeof rev !== 'string' || rev.length === 0 || rev.length > 256) {
+    throw new Error('INVALID_ARGUMENT: rev must be a non-empty revision or range (e.g. HEAD~3..HEAD)');
+  }
+  const rangeMatch = /^(.+?)(\.{2,3})(.+)$/.exec(rev);
+  if (rangeMatch) {
+    const [, left, sep, right] = rangeMatch;
+    validateRevEndpoint(left, rev);
+    validateRevEndpoint(right, rev);
+    return { raw: rev, isRange: true, left, sep, right };
+  }
+  validateRevEndpoint(rev, rev);
+  return { raw: rev, isRange: false };
+}
+
+function parseNameStatus(output) {
+  const fields = output.split('\0');
+  const entries = [];
+  for (let index = 0; index < fields.length;) {
+    const rawStatus = fields[index++];
+    if (!rawStatus) continue;
+    const code = rawStatus[0];
+    if (code === 'R' || code === 'C') {
+      const previousPath = fields[index++];
+      const currentPath = fields[index++];
+      if (currentPath) entries.push({ status: code, path: currentPath, previousPath });
+    } else {
+      const currentPath = fields[index++];
+      if (currentPath) entries.push({ status: code, path: currentPath, previousPath: undefined });
+    }
+  }
+  return entries;
+}
+
 function parseStatus(output) {
   const fields = output.split('\0');
   const entries = [];
@@ -151,15 +193,77 @@ async function reviewBaseline(gitRoot, signal) {
   return emptyTree.output.trim();
 }
 
-export async function runReviewChanges({ defaultCwd, cwd, paths }, signal) {
+export async function runReviewChanges({ defaultCwd, cwd, paths, rev }, signal) {
   const resolvedCwd = await resolveUserCwd(defaultCwd, cwd);
   const rootResult = await runGit(resolvedCwd, ['rev-parse', '--show-toplevel'], signal);
   const gitRoot = rootResult.output.trim();
   if (!gitRoot) throw new Error('review_changes requires a Git working tree');
 
-  const baseline = await reviewBaseline(gitRoot, signal);
   const pathArgs = normalizePaths(gitRoot, resolvedCwd, paths);
   const pathspec = pathArgs.length ? ['--', ...pathArgs.map(value => `:(literal)${value}`)] : [];
+
+  if (rev !== undefined) {
+    const parsedRev = validateRev(rev);
+    const safeRev = parsedRev.raw;
+    let diffSpec;
+    if (parsedRev.isRange) {
+      const [leftRes, rightRes] = await Promise.all([
+        runGit(gitRoot, ['rev-parse', '--verify', '--quiet', '--end-of-options', `${parsedRev.left}^{commit}`], signal, { okExitCodes: [0, 1] }),
+        runGit(gitRoot, ['rev-parse', '--verify', '--quiet', '--end-of-options', `${parsedRev.right}^{commit}`], signal, { okExitCodes: [0, 1] }),
+      ]);
+      const leftHash = leftRes.output.trim();
+      const rightHash = rightRes.output.trim();
+      if (!leftHash || !rightHash) {
+        throw new Error(`INVALID_ARGUMENT: unknown Git revision in range: ${safeRev}`);
+      }
+      diffSpec = [`${leftHash}${parsedRev.sep}${rightHash}`];
+    } else {
+      const commitRes = await runGit(gitRoot, ['rev-parse', '--verify', '--quiet', '--end-of-options', `${safeRev}^{commit}`], signal, { okExitCodes: [0, 1] });
+      const commitHash = commitRes.output.trim();
+      if (!commitHash) {
+        throw new Error(`INVALID_ARGUMENT: unknown Git revision: ${safeRev}`);
+      }
+      const parentRes = await runGit(gitRoot, ['rev-parse', '--verify', '--quiet', '--end-of-options', `${commitHash}^`], signal, { okExitCodes: [0, 1] });
+      let parentHash = parentRes.output.trim();
+      if (!parentHash) {
+        const emptyTree = await runGit(gitRoot, ['hash-object', '-t', 'tree', '--stdin'], signal);
+        parentHash = emptyTree.output.trim();
+      }
+      diffSpec = [parentHash, commitHash];
+    }
+    const revPathspec = pathArgs.length ? ['--', ...pathArgs.map(value => `:(literal)${value}`)] : ['--'];
+    const [nameStatusResult, numstatResult, trackedPatch] = await Promise.all([
+      runGit(gitRoot, ['diff', '--name-status', '-z', '--no-ext-diff', '--no-textconv', ...diffSpec, ...revPathspec], signal),
+      runGit(gitRoot, ['diff', '--numstat', '-z', '--no-ext-diff', '--no-textconv', ...diffSpec, ...revPathspec], signal),
+      runGit(
+        gitRoot,
+        ['diff', '--no-color', '--no-ext-diff', '--no-textconv', '--src-prefix=a/', '--dst-prefix=b/', ...diffSpec, ...revPathspec],
+        signal,
+        { maxStdoutBytes: MAX_PATCH_BYTES, truncate: true },
+      ),
+    ]);
+    const entries = parseNameStatus(nameStatusResult.output);
+    const stats = parseNumstat(numstatResult.output);
+    const files = entries.map(entry => {
+      const stat = stats.get(entry.path) ?? { additions: 0, removals: 0 };
+      return { ...entry, ...stat };
+    });
+    const summary = files.reduce((result, file) => {
+      result.trackedAdditions += file.additions;
+      result.trackedRemovals += file.removals;
+      return result;
+    }, { files: files.length, trackedAdditions: 0, trackedRemovals: 0, untracked: 0 });
+    return {
+      root: gitRoot,
+      rev: safeRev,
+      summary,
+      files,
+      patch: trackedPatch.output,
+      patchTruncated: trackedPatch.truncated,
+    };
+  }
+
+  const baseline = await reviewBaseline(gitRoot, signal);
   const [statusResult, numstatResult, trackedPatch] = await Promise.all([
     runGit(gitRoot, ['status', '--porcelain=v1', '-z', '--untracked-files=all', ...pathspec], signal),
     runGit(gitRoot, ['diff', '--numstat', '-z', '--no-ext-diff', '--no-textconv', baseline, ...pathspec], signal),

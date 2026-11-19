@@ -73,7 +73,7 @@ const EXECUTION_EFFICIENCY_INSTRUCTIONS = [
   '- CodeMode: prefer one run_script for short workflows with related Dev calls. Use Promise.all for independent reads. Await dependent edits and checks in order. Print only the useful summary; intermediate results stay out of context.',
   '- Use a direct tool for a single operation. Check command exit results before dependent steps; exec and bash can return failure text without throwing.',
   '- When Local is available, use tool_batch for independent calls to one downstream server/tool. run_script calls Dev tools only and cannot call wait. Start long work detached or in Terminal, then observe it with wait.',
-  '- Quiet output: send builds and test runs to a /tmp log and print only the exit status plus the tail or failing lines (normally 25 lines or fewer); never dump schemas, full diffs, or passing-test output. Call review_changes once after the final related edit instead of repeating Git status or diff.',
+  '- Quiet output: send builds and test runs to a /tmp log and print only the exit status plus the tail or failing lines (normally 25 lines or fewer); never dump schemas, full diffs, or passing-test output. Truncated outputs print a saved remote log path; inspect it with read(path=...). Call review_changes once after the final related edit instead of repeating Git status or diff (pass rev="HEAD~3..HEAD" or a commit SHA to inspect history read-only).',
   '- Localized bugs: when the report names a file, line, and reproduction, read that scope and verify with a targeted test before widening the investigation. Do not skip validation.',
   '- Deployment: after changing a running service, decide whether it needs a restart or reload, then confirm with a harmless readiness check before claiming it is live.',
   '- Long sessions: around 80k-100k tokens of context, write a short non-secret handoff (state, decisions, remaining work, last commits) and continue in a fresh session when practical.',
@@ -239,7 +239,7 @@ function registerTool(name, config, handler) {
   if (executionWorker) {
     executionToolConfigs.set(name, config);
     executionHandlers.set(name, (args, extra) => traceCall({
-      id: extra.callId, layer: 'dev-worker', tool: name, mutating,
+      id: extra.callId, layer: 'dev-worker', tool: name, mutating, allowStep: true,
     }, () => {
       if (mutating && name !== 'write') markMutation('unknown');
       return handler(args, extra);
@@ -480,10 +480,11 @@ if (pathMode === 'user') {
   }));
 
   registerTool('review_changes', {
-    description: 'Return one bounded aggregate review of the current Git working-tree changes: status, tracked line counts, and a unified patch including untracked file contents when they fit the shared patch budget. Use this once after the final related file mutation instead of repeatedly calling Git status/diff. cwd selects the repository; optional paths narrow review to literal files or directories and are useful when unrelated dirty work is present. This tool is read-only and creates no Git refs, commits, or temporary index state.',
+    description: 'Return one bounded aggregate review of Git changes: status, tracked line counts, and a unified patch within the shared patch budget. Omit rev to inspect the current working tree (including untracked files) once after the final related edit; pass rev (e.g. "HEAD~3..HEAD" or a commit SHA) to inspect commit history read-only. cwd selects the repository; optional paths narrow review to literal files or directories. This tool is read-only and creates no Git refs, commits, or temporary index state.',
     inputSchema: z.object({
       cwd: cwdPath.optional(),
       paths: z.array(z.string().min(1)).min(1).max(256).optional().describe('Optional literal paths relative to cwd, or absolute paths inside the selected repository'),
+      rev: z.string().min(1).max(256).optional().describe('Optional Git commit or range to inspect read-only instead of the working tree (e.g. "HEAD~3..HEAD" or a commit SHA)'),
     }),
     annotations: {
       readOnlyHint: true,
@@ -645,7 +646,9 @@ if (executionWorker) {
     onerror: createStdioErrorReporter('pi-dev'),
   });
   if (process.env.MCP_DEV_PREWARM_WORKER === '1') {
-    void worker.start().catch(() => {});
+    void worker.start().catch(error => {
+      console.error(`Pi Dev worker pre-warm failed: ${error instanceof Error ? error.message : String(error)}`);
+    });
   }
   let closing = null;
   const shutdown = () => {

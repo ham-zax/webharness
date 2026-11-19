@@ -5,9 +5,10 @@ export const CALL_ID_META = 'webharness/call-id';
 export const MUTATION_META = 'webharness/mutation-state';
 const calls = new AsyncLocalStorage();
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
+const UUID_STEP = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}(?:#[1-9]\d{0,3})?$/i;
 
-export function callId(value) {
-  return typeof value === 'string' && UUID.test(value) ? value : randomUUID();
+export function callId(value, { allowStep = false } = {}) {
+  return typeof value === 'string' && (allowStep ? UUID_STEP : UUID).test(value) ? value : randomUUID();
 }
 
 export function currentCall() {
@@ -31,10 +32,10 @@ function resultCode(result) {
   return diagnosticErrorCode(result?._meta?.['webharness/error-code'] ?? result?.structuredContent?.error?.code ?? /^([A-Z][A-Z0-9_]+):/.exec(text ?? '')?.[1]);
 }
 
-export async function traceCall({ id, layer, tool, mutating = true, log }, fn) {
+export async function traceCall({ id, layer, tool, mutating = true, allowStep = false, log }, fn) {
   const started = performance.now();
   const context = {
-    id: callId(id), mutationState: mutating ? 'not_started' : 'not_applicable',
+    id: callId(id, { allowStep }), mutationState: mutating ? 'not_started' : 'not_applicable',
     emit(event, fields = {}) {
       const record = {
         timestamp: new Date().toISOString(), event: `call_${event}`, call_id: context.id, layer,

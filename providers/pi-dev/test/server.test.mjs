@@ -426,6 +426,51 @@ test('review_changes supports unborn repositories and repository-root path selec
   assert.equal(result.patchTruncated, false);
 });
 
+test('review_changes supports read-only rev commit and range inspection', async () => {
+  const root = await tempDir('pi-dev-review-rev-');
+  await execFileAsync('git', ['init', '-q'], { cwd: root });
+  await execFileAsync('git', ['config', 'user.email', 'test@example.invalid'], { cwd: root });
+  await execFileAsync('git', ['config', 'user.name', 'Test'], { cwd: root });
+  await fs.writeFile(path.join(root, 'a.txt'), 'v1\n');
+  await execFileAsync('git', ['add', 'a.txt'], { cwd: root });
+  await execFileAsync('git', ['commit', '-qm', 'c1'], { cwd: root });
+  await fs.writeFile(path.join(root, 'a.txt'), 'v2\n');
+  await fs.writeFile(path.join(root, 'b.txt'), 'new\n');
+  await execFileAsync('git', ['add', 'a.txt', 'b.txt'], { cwd: root });
+  await execFileAsync('git', ['commit', '-qm', 'c2'], { cwd: root });
+
+  const single = await runReviewChanges({ defaultCwd: root, rev: 'HEAD' });
+  assert.equal(single.rev, 'HEAD');
+  assert.equal(single.summary.files, 2);
+  assert.match(single.patch, /\+v2/);
+  assert.match(single.patch, /\+new/);
+
+  const range = await runReviewChanges({ defaultCwd: root, rev: 'HEAD~1..HEAD', paths: ['a.txt'] });
+  assert.equal(range.summary.files, 1);
+  assert.equal(range.files[0].path, 'a.txt');
+  assert.doesNotMatch(range.patch, /b\.txt/);
+
+  // Root commit (empty-tree baseline), triple-dot range, SemVer '+' tag, and reflog syntax.
+  const rootRev = await runReviewChanges({ defaultCwd: root, rev: 'HEAD~1' });
+  assert.equal(rootRev.summary.files, 1);
+  assert.match(rootRev.patch, /\+v1/);
+  await execFileAsync('git', ['tag', 'v1.0+1', 'HEAD'], { cwd: root });
+  const tagged = await runReviewChanges({ defaultCwd: root, rev: 'v1.0+1' });
+  assert.equal(tagged.summary.files, 2);
+  const triple = await runReviewChanges({ defaultCwd: root, rev: 'HEAD~1...HEAD' });
+  assert.equal(triple.summary.files, 2);
+  const reflog = await runReviewChanges({ defaultCwd: root, rev: 'HEAD@{0}' });
+  assert.equal(reflog.summary.files, 2);
+
+  // Non-commit object SHA (blob) must be rejected cleanly.
+  const { stdout: blobSha } = await execFileAsync('git', ['rev-parse', 'HEAD:a.txt'], { cwd: root });
+  await assert.rejects(() => runReviewChanges({ defaultCwd: root, rev: blobSha.trim() }), /INVALID_ARGUMENT: unknown Git revision/);
+
+  await assert.rejects(() => runReviewChanges({ defaultCwd: root, rev: '--stat' }), /INVALID_ARGUMENT/);
+  await assert.rejects(() => runReviewChanges({ defaultCwd: root, rev: 'HEAD..HEAD..HEAD' }), /INVALID_ARGUMENT/);
+  await assert.rejects(() => runReviewChanges({ defaultCwd: root, rev: 'nonexistent-ref-xyz' }), /INVALID_ARGUMENT: unknown Git revision/);
+});
+
 test('wait schema enforces create, resume, and cancel modes plus exact first-phase condition kinds', async () => {
   const { waitInputSchema } = await import('../wait-schema.mjs');
   const validKinds = [

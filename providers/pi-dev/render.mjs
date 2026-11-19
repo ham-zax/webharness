@@ -113,8 +113,9 @@ export function renderImportFileText(result) {
 
 export function renderReviewChangesText(result) {
   const { summary } = result;
+  const revLabel = result.rev ? ` [${result.rev}]` : '';
   const lines = [
-    `${summary.files} changed ${summary.files === 1 ? 'file' : 'files'} (+${summary.trackedAdditions} -${summary.trackedRemovals} tracked lines${summary.untracked ? `, ${summary.untracked} untracked` : ''})`,
+    `${summary.files} changed ${summary.files === 1 ? 'file' : 'files'}${revLabel} (+${summary.trackedAdditions} -${summary.trackedRemovals} tracked lines${summary.untracked ? `, ${summary.untracked} untracked` : ''})`,
   ];
   for (const file of result.files) {
     const rename = file.previousPath ? ` <- ${file.previousPath}` : '';

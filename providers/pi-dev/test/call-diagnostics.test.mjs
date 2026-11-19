@@ -58,3 +58,25 @@ test('error results retain coded errors without logging their text', async () =>
   assert.equal(records.at(-1).mutation_state, 'not_started');
   assert.doesNotMatch(JSON.stringify(records), /secret-content/);
 });
+
+test('callId accepts bounded #step suffixes only when allowStep is enabled', async () => {
+  const parent = callId();
+  const stepId = `${parent}#12`;
+  // Strict mode (used by wake-proxy HTTP header validation) rejects #step suffixes.
+  assert.notEqual(callId(stepId), stepId);
+  assert.match(callId(stepId), /^[a-f0-9-]{36}$/i);
+  // Step mode preserves valid bounded suffixes and rejects invalid/out-of-range ones.
+  assert.equal(callId(stepId, { allowStep: true }), stepId);
+  assert.notEqual(callId(`${parent}#0`, { allowStep: true }), `${parent}#0`);
+  assert.notEqual(callId(`${parent}#10000`, { allowStep: true }), `${parent}#10000`);
+  assert.notEqual(callId('parent-123#1', { allowStep: true }), 'parent-123#1');
+
+  const records = [];
+  const result = await traceCall({
+    id: stepId, layer: 'dev-worker', tool: 'read', mutating: false, allowStep: true,
+    log: row => records.push(row),
+  }, async () => ({ content: [] }));
+  assert.equal(result._meta[CALL_ID_META], stepId);
+  assert.equal(records[0].call_id, stepId);
+  assert.equal(records[1].call_id, stepId);
+});

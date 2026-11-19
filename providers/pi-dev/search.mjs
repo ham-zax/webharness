@@ -6,6 +6,7 @@ import {
   canonicalWorkspaceRoot,
   resolveUserPath,
   resolveWorkspaceEntry,
+  suggestNearestSibling,
 } from './boundary.mjs';
 
 export const DEFAULT_SEARCH_MAX_RESULTS = 80;
@@ -20,9 +21,12 @@ export const VENDOR_EXCLUDE_GLOBS = [
   '!.git/**',
 ];
 
-function describePathError(error, requested) {
+function describePathError(error, requested, suggestion = null) {
   const code = error?.code;
   if (code === 'ENOENT') {
+    if (suggestion) {
+      return new Error(`ENOENT: ${requested} does not exist; did you mean ${suggestion}?`);
+    }
     return new Error(`ENOENT: ${requested} does not exist; list the parent directory instead`);
   }
   if (code === 'EACCES' || code === 'EPERM') {
@@ -104,7 +108,10 @@ export async function runSearch({
       throw new Error('MCP_DEV_PATH_MODE must be workspace or user');
     }
   } catch (error) {
-    throw describePathError(error, wanted);
+    const suggestion = error?.code === 'ENOENT' && authorityRoot
+      ? await suggestNearestSibling({ pathMode, baseDir: authorityRoot, requested: wanted })
+      : null;
+    throw describePathError(error, wanted, suggestion);
   }
   throwIfAborted(signal);
 
@@ -112,7 +119,10 @@ export async function runSearch({
   try {
     stat = await fs.stat(target);
   } catch (error) {
-    throw describePathError(error, wanted);
+    const suggestion = error?.code === 'ENOENT' && authorityRoot
+      ? await suggestNearestSibling({ pathMode, baseDir: authorityRoot, requested: wanted })
+      : null;
+    throw describePathError(error, wanted, suggestion);
   }
   if (!stat.isDirectory() && !stat.isFile()) {
     throw new Error(`INVALID_ARGUMENT: ${wanted} must be a regular file or directory`);

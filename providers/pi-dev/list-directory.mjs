@@ -8,6 +8,7 @@ import {
   requirePiStablePath,
   resolveUserPath,
   resolveWorkspaceEntry,
+  suggestNearestSibling,
 } from './boundary.mjs';
 
 export const DEFAULT_LIST_LIMIT = 200;
@@ -38,9 +39,12 @@ function byName(a, b) {
 }
 
 // A path problem must stay distinguishable after the client wraps the message.
-function describePathError(error, requested) {
+function describePathError(error, requested, suggestion = null) {
   const code = error?.code;
   if (code === 'ENOENT') {
+    if (suggestion) {
+      return new Error(`ENOENT: ${requested} does not exist; did you mean ${suggestion}?`);
+    }
     return new Error(`ENOENT: ${requested} does not exist; list the parent directory instead`);
   }
   if (code === 'ENOTDIR') {
@@ -86,18 +90,24 @@ export async function runListDirectory({
   }
 
   let canonicalBoundaryRoot = null;
+  let suggestionBase = null;
   let target;
   try {
     if (pathMode === 'workspace') {
       canonicalBoundaryRoot = await canonicalWorkspaceRoot(workspaceRoot);
+      suggestionBase = canonicalBoundaryRoot;
       target = await resolveWorkspaceEntry(canonicalBoundaryRoot, wanted);
     } else if (pathMode === 'user') {
-      target = await resolveUserPath(await canonicalDefaultCwd(defaultCwd), wanted);
+      suggestionBase = await canonicalDefaultCwd(defaultCwd);
+      target = await resolveUserPath(suggestionBase, wanted);
     } else {
       throw new Error('MCP_DEV_PATH_MODE must be workspace or user');
     }
   } catch (error) {
-    throw describePathError(error, wanted);
+    const suggestion = error?.code === 'ENOENT' && suggestionBase
+      ? await suggestNearestSibling({ pathMode, baseDir: suggestionBase, requested: wanted, expectDirectory: true })
+      : null;
+    throw describePathError(error, wanted, suggestion);
   }
   throwIfAborted(signal);
 

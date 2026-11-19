@@ -15,10 +15,10 @@ export class IdleExecutionWorker {
   }
 
   async start() {
-    if (this.stopping) await this.stopping;
+    while (this.stopping) await this.stopping;
     if (this.closed) throw new Error('Dev execution worker is closed');
     if (this.starting) return this.starting;
-    if (this.child) return;
+    if (this.child && this.child.exitCode === null && this.child.signalCode === null && this.child.connected) return;
     const child = fork(this.serverPath, ['--dev-execution-worker'], {
       env: this.env,
       stdio: ['ignore', 'ignore', 'inherit', 'ipc'],
@@ -28,9 +28,16 @@ export class IdleExecutionWorker {
     this.child = child;
     this.starting = new Promise((resolve, reject) => {
       const deadline = setTimeout(() => {
+        if (this.child === child) this.child = null;
         reject(new Error('Dev execution worker startup timed out'));
-        child.kill('SIGKILL');
+        try {
+          if (child.pid) process.kill(-child.pid, 'SIGKILL');
+          else child.kill('SIGKILL');
+        } catch {
+          try { child.kill('SIGKILL'); } catch {}
+        }
       }, 30_000);
+      deadline.unref?.();
       child.on('message', message => {
         if (message.type === 'ready') {
           clearTimeout(deadline);
@@ -44,6 +51,7 @@ export class IdleExecutionWorker {
       });
       child.once('error', error => {
         clearTimeout(deadline);
+        if (this.child === child) this.child = null;
         reject(error);
       });
       child.once('exit', (code, signal) => {
@@ -58,6 +66,7 @@ export class IdleExecutionWorker {
     });
     try { await this.starting; }
     finally { this.starting = null; }
+    this.scheduleIdle();
   }
 
   async call(name, args, signal, callId) {
@@ -78,6 +87,9 @@ export class IdleExecutionWorker {
       await this.start();
       signal?.throwIfAborted();
       child = this.child;
+      if (!child || !child.connected) {
+        throw new Error('Dev execution worker exited before dispatch; the call was not replayed');
+      }
       this.calls.get(id).child = child;
       signal?.addEventListener('abort', abort, { once: true });
       child.send({ type: 'call', id, name, args, callId }, error => { if (error) rejectResult(error); });
@@ -102,20 +114,33 @@ export class IdleExecutionWorker {
     if (this.stopping) return this.stopping;
     clearTimeout(this.timer);
     const child = this.child;
-    if (!child || child.exitCode !== null || child.signalCode !== null) return;
+    if (!child || !child.pid || child.exitCode !== null || child.signalCode !== null) {
+      if (child && !child.pid && this.child === child) this.child = null;
+      return;
+    }
     const ready = !this.starting;
     this.stopping = (async () => {
       await new Promise(resolve => {
-        if (child.exitCode !== null || child.signalCode !== null) { resolve(); return; }
+        if (!child.pid || child.exitCode !== null || child.signalCode !== null) { resolve(); return; }
+        let settled = false;
+        const done = () => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(kill);
+          child.off('exit', done);
+          child.off('error', done);
+          resolve();
+        };
         const kill = setTimeout(() => {
-          try { process.kill(-child.pid, 'SIGKILL'); } catch { child.kill('SIGKILL'); }
+          try { process.kill(-child.pid, 'SIGKILL'); } catch { try { child.kill('SIGKILL'); } catch {} }
         }, 5000);
         kill.unref?.();
-        child.once('exit', () => { clearTimeout(kill); resolve(); });
+        child.once('exit', done);
+        child.once('error', done);
         if (ready && child.connected) {
           child.send({ type: 'shutdown' }, () => {});
         } else {
-          try { process.kill(-child.pid, 'SIGTERM'); } catch { child.kill('SIGTERM'); }
+          try { process.kill(-child.pid, 'SIGTERM'); } catch { try { child.kill('SIGTERM'); } catch {} }
         }
       });
     })();

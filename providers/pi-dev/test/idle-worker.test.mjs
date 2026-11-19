@@ -142,6 +142,42 @@ test('MCP_DEV_PREWARM_WORKER=1 pre-warms the execution worker before the first t
   assert.ok(childPid > 0, 'pre-warmed worker child should exist before any tool call');
 });
 
+test('MCP_DEV_PREWARM_WORKER=1 idles out after MCP_DEV_WORKER_IDLE_MS when no tool calls arrive', async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'dev-prewarm-idle-'));
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: [new URL('../server.mjs', import.meta.url).pathname],
+    env: {
+      ...process.env,
+      MCP_DEV_SHELL_MODE: 'unrestricted',
+      MCP_DEV_PATH_MODE: 'user',
+      MCP_DEV_DEFAULT_CWD: root,
+      MCP_DEV_STATE_DIR: root,
+      MCP_DEV_TERMINAL_SOCKET: path.join(root, 'broker.sock'),
+      MCP_DEV_WORKER_IDLE_MS: '400',
+      MCP_DEV_PREWARM_WORKER: '1',
+    },
+    stderr: 'pipe',
+  });
+  const client = new Client({ name: 'prewarm-idle-test', version: '1' });
+  t.after(async () => { await client.close(); await fs.rm(root, { recursive: true, force: true }); });
+  await client.connect(transport);
+  let childPid = 0;
+  for (let i = 0; i < 40; i += 1) {
+    const raw = (await fs.readFile(`/proc/${transport.pid}/task/${transport.pid}/children`, 'utf8')).trim();
+    if (raw) { childPid = Number(raw.split(/\s+/)[0]); break; }
+    await sleep(50);
+  }
+  assert.ok(childPid > 0, 'pre-warmed worker child should start');
+  let exited = false;
+  for (let i = 0; i < 60; i += 1) {
+    try { process.kill(childPid, 0); }
+    catch (error) { if (error.code === 'ESRCH') { exited = true; break; } }
+    await sleep(50);
+  }
+  assert.equal(exited, true, 'pre-warmed idle worker should exit after MCP_DEV_WORKER_IDLE_MS');
+});
+
 for (const tool of ['exec', 'bash']) test(`real ${tool} shutdown aborts and reaps detached command process groups`, async t => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'dev-tree-'));
   const worker = new IdleExecutionWorker({serverPath:new URL('../server.mjs',import.meta.url).pathname, env:{...process.env,MCP_DEV_SHELL_MODE:'unrestricted',MCP_DEV_PATH_MODE:'workspace',MCP_DEV_WORKSPACE_ROOT:root,MCP_DEV_STATE_DIR:root}});
@@ -260,4 +296,27 @@ setTimeout(() => {}, 30000);
   await assert.rejects(callPromise, /exited|closed/i);
   assert.ok(elapsedMs < 2000, `close() during startup must not stall waiting for ready (took ${elapsedMs}ms)`);
   assert.throws(() => process.kill(childPid, 0), err => err.code === 'ESRCH');
+});
+
+test('IdleExecutionWorker clears failed spawn handle and recovers cleanly on next call', async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'dev-spawn-err-'));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const badPath = path.join(root, 'missing-worker.mjs');
+  const worker = new IdleExecutionWorker({ serverPath: badPath, idleMs: 60_000 });
+  await assert.rejects(() => worker.call('echo', {}), /exited|ENOENT/i);
+  assert.equal(worker.child, null, 'failed worker handle must be cleared so subsequent calls can respawn');
+  await worker.stop();
+
+  const goodPath = path.join(root, 'good-worker.mjs');
+  await fs.writeFile(goodPath, `
+process.on('message', m => {
+  if (m.type === 'shutdown') process.exit(0);
+  if (m.type === 'call') process.send({ type: 'result', id: m.id, result: { ok: true } });
+});
+process.send({ type: 'ready' });
+`, 'utf8');
+  worker.serverPath = goodPath;
+  const res = await worker.call('echo', {});
+  assert.deepEqual(res, { ok: true });
+  await worker.close();
 });
