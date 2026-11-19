@@ -146,6 +146,14 @@ for unit in wsl-agent-tmux.service wsl-agent-terminal-broker.service mcp-dev-bri
   systemctl --user is-active "$unit" >/dev/null
 done
 
+if [ "${SERVER_BOOTSTRAP_SKIP_INSTALL:-0}" != "1" ] && \
+   PATH="$USER_HOME/.local/bin:$PATH" command -v pueued >/dev/null 2>&1; then
+  echo "== enabling optional pueued user service (parallel=1) =="
+  HOME="$USER_HOME" PUEUED_SYSTEMD_TARGET_DIR="$SYSTEMD_TARGET_DIR" \
+    "$ROOT/scripts/install-pueued-user.sh" || \
+    echo "WARN optional pueued.service setup failed; continuing." >&2
+fi
+
 if [ "${SERVER_BOOTSTRAP_SKIP_HEALTH:-0}" != "1" ]; then
   echo "== verifying bridge health =="
   HOME="$USER_HOME" BRIDGE_STATE_DIR="$STATE_DIR" "$ROOT/bin/status"

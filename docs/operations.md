@@ -323,3 +323,21 @@ After changing idle policy, rerender configuration and restart only the bridge s
 5. Existing tmux sessions remain usable across bridge sleep/restart.
 
 Cold startup adds first-call latency. An open event stream intentionally keeps 1MCP resident; periodic tool traffic may likewise prevent the idle grace period from elapsing. Backend eviction preserves on-disk OAuth state, but clients must support reinitializing MCP transport sessions after restart. Set `BRIDGE_COLD_START=0` for a client that cannot reconnect.
+
+## Optional background task queue (`pueued.service`) and `justfile` recipes
+
+When `pueued` is installed (optional accelerator tier from `scripts/setup-personal-toolbox.sh`), WebHarness provides a standalone user-systemd service installer:
+
+```bash
+scripts/install-pueued-user.sh
+```
+
+This renders `systemd/pueued.service.in` to `~/.config/systemd/user/pueued.service`, enables and starts it in its own user-systemd cgroup (so queued builds and test runs survive `mcp-dev-bridge.service` restarts), and sets `pueue parallel 1` to serialize heavy jobs on RAM-constrained hosts. Both `scripts/bootstrap-personal.sh --enable-startup` and `scripts/bootstrap-server.sh --enable-startup` invoke it best-effort when `pueued` is present.
+
+The repository root `justfile` packages recurring operational and verification workflows as single-command `just` recipes (avoiding multi-line inline shell pipelines):
+
+- `just test-fast`, `just test-pidev`, `just test-shell`, `just test-all`: compact test runners redirecting verbose logs to temporary files.
+- `just queue <cmd>`, `just queue-status`, `just queue-log <id>`: submit and inspect long-running tasks via `pueue`.
+- `just diff [args]` and `just loc`: inline structural diffs (`difft` with `git diff` fallback) and codebase counts (`scc` with fallback).
+- `just inspect-dev`, `just inspect-local`, `just inspect-mcp`: MCP CLI probing via `mcp-inspector --cli` (`inspect-mcp` resolves `MCP_ONE_MCP_PORT` from environment/`.env`, defaulting to `3050`).
+- `just host-audit`, `just render`, `just status`, `just deploy`, `just ship "<msg>"`: compact host diagnostics and deployment helpers.

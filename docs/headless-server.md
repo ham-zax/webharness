@@ -146,6 +146,12 @@ Update the committed source, rerender the same `server` profile, and restart the
 
 Qualification is limited to the headless Dev/Local/Terminal path. This profile does not imply browser parity with the Personal workstation.
 
+## Optional headless CLI accelerators, `pueued.service`, and `justfile`
+
+`scripts/bootstrap-server.sh` qualifies the minimal required headless CLI core (`git`, `rg`, `jq`, `node`, `tmux`) and installs optional accelerators (`ast-grep`, `fd`, `yq`, `pueue`, `pueued`, `difft`, `just`, `scc`, `hyperfine`, `mcp-inspector`) best-effort via `scripts/setup-personal-toolbox.sh --headless` (SHA-256 verified for GitHub release binaries, `--ignore-scripts` for `mcp-inspector`, and non-interactive `sudo -n` guarded so headless installs never block on a password prompt).
+
+When `pueued` is present and `--enable-startup` is used (or manually via `scripts/install-pueued-user.sh`), `pueued.service` runs in its own user-systemd cgroup with `parallel=1` so long builds and test suites survive bridge restarts. Use `just host-audit`, `just test-fast`, `just queue <cmd>`, and `just inspect-mcp` from the repository root `justfile` for compact operational checks.
+
 ## Optional headless Browser Fast (aarch64 or x86_64, no GPU)
 
 The `server` profile excludes browser providers. An owner can add `browser-fast` alone through `MCP_LOCAL_SERVERS_FILE`; `scripts/doctor.sh` accepts it in the `server` profile only when that variable is set in `.env`. Managed CloakBrowser is not used here; sessions attach to the external Chromium below. `browser-fast` stays the Linux-target `observe`/`execute` pair; on a non-WSL host an omitted `browser_target` already resolves to `linux`.

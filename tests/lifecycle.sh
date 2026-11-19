@@ -228,6 +228,25 @@ test_terminal_systemd_owner_env_handoff() {
   ! grep -Eq 'WAYLAND_DISPLAY|DISPLAY=|PULSE_SERVER|EnvironmentFile=' "$target/"*.service
 }
 
+test_pueued_systemd_installer_renders_clean_unit() {
+  local sandbox="$TMP/pueued-systemd"
+  local target="$sandbox/systemd"
+  mkdir -p "$sandbox/home" "$target"
+  HOME="$sandbox/home" PUEUED_SYSTEMD_TARGET_DIR="$target" PUEUED_SYSTEMD_DRY_RUN=1 \
+    "$ROOT/scripts/install-pueued-user.sh" >/dev/null || return 1
+  local unit="$target/pueued.service"
+  [ -f "$unit" ] || return 1
+  ! grep -q '@[A-Z_][A-Z_]*@' "$unit" || return 1
+  grep -Fq "Environment=HOME=$sandbox/home" "$unit" || return 1
+  grep -Eq '^ExecStart=.*pueued$' "$unit" || return 1
+  if command -v systemd-analyze >/dev/null 2>&1; then
+    systemd-analyze verify "$unit" >/dev/null 2>&1 || return 1
+  fi
+  # Non-dry-run must fail cleanly if pueued is not on PATH.
+  ! HOME="$sandbox/home" PUEUED_SYSTEMD_TARGET_DIR="$target" PUEUED_BIN="" \
+    PUEUED_SYSTEMD_PATH="$sandbox/empty-bin" "$ROOT/scripts/install-pueued-user.sh" >/dev/null 2>&1
+}
+
 test_personal_bootstrap_startup_consent_contract() {
   local script="$ROOT/scripts/bootstrap-personal.sh"
   [ -x "$script" ] && \
@@ -314,6 +333,7 @@ run_test 'systemd installer derives user home when HOME is missing' test_systemd
 run_test 'WebSession adapter unit restarts and delegates to bin/adapter' test_websession_adapter_systemd_unit_contract
 run_test 'WebSession adapter installer renders a verified unit' test_websession_adapter_installer_renders_unit
 run_test 'Terminal systemd units consume the rendered owner environment' test_terminal_systemd_owner_env_handoff
+run_test 'pueued systemd installer renders a valid unit in dry-run and requires pueued otherwise' test_pueued_systemd_installer_renders_clean_unit
 run_test 'personal bootstrap keeps startup behind explicit consent' test_personal_bootstrap_startup_consent_contract
 run_test 'server bootstrap keeps startup behind explicit consent' test_server_bootstrap_startup_consent_contract
 run_test 'manual lifecycle and watchdog share an exclusive lock' test_lifecycle_lock_is_used_everywhere
