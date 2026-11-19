@@ -156,7 +156,7 @@ const keys = cfg => Object.keys(cfg.mcpServers ?? {}).sort();
 if (JSON.stringify(keys(restricted)) !== JSON.stringify(['dev'])) process.exit(1);
 if (JSON.stringify(keys(trusted)) !== JSON.stringify(['dev'])) process.exit(1);
 if (JSON.stringify(keys(personal)) !== JSON.stringify(['dev', 'local'])) process.exit(1);
-if (JSON.stringify(keys(local)) !== JSON.stringify(['browser-devtools', 'browser-fast', 'dev', 'host', 'skill-library', 'terminal'])) process.exit(1);
+if (JSON.stringify(keys(local)) !== JSON.stringify(['browser-daily', 'browser-devtools', 'browser-fast', 'dev', 'host', 'skill-library', 'terminal'])) process.exit(1);
 if (!local.mcpServers['skill-library'].args.includes(root + '/providers/skill-library/server.mjs')) process.exit(1);
 if (!local.mcpServers['browser-devtools'].args.includes(root + '/providers/browser/server.mjs')) process.exit(1);
 if (!local.mcpServers['browser-fast'].args.includes(root + '/providers/browser-fast/server.mjs')) process.exit(1);

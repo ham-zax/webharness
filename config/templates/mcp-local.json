@@ -39,6 +39,14 @@
         "PULSE_SERVER": "unix:/mnt/wslg/PulseServer"
       }
     },
+    "browser-daily": {
+      "command": "node",
+      "protocolVersion": "2026-07-28",
+      "args": [
+        "__REPO_ROOT__/providers/browser-daily/server.mjs"
+      ],
+      "requestTimeout": 180000
+    },
     "terminal": {
       "command": "node",
       "protocolVersion": "2026-07-28",

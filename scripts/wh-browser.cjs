@@ -2,15 +2,15 @@
 // CLI for webharness browser MCP providers, backed by a per-tier background daemon
 // so browser state (managed CloakBrowser runtimes, tabs) survives between calls.
 // Install: ln -sf ~/repo/webharness/scripts/wh-browser.cjs ~/.local/bin/wh-browser
-// Usage: wh-browser <fast|devtools> tools             (tool names + arg names)
-//        wh-browser <fast|devtools> schema <tool>      (full input schema)
-//        wh-browser <fast|devtools> <tool> ['<json>'|-] (- = read JSON from stdin)
-//        wh-browser <fast|devtools|all> stop           (stop daemon(s))
+// Usage: wh-browser <fast|devtools|daily> tools        (tool names + arg names)
+//        wh-browser <fast|devtools|daily> schema <tool> (full input schema)
+//        wh-browser <fast|devtools|daily> <tool> ['<json>'|-] (- = read JSON from stdin)
+//        wh-browser <fast|devtools|all> stop           (stop daemon(s); daily has none)
 //        wh-browser status                             (running daemons)
 //        wh-browser profile list|add|remove ...        (manage CloakBrowser profiles)
 //        wh-browser proxy set <profile> <url|off>      (set or clear profile proxy)
 //        wh-browser open|login [profile] [url]         (launch visible CloakBrowser for manual login)
-const { spawn } = require("node:child_process");
+const { spawn, spawnSync } = require("node:child_process");
 const { randomUUID } = require("node:crypto");
 const fs = require("node:fs");
 const net = require("node:net");
@@ -25,6 +25,7 @@ const BROWSER_FAST_CONFIG = path.join(CONFIG_DIR, "browser-fast.json");
 const CLOAK_PROFILES_DIR = path.join(STATE_HOME, "mcp-dev-bridge", "cloakbrowser", "profiles");
 const LOCAL_SERVERS_FILE = path.join(CONFIG_DIR, "local-servers.json");
 const OWNER_GUI_ENV_FILE = process.env.MCP_OWNER_ENV_FILE || path.join(CONFIG_DIR, "owner", "gui.env");
+const BROWSE_BIN = process.env.WH_BROWSE_BIN || path.join(os.homedir(), ".local", "bin", "browse");
 
 const IDLE_MS = Number(process.env.WH_BROWSER_IDLE_MS || 30 * 60 * 1000);
 const CALL_TIMEOUT_MS = 15 * 60 * 1000;
@@ -376,11 +377,79 @@ async function handleOpenCommand(args) {
   }, null, 2));
 }
 
+// ---------- daily tier: the user's own everyday browser through browse (no daemon of ours)
+// browse owns its relay and its own idle lifecycle, so this tier shells out to the
+// browse CLI instead of spawning an MCP server. Every browse tool is available.
+// Aliases: `user` and `main` mean the same tier.
+function isExecutableBrowse(candidate) {
+  try {
+    const real = fs.realpathSync(candidate);
+    if (/xdg-open$/.test(real)) return false;
+    if (!fs.statSync(real).isFile()) return false;
+    fs.accessSync(real, fs.constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function browseBin() {
+  if (isExecutableBrowse(BROWSE_BIN)) return BROWSE_BIN;
+  for (const dir of (process.env.PATH || "").split(path.delimiter)) {
+    if (!dir) continue;
+    const cand = path.join(dir, "browse");
+    // Debian ships /usr/bin/browse as a symlink to xdg-open; isExecutableBrowse skips it.
+    if (isExecutableBrowse(cand)) return cand;
+  }
+  return null;
+}
+
+function runBrowse(args, input) {
+  const bin = browseBin();
+  if (!bin) {
+    console.error("browse is not installed. Run: curl -fsSL https://opencode.ai/browse/install | bash");
+    return 1;
+  }
+  const r = spawnSync(bin, args, { encoding: "utf8", input, maxBuffer: 64 * 1024 * 1024 });
+  if (r.stdout) process.stdout.write(r.stdout);
+  if (r.stderr) process.stderr.write(r.stderr);
+  return r.status ?? 1;
+}
+
+function runMainTier(cmd, arg) {
+  if (!cmd || cmd === "tools") return runBrowse(["tools"]);
+  if (cmd === "schema") return arg ? runBrowse([arg, "--help"]) : 2;
+  // The relay stops itself after 30 minutes idle; never kill it, other agents share it.
+  if (cmd === "stop") return 0;
+  const raw = arg === "-" ? fs.readFileSync(0, "utf8") : arg || "{}";
+  try { JSON.parse(raw); } catch (e) {
+    console.error(`invalid JSON arguments: ${e.message}`);
+    return 2;
+  }
+  return runBrowse([cmd, "--json", raw]);
+}
+
 async function main() {
   const [tier, cmd, arg, ...rest] = process.argv.slice(2);
   if (tier === "__daemon") return daemon(cmd);
+  if (tier === "daily" || tier === "user" || tier === "main") process.exit(runMainTier(cmd, arg));
   if (tier === "status") {
     for (const t of Object.keys(servers)) console.log(`${t}: ${(await alive(t)) ? "running" : "stopped"}`);
+    const bin = browseBin();
+    let dailyState = "not installed";
+    if (bin) {
+      const r = spawnSync(bin, ["status", "--json"], { encoding: "utf8", timeout: 5000 });
+      if (r.error && r.error.code === "ETIMEDOUT") {
+        dailyState = "installed (status timed out)";
+      } else {
+        try {
+          const s = JSON.parse(r.stdout || "{}");
+          const names = (s.extension?.browsers || []).map((b) => b.name).join(", ");
+          dailyState = s.connected ? `connected (${names || "browser"})` : "installed, not connected";
+        } catch { dailyState = "installed"; }
+      }
+    }
+    console.log(`daily: ${dailyState}`);
     return;
   }
   if (tier === "profile") return handleProfileCommand([cmd, arg, ...rest].filter((x) => x !== undefined));
@@ -392,7 +461,7 @@ async function main() {
     return;
   }
   if (!servers[tier] || !cmd) {
-    console.error("usage: wh-browser <fast|devtools> <tools|schema <tool>|stop|<tool> [json|-]> | status | profile ... | proxy ... | open [profile] [url]");
+    console.error("usage: wh-browser <fast|devtools|daily> <tools|schema <tool>|stop|<tool> [json|-]> | status | profile ... | proxy ... | open [profile] [url]");
     process.exit(2);
   }
   await ensure(tier);
