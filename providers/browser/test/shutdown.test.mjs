@@ -49,7 +49,7 @@ async function setupFakeChromeDevtoolsNpx(root, { stallStartup = false, managedN
   await fs.writeFile(
     workerScript,
     `import fs from 'node:fs';
-import { Server } from ${JSON.stringify(mcpServerModuleUrl)};
+import { McpServer } from ${JSON.stringify(mcpServerModuleUrl)};
 import { serveStdio } from ${JSON.stringify(mcpStdioModuleUrl)};
 
 fs.writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));
@@ -57,14 +57,15 @@ if (${JSON.stringify(stallStartup)}) {
   setInterval(() => {}, 30000);
 } else {
   const handle = serveStdio(() => {
-    const server = new Server({ name: 'fake-chrome-devtools', version: '1.0.0' }, { capabilities: { tools: {} } });
-    server.setRequestHandler('tools/list', async () => ({
+    const mcp = new McpServer({ name: 'fake-chrome-devtools', version: '1.0.0' });
+    mcp.server.registerCapabilities({ tools: {} });
+    mcp.server.setRequestHandler('tools/list', async () => ({
       tools: [{ name: 'list_pages', description: 'List pages.', inputSchema: { type: 'object', properties: {} } }],
     }));
-    server.setRequestHandler('tools/call', async () => ({
+    mcp.server.setRequestHandler('tools/call', async () => ({
       content: [{ type: 'text', text: 'pages ok' }],
     }));
-    return server;
+    return mcp;
   });
   process.stdin.once('end', () => { void handle.close(); });
   process.once('SIGTERM', () => { void handle.close().finally(() => process.exit(0)); });

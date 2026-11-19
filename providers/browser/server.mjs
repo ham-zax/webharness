@@ -3,7 +3,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { Client } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
-import { Server } from '@modelcontextprotocol/server';
+import { McpServer } from '@modelcontextprotocol/server';
 import { StdioServerTransport, serveStdio } from '@modelcontextprotocol/server/stdio';
 import { createStdioErrorReporter } from '../../lib/stdio-diagnostics.mjs';
 import { defaultBrowserTarget, resolveLinuxBrowserBackend } from '../browser-fast/browser-backend-config.mjs';
@@ -481,19 +481,19 @@ export function createBrowserFacadeServer({ router } = {}) {
   if (!router || typeof router.listTools !== 'function' || typeof router.call !== 'function') {
     throw new TypeError('router with listTools() and call() is required');
   }
-  const server = new Server(
+  const mcp = new McpServer(
     { name: 'browser', version: '0.1.0' },
     {
-      capabilities: { tools: {} },
       instructions: 'One resource-local DevTools surface. On WSL, tools default to the dedicated persistent Windows MCP Chrome profile; on other hosts they default to the configured Linux browser. Pass browser_target to choose explicitly; browser_backend and browser_profile select the same Linux identity used by browser-fast. Managed CloakBrowser is attached through its live CDP endpoint. Path arguments are OS-temp-only.'
     }
   );
-  server.setRequestHandler('tools/list', async () => ({ tools: await router.listTools() }));
-  server.setRequestHandler('tools/call', async request => router.call({
+  mcp.server.registerCapabilities({ tools: {} });
+  mcp.server.setRequestHandler('tools/list', async () => ({ tools: await router.listTools() }));
+  mcp.server.setRequestHandler('tools/call', async request => router.call({
     tool: request.params.name,
     arguments: request.params.arguments ?? {}
   }));
-  return server;
+  return mcp;
 }
 
 export async function runBrowserFacadeStdio() {

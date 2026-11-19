@@ -50,7 +50,7 @@ async function writeFakeDownstreamServer(dir, { stallStartup = false } = {}) {
     entry,
     `import { spawn } from 'node:child_process';
 import fs from 'node:fs';
-import { Server } from ${JSON.stringify(mcpServerModuleUrl)};
+import { McpServer } from ${JSON.stringify(mcpServerModuleUrl)};
 import { serveStdio } from ${JSON.stringify(mcpStdioModuleUrl)};
 
 // Grandchild 1: inherits stdout/stderr pipes and outlives direct parent EOF exit.
@@ -70,11 +70,12 @@ if (${JSON.stringify(stallStartup)}) {
   setInterval(() => {}, 30000);
 } else {
   const handle = serveStdio(() => {
-    const server = new Server({ name: 'fake-downstream', version: '1.0.0' }, { capabilities: { tools: {} } });
-    server.setRequestHandler('tools/list', async () => ({
+    const mcp = new McpServer({ name: 'fake-downstream', version: '1.0.0' });
+    mcp.server.registerCapabilities({ tools: {} });
+    mcp.server.setRequestHandler('tools/list', async () => ({
       tools: [{ name: 'ping', description: 'Ping.', inputSchema: { type: 'object' } }],
     }));
-    return server;
+    return mcp;
   });
   process.stdin.once('end', () => { void handle.close().finally(() => process.exit(0)); });
   process.once('SIGTERM', () => { void handle.close().finally(() => process.exit(0)); });

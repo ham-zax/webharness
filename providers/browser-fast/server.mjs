@@ -4,7 +4,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { Server } from '@modelcontextprotocol/server';
+import { McpServer } from '@modelcontextprotocol/server';
 import { StdioServerTransport, serveStdio } from '@modelcontextprotocol/server/stdio';
 import { createStdioErrorReporter } from '../../lib/stdio-diagnostics.mjs';
 import { ensureWindowsChrome } from '../browser/windows-chrome-runtime.mjs';
@@ -661,22 +661,25 @@ export class AgentBrowserRunner {
       const active = (listing.result?.tabs || []).find(tab => tab.active === true)?.targetId;
       const after = await readExternalCdpPages(selected.cdp);
       const blank = ownedBootstrapPage({ before, after, activeTargetId: active, selectedTargetId: sessionTab });
+      let bindError = null;
       try {
         const selectedTab = await this.linuxAgentBatch({ ...selected, session }, [['tab', sessionTab]], { bail: true });
         if (selectedTab.items?.[0]?.success !== true) {
           throw fastError('BROWSER_FAST_PIN_INIT_FAILED', selectedTab.items?.[0]?.error || 'could not bind pre-existing tab');
         }
-      } finally {
-        if (blank) {
-          const current = await readExternalCdpPages(selected.cdp);
-          if (current.websocket !== before.websocket || current.pages.get(blank) !== 'about:blank') {
-            throw fastError('BROWSER_FAST_PIN_INIT_UNCERTAIN', 'session bootstrap tab changed; refusing unverified cleanup');
-          }
-          await closeExternalOwnedPage(before.websocket, blank);
-          const verified = await readExternalCdpPages(selected.cdp);
-          if (verified.pages.has(blank)) throw fastError('BROWSER_FAST_PIN_INIT_UNCERTAIN', 'session bootstrap tab remains after exact cleanup');
-        }
+      } catch (error) {
+        bindError = error;
       }
+      if (blank) {
+        const current = await readExternalCdpPages(selected.cdp);
+        if (current.websocket !== before.websocket || current.pages.get(blank) !== 'about:blank') {
+          throw fastError('BROWSER_FAST_PIN_INIT_UNCERTAIN', 'session bootstrap tab changed; refusing unverified cleanup');
+        }
+        await closeExternalOwnedPage(before.websocket, blank);
+        const verified = await readExternalCdpPages(selected.cdp);
+        if (verified.pages.has(blank)) throw fastError('BROWSER_FAST_PIN_INIT_UNCERTAIN', 'session bootstrap tab remains after exact cleanup');
+      }
+      if (bindError) throw bindError;
     })().catch(error => {
       this.externalPinnedReady.delete(session);
       throw error;
@@ -760,7 +763,7 @@ export class AgentBrowserRunner {
       const blankIds = new Set(liveTargets.filter(item => item.url === 'about:blank').map(item => item.targetId));
       const claims = this.cloakbrowserClaims.get(selected.profileName) ?? new Map();
       const now = this.now();
-      for (const [claimed, claimedAt] of [...claims]) {
+      for (const [claimed, claimedAt] of claims) {
         // Drop a claim on a tab that died, and release a claim on a blank tab after a long
         // idle period. An empty tab holds no caller's work, so the next caller may reuse it
         // instead of opening another tab. A tab with content stays claimed.
@@ -1099,7 +1102,7 @@ export class FastBrowser {
         };
       }
 
-      const items = new Array(actions.length);
+      const items = Array.from({ length: actions.length });
       let transitionError;
       let index = 0;
 
@@ -1331,14 +1334,14 @@ export function createBrowserFastServer({ browser } = {}) {
   if (!browser || typeof browser.observe !== 'function' || typeof browser.execute !== 'function') {
     throw new TypeError('browser with observe() and execute() is required');
   }
-  const server = new Server(
+  const mcp = new McpServer(
     { name: 'browser-fast', version: '0.1.0' },
     {
-      capabilities: { tools: {} },
       instructions: 'Fast resource-local browser interaction. On managed Linux CloakBrowser, an observe without tab allocates an independent tab workspace; reuse the returned active_tab for that task. Observe for stable refs/tabs plus bounded local site memory, execute mechanical sequences locally, and never assume failed or partial batches are safe to replay.'
     }
   );
-  server.setRequestHandler('tools/list', async () => ({ tools: [
+  mcp.server.registerCapabilities({ tools: {} });
+  mcp.server.setRequestHandler('tools/list', async () => ({ tools: [
     {
       name: 'observe',
       description: 'Return compact interactive browser state with stable tab IDs, element refs, and bounded read-only local policy/site/platform memory for the current URL when available. On managed Linux CloakBrowser, omitting tab allocates an independent tab workspace; pass a prior active_tab to continue that workspace. Unknown sites remain valid with empty memory.',
@@ -1399,7 +1402,7 @@ export function createBrowserFastServer({ browser } = {}) {
       }
     }
   ] }));
-  server.setRequestHandler('tools/call', async request => {
+  mcp.server.setRequestHandler('tools/call', async request => {
     try {
       if (request.params.name === 'observe') return jsonResult(await browser.observe(request.params.arguments ?? {}));
       if (request.params.name === 'execute') return jsonResult(await browser.execute(request.params.arguments ?? {}));
@@ -1409,7 +1412,7 @@ export function createBrowserFastServer({ browser } = {}) {
       return errorResult(error);
     }
   });
-  return server;
+  return mcp;
 }
 
 export async function runBrowserFastStdio() {

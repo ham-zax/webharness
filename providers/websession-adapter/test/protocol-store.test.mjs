@@ -7,7 +7,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { Server, createMcpHandler } from '@modelcontextprotocol/server';
+import { McpServer, createMcpHandler } from '@modelcontextprotocol/server';
 import { OperationCore, renderToolResult } from '../core.mjs';
 import { webSessionInstructions, compactInstructions, decodeToolName, parseRequest, parseUniversalRequest, toolListSnapshot } from '../protocol.mjs';
 import { callMcpTool, listMcpTools } from '../mcp-client.mjs';
@@ -683,10 +683,11 @@ function jsonRpcMethods(body) {
 function startModernMcpStub(t, tools, runTool) {
   const counts = { discover: 0, initialize: 0, listTools: 0, calls: 0 };
   const handler = createMcpHandler(() => {
-    const server = new Server({ name: 'modern-fixture', version: '1' }, { capabilities: { tools: {} } });
-    server.setRequestHandler('tools/list', () => ({ tools }));
-    server.setRequestHandler('tools/call', ({ params }) => runTool(params.name, params.arguments, counts));
-    return server;
+    const mcp = new McpServer({ name: 'modern-fixture', version: '1' });
+    mcp.server.registerCapabilities({ tools: {} });
+    mcp.server.setRequestHandler('tools/list', () => ({ tools }));
+    mcp.server.setRequestHandler('tools/call', ({ params }) => runTool(params.name, params.arguments, counts));
+    return mcp;
   });
   const server = createServer(async (req, res) => {
     const url = new URL(req.url ?? '/', 'http://127.0.0.1');

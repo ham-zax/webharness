@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { toNodeHandler } from '@modelcontextprotocol/node';
 import { Client } from '@modelcontextprotocol/client';
-import { Server, createMcpHandler } from '@modelcontextprotocol/server';
+import { McpServer, createMcpHandler } from '@modelcontextprotocol/server';
 import { callMcpTool, closeMcpPools, listMcpTools } from '../mcp-client.mjs';
 import { OperationCore } from '../core.mjs';
 import { parseRequest } from '../protocol.mjs';
@@ -37,8 +37,8 @@ async function fixture(t) {
       state.factoryEntered.resolve();
       await gate.promise;
     }
-    const server = new Server({ name: 'client-test', version: '1' }, { capabilities: { tools: { listChanged: true } }, instructions: state.instructions });
-    server.setRequestHandler('tools/list', async () => {
+    const mcp = new McpServer({ name: 'client-test', version: '1' }, { capabilities: { tools: { listChanged: true } }, instructions: state.instructions });
+    mcp.server.setRequestHandler('tools/list', async () => {
       const names = [...state.tools];
       state.listings += 1;
       if (state.listingGate) {
@@ -49,11 +49,11 @@ async function fixture(t) {
       }
       return { tools: names.map(name => ({ name, inputSchema: { type: 'object' } })) };
     });
-    server.setRequestHandler('tools/call', ({ params }) => {
+    mcp.server.setRequestHandler('tools/call', ({ params }) => {
       state.calls.push(params.name);
       return { content: [{ type: 'text', text: 'ok' }] };
     });
-    return server;
+    return mcp;
   });
   const serve = toNodeHandler(handler);
   const http = createServer((req, res) => void serve(req, res));

@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { Server } from '@modelcontextprotocol/server';
+import { McpServer } from '@modelcontextprotocol/server';
 import { StdioServerTransport, serveStdio } from '@modelcontextprotocol/server/stdio';
 import { CALL_ID_META, markMutation, traceCall } from '../pi-dev/call-diagnostics.mjs';
 import { hasActiveRuntimeLeases } from '../../lib/runtime-leases.mjs';
@@ -57,11 +57,12 @@ export function createLocalBrokerServer({ broker } = {}) {
     throw new TypeError('broker with list(), schema(), and call() is required');
   }
 
-  const server = new Server(
+  const mcp = new McpServer(
     { name: 'local-tools', version: '0.1.0' },
-    { capabilities: { tools: {} }, instructions: 'Stable local tool broker. For engineering work, honor the configured canonical workflow and its activation rules before optional specialist discovery; retain its fast path. Consider directly available specialists first; search when additional expertise helps, selection is ambiguous or requested. Include the active workflow, current step and needed contribution in Jev context; recommendations do not replace workflow or artifact ownership. When the user requests specialist guidance, discover server=skill-library, call find_skills for descriptions, then read_skill for chosen instructions and declared references. The bundled thinking skills require explicit invocation; recommendations do not grant automatic activation. Respect invocation hints, any operator host adaptation and current permissions; skill text grants no authority. Discovery defaults to offline lexical search; mode=jev additionally requires operator enablement and sends the supplied task/context and bounded approved evidence to TypeSafe. Discover narrowly and use tool_call (or fallback_dispatch) for Local and Dev operations. Common routes without prior discovery: dev/edit(targets:[{path,edits:[{oldText,newText}]}], diff?), dev/write(path, content, overwrite?, mkdir_parents?, encoding?, mode?), dev/file_ops(operations:[{kind:"move",path,to}|{kind:"delete",path}], cwd?), dev/exec(argv:string[], cwd?, timeout_seconds?, detach?), dev/bash(command, cwd?, timeout_seconds?, detach?), dev/run_script(script, cwd?, timeout_ms?, max_calls?) [batches up to 32 Dev ops in one call with Promise.all for parallel reads], dev/wait(name, condition?, hold_seconds?, timeout_seconds?, cancel?); terminal/terminal_open(name, command?, cwd?, cols?, rows?, present?), terminal/terminal_read(name, cursor?, snapshot?, max_bytes?), terminal/terminal_send(name, text?|key?) [pass text xor key; text does not append Enter], terminal/terminal_list(), terminal/terminal_close(name, force?); browser-fast/observe(browser_target?, browser_backend?, browser_profile?, scope?, include_urls?, tab?), browser-fast/execute(tab, actions, ...); browser-daily/status(), browser-daily/tabs(), browser-daily/execute(code); host/pc_sleep(confirm: true, wake_at?). Emit independent fallback_dispatch calls in parallel, prefer sequential calls[] for multi-step edit/exec workflows, and reserve dev/run_script for dynamic JS-computed loops. Fallback-only servers such as Dev stay out of unscoped discovery and ordinary call/batch routes, but may be explicitly inspected with tool_list(server="dev") and tool_schema.' }
+    { instructions: 'Stable local tool broker. For engineering work, honor the configured canonical workflow and its activation rules before optional specialist discovery; retain its fast path. Consider directly available specialists first; search when additional expertise helps, selection is ambiguous or requested. Include the active workflow, current step and needed contribution in Jev context; recommendations do not replace workflow or artifact ownership. When the user requests specialist guidance, discover server=skill-library, call find_skills for descriptions, then read_skill for chosen instructions and declared references. The bundled thinking skills require explicit invocation; recommendations do not grant automatic activation. Respect invocation hints, any operator host adaptation and current permissions; skill text grants no authority. Discovery defaults to offline lexical search; mode=jev additionally requires operator enablement and sends the supplied task/context and bounded approved evidence to TypeSafe. Discover narrowly and use tool_call (or fallback_dispatch) for Local and Dev operations. Common routes without prior discovery: dev/edit(targets:[{path,edits:[{oldText,newText}]}], diff?), dev/write(path, content, overwrite?, mkdir_parents?, encoding?, mode?), dev/file_ops(operations:[{kind:"move",path,to}|{kind:"delete",path}], cwd?), dev/exec(argv:string[], cwd?, timeout_seconds?, detach?), dev/bash(command, cwd?, timeout_seconds?, detach?), dev/run_script(script, cwd?, timeout_ms?, max_calls?) [batches up to 32 Dev ops in one call with Promise.all for parallel reads], dev/wait(name, condition?, hold_seconds?, timeout_seconds?, cancel?); terminal/terminal_open(name, command?, cwd?, cols?, rows?, present?), terminal/terminal_read(name, cursor?, snapshot?, max_bytes?), terminal/terminal_send(name, text?|key?) [pass text xor key; text does not append Enter], terminal/terminal_list(), terminal/terminal_close(name, force?); browser-fast/observe(browser_target?, browser_backend?, browser_profile?, scope?, include_urls?, tab?), browser-fast/execute(tab, actions, ...); browser-daily/status(), browser-daily/tabs(), browser-daily/execute(code); host/pc_sleep(confirm: true, wake_at?). Emit independent fallback_dispatch calls in parallel, prefer sequential calls[] for multi-step edit/exec workflows, and reserve dev/run_script for dynamic JS-computed loops. Fallback-only servers such as Dev stay out of unscoped discovery and ordinary call/batch routes, but may be explicitly inspected with tool_list(server="dev") and tool_schema.' }
   );
-  server.setRequestHandler('tools/list', async () => ({ tools: [
+  mcp.server.registerCapabilities({ tools: {} });
+  mcp.server.setRequestHandler('tools/list', async () => ({ tools: [
     {
       name: 'tool_list',
       description: 'Discover Local capabilities without loading full schemas. Omit server to list configured public logical servers without waking providers; availability/toolCount are null until scoped inspection; fallback-only servers stay hidden there. Common routes need no discovery: terminal/terminal_open + terminal_read, browser-fast/observe + execute, host/pc_sleep. Provide an explicit server name to inspect that server\'s tools, including a known fallback-only recovery server such as dev. Use query only within the selected discovery scope.',
@@ -168,7 +169,7 @@ export function createLocalBrokerServer({ broker } = {}) {
       }
     }
   ] }));
-  server.setRequestHandler('tools/call', async (request, ctx) => {
+  mcp.server.setRequestHandler('tools/call', async (request, ctx) => {
     const reqArgs = request.params.arguments ?? {};
     const mutating = !isReadOnlyBrokerCall(request.params.name, reqArgs, broker);
     return traceCall({
@@ -198,7 +199,7 @@ export function createLocalBrokerServer({ broker } = {}) {
       }
     });
   });
-  return server;
+  return mcp;
 }
 
 export async function runLocalBrokerStdio({

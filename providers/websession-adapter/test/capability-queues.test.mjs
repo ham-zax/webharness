@@ -8,7 +8,7 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
-import { Server, createMcpHandler } from '@modelcontextprotocol/server';
+import { McpServer, createMcpHandler } from '@modelcontextprotocol/server';
 import { OperationCore } from '../core.mjs';
 import { parseRequest } from '../protocol.mjs';
 import { AdapterStore, requestHash } from '../store.mjs';
@@ -38,10 +38,11 @@ function withinMs(promise, ms, message) {
 
 function startModernGateway(t, tools, runTool) {
   const handler = createMcpHandler(() => {
-    const server = new Server({ name: 'queue-fixture', version: '1' }, { capabilities: { tools: {} } });
-    server.setRequestHandler('tools/list', () => ({ tools }));
-    server.setRequestHandler('tools/call', ({ params }) => runTool(params.name, params.arguments));
-    return server;
+    const mcp = new McpServer({ name: 'queue-fixture', version: '1' });
+    mcp.server.registerCapabilities({ tools: {} });
+    mcp.server.setRequestHandler('tools/list', () => ({ tools }));
+    mcp.server.setRequestHandler('tools/call', ({ params }) => runTool(params.name, params.arguments));
+    return mcp;
   });
   const server = createServer(async (req, res) => {
     const url = new URL(req.url ?? '/', 'http://127.0.0.1');

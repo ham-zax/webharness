@@ -154,15 +154,16 @@ test(
     writeFileSync(backendScript, `import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 const req = createRequire(${JSON.stringify(adapterPkgPath)});
-const { Server } = await import(pathToFileURL(req.resolve('@modelcontextprotocol/server')).href);
+const { McpServer } = await import(pathToFileURL(req.resolve('@modelcontextprotocol/server')).href);
 const { serveStdio } = await import(pathToFileURL(req.resolve('@modelcontextprotocol/server/stdio')).href);
 const coordinatorUrl = process.env.FIXTURE_COORDINATOR_URL;
 function createFixtureServer() {
-  const server = new Server(
+  const mcp = new McpServer(
     { name: 'fixture', version: '1.0.0' },
-    { capabilities: { tools: {} }, instructions: 'Real 1MCP gateway fixture instructions.' },
+    { instructions: 'Real 1MCP gateway fixture instructions.' },
   );
-  server.setRequestHandler('tools/list', async () => ({
+  mcp.server.registerCapabilities({ tools: {} });
+  mcp.server.setRequestHandler('tools/list', async () => ({
     tools: [{
       name: 'read',
       description: 'Read-only concurrency probe',
@@ -175,7 +176,7 @@ function createFixtureServer() {
       },
     }],
   }));
-  server.setRequestHandler('tools/call', async (request, ctx) => {
+  mcp.server.setRequestHandler('tools/call', async (request, ctx) => {
     const res = await fetch(coordinatorUrl, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -186,7 +187,7 @@ function createFixtureServer() {
     if (!res.ok) throw new Error(body || 'fixture error');
     return { content: [{ type: 'text', text: body }] };
   });
-  return server;
+  return mcp;
 }
 const handle = serveStdio(createFixtureServer);
 process.stdin.once('end', () => { void handle.close(); });

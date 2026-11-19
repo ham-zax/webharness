@@ -4,7 +4,7 @@ import { pathToFileURL } from 'node:url';
 import { createRequire } from 'node:module';
 
 const adapterRequire = createRequire(new URL('../../providers/websession-adapter/package.json', import.meta.url));
-const { Server, createMcpHandler } = adapterRequire('@modelcontextprotocol/server');
+const { McpServer, createMcpHandler } = adapterRequire('@modelcontextprotocol/server');
 
 const pattern = 'héllo🌍\n';
 const size = 100 * 1024;
@@ -19,11 +19,12 @@ const tools = [
 ];
 
 export function createStubServer() {
-  const server = new Server({ name: 'adapter-test-stub', version: '1' }, {
-    capabilities: { tools: {} }, instructions: 'Adapter integration test instructions.',
+  const mcp = new McpServer({ name: 'adapter-test-stub', version: '1' }, {
+    instructions: 'Adapter integration test instructions.',
   });
-  server.setRequestHandler('tools/list', () => ({ tools }));
-  server.setRequestHandler('tools/call', async ({ params }) => {
+  mcp.server.registerCapabilities({ tools: {} });
+  mcp.server.setRequestHandler('tools/list', () => ({ tools }));
+  mcp.server.setRequestHandler('tools/call', async ({ params }) => {
     const args = params.arguments || {};
     switch (params.name) {
       case 'echo': return { content: [{ type: 'text', text: args.text }] };
@@ -38,7 +39,7 @@ export function createStubServer() {
       default: throw new Error('unknown test tool');
     }
   });
-  return server;
+  return mcp;
 }
 
 async function toRequest(req) {

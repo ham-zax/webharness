@@ -878,16 +878,17 @@ async function writeFixtureMcpServer(dir, name, { modern = true, modernOnly = fa
   await fs.writeFile(
     script,
     `import fs from 'node:fs';
-import { Server } from ${JSON.stringify(mcpServerModUrl)};
+import { McpServer } from ${JSON.stringify(mcpServerModUrl)};
 import { StdioServerTransport, serveStdio } from ${JSON.stringify(mcpServerStdioModUrl)};
 
 fs.appendFileSync(${JSON.stringify(pidLog)}, String(process.pid) + '\\n');
 function buildServer() {
-  const server = new Server({ name: ${JSON.stringify(name)}, version: '1.0.0' }, { capabilities: { tools: {} } });
-  server.setRequestHandler('tools/list', async () => ({
+  const mcp = new McpServer({ name: ${JSON.stringify(name)}, version: '1.0.0' });
+  mcp.server.registerCapabilities({ tools: {} });
+  mcp.server.setRequestHandler('tools/list', async () => ({
     tools: [{ name: ${JSON.stringify(`ping_${name}`)}, description: 'Ping fixture', inputSchema: { type: 'object', properties: { msg: { type: 'string' } } } }]
   }));
-  server.setRequestHandler('tools/call', async req => {
+  mcp.server.setRequestHandler('tools/call', async req => {
     const prev = fs.existsSync(${JSON.stringify(callLog)}) ? fs.readFileSync(${JSON.stringify(callLog)}, 'utf8').trim().split('\\n').filter(Boolean).length : 0;
     fs.appendFileSync(${JSON.stringify(callLog)}, JSON.stringify(req.params) + '\\n');
     process.stderr.write(${JSON.stringify(`${name}: handling call\n`)});
@@ -899,7 +900,7 @@ function buildServer() {
     }
     return { content: [{ type: 'text', text: ${JSON.stringify(`${name}:`)} + String(req.params.arguments?.msg ?? 'pong') }] };
   });
-  return server;
+  return mcp;
 }
 if (${JSON.stringify(modern)}) {
   const handle = serveStdio(() => buildServer(), { legacy: ${JSON.stringify(modernOnly)} ? 'reject' : 'serve' });
