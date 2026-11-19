@@ -247,7 +247,8 @@ export function scriptToolTable({ handlers, configs, gate, limits, defaultCwd })
           throw new Error(`SCRIPT_CALL_LIMIT: the script already made ${limits.maxCalls} tool calls; split the work into smaller scripts`);
         }
         limits.calls += 1;
-        const result = await gate.run(readOnly, signal, () => handler(input, { signal, callId: limits.callId }));
+        const nestedCallId = limits.callId ? `${limits.callId}#${limits.calls}` : undefined;
+        const result = await gate.run(readOnly, signal, () => handler(input, { signal, callId: nestedCallId }));
         if (result?.isError) throw new Error(textOf(result) || `Tool "${name}" failed`);
         if (result?.structuredContent !== undefined) return result.structuredContent;
         return textOf(result);

@@ -8,7 +8,7 @@ export const DEFAULT_SCRIPT_MAX_CALLS = 32;
 export const MAX_SCRIPT_MAX_CALLS = 32;
 export const SCRIPT_MEMORY_LIMIT_BYTES = 256 * 1024 * 1024;
 export const SCRIPT_READ_CONCURRENCY = 4;
-export const SCRIPT_MAX_CONCURRENT = 2;
+export const SCRIPT_MAX_CONCURRENT = 4;
 export const SCRIPT_SLOT_WAIT_MS = 60_000;
 
 // A script's authority is exactly the Dev surface this process registered, minus the

@@ -113,6 +113,35 @@ test('real MCP discovery stays cold and retains schema metadata and owner instru
   assert.throws(() => process.kill(closingPid,0), error => error.code === 'ESRCH');
 });
 
+test('MCP_DEV_PREWARM_WORKER=1 pre-warms the execution worker before the first tool call', async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'dev-prewarm-'));
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: [new URL('../server.mjs', import.meta.url).pathname],
+    env: {
+      ...process.env,
+      MCP_DEV_SHELL_MODE: 'unrestricted',
+      MCP_DEV_PATH_MODE: 'user',
+      MCP_DEV_DEFAULT_CWD: root,
+      MCP_DEV_STATE_DIR: root,
+      MCP_DEV_TERMINAL_SOCKET: path.join(root, 'broker.sock'),
+      MCP_DEV_WORKER_IDLE_MS: '60000',
+      MCP_DEV_PREWARM_WORKER: '1',
+    },
+    stderr: 'pipe',
+  });
+  const client = new Client({ name: 'prewarm-test', version: '1' });
+  t.after(async () => { await client.close(); await fs.rm(root, { recursive: true, force: true }); });
+  await client.connect(transport);
+  let childPid = 0;
+  for (let i = 0; i < 40; i += 1) {
+    const raw = (await fs.readFile(`/proc/${transport.pid}/task/${transport.pid}/children`, 'utf8')).trim();
+    if (raw) { childPid = Number(raw.split(/\s+/)[0]); break; }
+    await sleep(50);
+  }
+  assert.ok(childPid > 0, 'pre-warmed worker child should exist before any tool call');
+});
+
 for (const tool of ['exec', 'bash']) test(`real ${tool} shutdown aborts and reaps detached command process groups`, async t => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'dev-tree-'));
   const worker = new IdleExecutionWorker({serverPath:new URL('../server.mjs',import.meta.url).pathname, env:{...process.env,MCP_DEV_SHELL_MODE:'unrestricted',MCP_DEV_PATH_MODE:'workspace',MCP_DEV_WORKSPACE_ROOT:root,MCP_DEV_STATE_DIR:root}});

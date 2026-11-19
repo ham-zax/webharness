@@ -644,6 +644,9 @@ if (executionWorker) {
     transport,
     onerror: createStdioErrorReporter('pi-dev'),
   });
+  if (process.env.MCP_DEV_PREWARM_WORKER === '1') {
+    void worker.start().catch(() => {});
+  }
   let closing = null;
   const shutdown = () => {
     if (closing) return closing;

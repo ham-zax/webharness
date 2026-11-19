@@ -9,6 +9,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 import { z } from 'zod';
 import { renderScriptText } from '../render.mjs';
 import { runScript, scriptToolTable, truncateScriptText, withDefaultCwd } from '../run-script.mjs';
+import { SCRIPT_MAX_CONCURRENT } from '../script-limits.mjs';
 import { SCRIPT_EXCLUDED_TOOLS } from '../script-limits.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -169,20 +170,36 @@ test('a small timeout_ms bounds the wait for a free slot', async () => {
     timeout_ms: 1500,
     script: 'await tools.read({});',
   });
-  const first = blocker();
-  const second = blocker();
+  const holders = Array.from({ length: SCRIPT_MAX_CONCURRENT }, () => blocker());
   const started = Date.now();
-  const third = await runScript({
+  const overflow = await runScript({
     ...scriptFixture(handlers, { stateDir }),
     timeout_ms: 300,
     script: 'return 1;',
   });
   const wall = Date.now() - started;
-  assert.equal(third.status, 'failed');
-  assert.equal(third.error_kind, 'timeout');
-  assert.match(third.error_message, /while waiting for a free script slot/);
+  assert.equal(overflow.status, 'failed');
+  assert.equal(overflow.error_kind, 'timeout');
+  assert.match(overflow.error_message, /while waiting for a free script slot/);
   assert.ok(wall < 1200, `slot wait ignored timeout_ms: ${wall}ms`);
-  await Promise.allSettled([first, second]);
+  await Promise.allSettled(holders);
+});
+
+test('nested script calls receive distinct callId#n identifiers for log attribution', async () => {
+  const seenIds = [];
+  const stateDir = await tempDir('pi-dev-script-');
+  const result = await runScript(scriptFixture({
+    read: async (_args, extra) => {
+      seenIds.push(extra.callId);
+      return textResult('ok');
+    },
+  }, {
+    stateDir,
+    callId: 'parent-123',
+    script: 'await tools.read({}); await tools.read({}); return "done";',
+  }));
+  assert.equal(result.status, 'completed');
+  assert.deepEqual(seenIds, ['parent-123#1', 'parent-123#2']);
 });
 
 test('read-only calls overlap and a mutation waits for them', async () => {
