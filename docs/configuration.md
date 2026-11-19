@@ -1,218 +1,87 @@
 # Configuration
 
-Configuration is built from three inputs:
+Configuration renders from three inputs into external runtime state:
 
 ```text
-tracked template + explicit trust profile + local deployment identity
-                              -> generated external state
+tracked template + explicit trust profile + local .env -> generated state outside Git
 ```
 
-## Deployment identity
+## Deployment identity (`.env`)
 
-Local machine-specific values come from `.env` (or another file passed with `--env-file`):
+Copy `.env.example` to `.env` (Git-ignored) or pass `--env-file PATH`.
 
-```text
-MCP_WORKSPACE_ROOT=/absolute/path/to/code
-MCP_PUBLIC_URL=https://mcp.example.com
-MCP_TUNNEL_NAME=
-MCP_DEV_MAX_OUTPUT_BYTES=16384
-MCP_DEV_READ_DEFAULT_LINES=160
-MCP_DEV_IMPORT_MAX_BYTES=104857600
-MCP_DEV_MAX_SPOOL_BYTES=67108864
-MCP_DEV_SPOOL_TTL_SECONDS=604800
-MCP_DEV_SPOOL_MAX_TOTAL_BYTES=536870912
-MCP_ONE_MCP_PORT=3050
-MCP_ONE_MCP_LOG_MAX_SIZE_BYTES=10485760
-MCP_ONE_MCP_LOG_MAX_FILES=5
-MCP_PERSONAL_DEFAULT_CWD=
-MCP_TERMINAL_FRONTEND=kitty
-MCP_OWNER_CONTEXT_FILE=
-MCP_OWNER_ENV_FILE=
-MCP_LOCAL_SERVERS_FILE=
-```
+| Variable | Default | Purpose |
+|---|---|---|
+| `MCP_PUBLIC_URL` | *(required)* | Public HTTPS MCP origin (e.g. `https://mcp.example.com`). |
+| `MCP_WORKSPACE_ROOT` | *(required for `restricted`/`trusted-dev`)* | Workspace root boundary for narrower profiles. |
+| `MCP_PERSONAL_DEFAULT_CWD` | `$HOME` | Default cwd for `personal` and `server` profiles. |
+| `MCP_ONE_MCP_PORT` | `3050` | Loopback listener port (match Cloudflare Tunnel ingress). |
+| `MCP_TUNNEL_NAME` | `""` | Empty runs `cloudflared tunnel run` using default `~/.cloudflared/config.yml`; non-empty targets a named tunnel. |
+| `MCP_TERMINAL_FRONTEND` | `kitty` | Personal-only collaborative launcher: `kitty` or `windows-terminal`. |
+| `MCP_OWNER_CONTEXT_FILE` | `""` | Absolute path to private file (<=32 KiB) appended to `pi-dev` MCP initialization instructions. |
+| `MCP_OWNER_ENV_FILE` | `""` | Absolute path to private file (<=64 KiB) with whitelisted GUI/browser overrides (`GALLIUM_DRIVER`, `MOZ_ENABLE_WAYLAND`, `AGENT_BROWSER_PROFILE`, `AGENT_BROWSER_EXECUTABLE_PATH`, `MCP_BROWSER_DEFAULT_TARGET`). |
+| `MCP_LOCAL_SERVERS_FILE` | `""` | Absolute path to private JSON (<=128 KiB, `{"version":"1.0.0","mcpServers":{...}}`) adding owner stdio MCPs to `DirectLocalServerPool` (`restartOnExit: true` by default; optional `protocolVersion`: `"auto"`, `"legacy"`, or `"2026-07-28"`). |
+| `MCP_SKILL_POLICY_FILE` | `skill-library/policy.json` | Optional alternate skill-library policy file. Set `MCP_SKILL_JEV_ENABLED=1` + `MCP_SKILL_JEV_ENV_FILE` (mode `0600`) only if opting into Jev selection. |
 
-`MCP_PUBLIC_URL` is the externally reachable HTTPS MCP origin. `MCP_ONE_MCP_PORT` selects the loopback 1MCP listener port and defaults to `3050`. Set Cloudflare's origin service to the same port. This is useful when WSL mirrored networking reserves the default port on the Windows host.
-
-`MCP_DEV_MAX_OUTPUT_BYTES` caps the output one `exec`, `bash`, or `run_script` result returns to the model and defaults to `16384`. Every result stays in conversation context and is re-billed on each later turn, so a small cap is cheaper. Capped results keep the head and tail, report how many bytes were omitted, and retain the complete output at `full_output_path`; raise the cap only for deployments that need larger inline results.
-
-`MCP_TUNNEL_NAME` controls only the locally-managed Cloudflare startup command. Empty/unset, as on the maintained workstation, runs `cloudflared tunnel run` and relies on the operator-owned default `~/.cloudflared/config.yml` for tunnel identity. A non-empty value runs `cloudflared tunnel run <name>`. That named selector is implemented but is not the maintained workstation path.
-
-Minting and connecting an OAuth client per app is documented in [OAuth clients and remote login](oauth-clients.md).
-
-OpenAI Secure MCP Tunnel is a separate possible transport for a ChatGPT developer-mode app: an OpenAI-hosted tunnel endpoint talks to `tunnel-client` inside the private network, which can forward to the loopback MCP server without public ingress. WebHarness does not currently own that client, its tunnel identity/runtime credential, its service lifecycle, or the required OpenAI organization/workspace association. See [Getting Started](getting-started.md#provision-the-cloudflare-transport-used-by-the-reference-deployment).
-
-`MCP_PERSONAL_DEFAULT_CWD` is optional and applies to the `personal` and `server` profiles. Leave it empty/unset to use the Linux account's `$HOME`. `MCP_TERMINAL_FRONTEND` is also personal-only: unset/empty defaults to `kitty`, and the accepted values are `kitty` and `windows-terminal`. The renderer validates this selector only for `personal`, so a stray value does not break `restricted` or `trusted-dev`.
-
-`MCP_OWNER_CONTEXT_FILE` and `MCP_OWNER_ENV_FILE` are optional personal-profile references to owner-controlled files outside the repository. Both paths must be absolute when set. `pi-dev` requires the context file to be a readable, current-user-owned regular file no larger than 32 KiB and publishes non-empty content as MCP initialization instructions after the built-in Dev file-access policy. That policy always ships: it routes text search to `search`, unfamiliar large files to `read(mode="outline")`, known files to `read`, and name discovery to `list_directory`, and it forbids reporting lost filesystem access only because `exec` or Bash failed. The renderer requires the env file to be a readable, current-user-owned regular file no larger than 64 KiB and permits only `GALLIUM_DRIVER`, `MOZ_ENABLE_WAYLAND`, `AGENT_BROWSER_PROFILE`, `AGENT_BROWSER_EXECUTABLE_PATH`, and `MCP_BROWSER_DEFAULT_TARGET`. The Agent Browser settings are Linux `browser-fast`-only; the executable path must be absolute and executable. `MCP_BROWSER_DEFAULT_TARGET` must be `windows` or `linux` and is rendered into all three browser servers. Generated `owner.env` still contains only the validated Dev/Terminal GUI variables, so Agent Browser settings are not imported into systemd service environments. Do not put trust policy or secrets in `.env` or the owner GUI env.
-
-`MCP_DEV_READ_DEFAULT_LINES` defaults to `160`; set `0` to disable the default line-count limit while retaining the per-file 16 KiB output bound. An explicit `limit` overrides the default. Outline mode uses structural entries rather than the default line limit. Multi-file reads accept up to 20 targets with a combined 32 KiB output budget.
-
-## WebSession adapter
-
-The adapter is operated separately from the WebHarness service. `bin/adapter connect --cwd <dir>` starts it if needed and creates a reusable pairing code. Session TTL defaults to 86400 seconds from first redemption (accepted range `60..86400`). Pair-code TTL defaults to 3600 seconds (accepted range `30..3600`). Repeated redemption returns the same token and expiry. `issue-cap [ttl-seconds] --cwd <dir>` and `--here` can also bind a default directory. A default directory selects context within the existing profile authority; it is not a filesystem sandbox.
-
-`WEBSESSION_ADAPTER_PUBLIC_URL` overrides the public base used by the adapter and its generated pairing prompt. The launcher can otherwise derive the prompt's base from the tunnel or deployment identity. `WEBSESSION_ADAPTER_STATE_DIR` selects the private adapter state directory. See [WebSession clients](websession-clients.md) for the full URL selection order and client environment variables.
-
-The `bin/adapter` server process accepts `WEBSESSION_ADAPTER_TOOL_TIMEOUT_MS` (default `120000`, range `1000..600000` milliseconds) to set the MCP tool-call timeout, and `WEBSESSION_ADAPTER_MAX_JSON_BODY_BYTES` (default `1048576`, range `1024..1048576` bytes) to set the maximum JSON request body size. The launcher forwards these variables when they are set; otherwise the server defaults apply.
-
-`MCP_LOCAL_SERVERS_FILE` is an optional Personal or Server profile reference to a current-user-owned JSON file outside the repository. It accepts a standard `{"version":"1.0.0","mcpServers":{...}}` object and merges those servers into the private Local server pool config beside the built-in Terminal, Host, and Browser surfaces plus the fallback-only Dev mirror. Extra servers are explicit owner grants: names cannot replace built-ins or use the retired `code`/`codedb` routes, each server is limited to optional `type: "stdio"`, optional `protocolVersion` (`"auto"`, `"legacy"`, or `"2026-07-28"`), `command`, optional string `args`, optional absolute `cwd`, optional string-valued `env`, and optional boolean `restartOnExit`; `command` must be an existing absolute executable path and `cwd`, when set, must be an existing directory. Pinning `protocolVersion` to `"legacy"` or `"2026-07-28"` skips the cold-start protocol probe when the downstream server's MCP revision is known. Owner stdio servers render with explicit `type: "stdio"` and `restartOnExit: true` by default so `DirectLocalServerPool` supervises unexpected backend exits; set `restartOnExit: false` only when an intentionally non-restarting MCP lifecycle is required. The source file is capped at 128 KiB; the rendered Local inner config remains private mode `0600`. Values under `env` are copied into that private rendered config, so keep credentials there only when a downstream MCP actually requires them.
-
-Linux `browser-fast` reads the current-user-owned `~/.config/mcp-dev-bridge/browser-fast.json` as its default/backend-profile policy. Outside the Personal Workstation bootstrap, missing configuration preserves managed Chrome. The Personal bootstrap installs the maintained V2 `cloakbrowser` / `x-main` policy when the file is missing and preserves every existing file, including V1 external CloakBrowser configurations on other ports. A file that names an unsupported backend fails the call with `BROWSER_FAST_CONFIG_INVALID`; the provider never rewrites a file. First install uses unique temporary files plus atomic replacement rather than a persistent lock, so concurrent bootstrap/configuration agents converge without stale-lock ownership. V2 can define named managed CloakBrowser profiles with `headless`, `humanize`, `humanPreset`, `platform`, `fingerprint`, `timezone`, `locale`, `extensions`, `proxy` (string URL or `{ server, bypass?, username?, password? }`), and `geoip`; the maintained workstation uses `x-main` as its normal Linux default. Individual calls may select `browser_backend="chrome"` or `browser_backend="cloakbrowser"` without rewriting the shared selector. An explicit `browser_profile` with the Chrome backend creates or reuses a persistent isolated bridge-state profile; with CloakBrowser it selects a profile already defined in the catalog. Linux requires an explicit backend whenever a profile is supplied. Managed CloakBrowser runtimes are owned per profile, and concurrent startup of the same profile is coalesced in-process. Managed CloakBrowser no-tab observations reuse a blank tab that has sat untouched for 10 minutes, and otherwise open a new tab. A tab with content stays claimed. The returned target/backend/profile/tab tuple should be reused for continuation. Firefox is not supported by the current Chromium-CDP driver and fails explicitly rather than falling through to Chrome.
+See [OAuth clients](oauth-clients.md) for client registration and [Getting Started](getting-started.md#provision-the-cloudflare-transport-used-by-the-reference-deployment) for Cloudflare Tunnel and OpenAI Secure MCP Tunnel boundaries.
 
 ## Profiles
 
-### `restricted`
+| Profile | Outer servers | Authority |
+|---|---|---|
+| `restricted` | `dev` | Workspace-bounded `read`, `edit`, `write` only (no shell, no Local). |
+| `trusted-dev` | `dev` | Workspace-bounded files + unrestricted `exec`/`bash` as the Linux user (no Local). |
+| `personal` | `dev`, `local` | Full WSL workstation: all 12 Dev tools + Local (`terminal`, `host`, `skill-library`, `browser-fast`, `browser-daily`, `browser-devtools`, owner MCPs, hidden fallback-only `dev` mirror). |
+| `server` | `dev`, `local` | Headless Linux/ARM server: Dev + Local (`terminal`, `skill-library`, owner MCPs, hidden `dev` mirror; no desktop/browser/host). Sets 365-day single-owner OAuth policy. |
 
-- Dev Files: workspace-bounded `read`, `edit`, `write`.
-- Dev execution: disabled (`exec` and `bash` are omitted).
-- No Local provider, so Terminal, Host, and Browser logical servers are absent.
+## Browser policy (`browser-fast.json`)
 
-### `trusted-dev`
+Linux `browser-fast` and `browser-devtools` read `~/.config/mcp-dev-bridge/browser-fast.json` (starter template in `config/browser-fast.example.json`). Personal bootstrap installs V2 `cloakbrowser` / `x-main` only if the file is missing and never overwrites existing files. V2 supports named managed CloakBrowser profiles (`headless`, `humanize`, `humanPreset`, `platform`, `fingerprint`, `timezone`, `locale`, `extensions`, `proxy`, `geoip`). Override per call via `browser_backend="cloakbrowser"|"chrome"` without editing the file; supplying `browser_profile` on Linux requires explicit `browser_backend`. Firefox is unsupported (Chromium-CDP only).
 
-- Dev Files: workspace-bounded `read`, `edit`, `write`.
-- Dev execution: unrestricted shell-free `exec(argv[])` and native Bash as the Linux service user.
-- No Local provider, so Terminal, Host, and Browser logical servers are absent.
+## Rendering & generated state
 
-### `personal` — Personal Workstation
-
-The maintained full reference composition is:
-
-```text
-Dev       read list_directory search edit write import_file file_ops review_changes wait exec bash run_script
-Local     tool_list tool_schema tool_call fallback_dispatch tool_batch
-            |-- terminal          durable PTY/session control
-            |-- host              pc_sleep
-            |-- skill-library     find_skills / read_skill
-            |-- browser-fast      routine observe/execute interaction
-            |-- browser-daily     everyday browser via paired browse relay
-            `-- browser-devtools  Chrome DevTools diagnostics
-```
-
-The renderer resolves one absolute personal default cwd from `MCP_PERSONAL_DEFAULT_CWD` when supplied, otherwise from the actual WSL user's `$HOME`, and uses it for direct Dev. No tracked personal profile/template carries a machine-specific home path. Personal Dev also exposes create-only `import_file` for ChatGPT-native files and read-only `review_changes` for bounded aggregate Git review (working tree by default, or commit/range history via optional `rev`). `MCP_DEV_IMPORT_MAX_BYTES` controls the per-file import ceiling, defaults to 104857600 bytes (100 MiB), and is capped at 1073741824 bytes (1 GiB). Dev `exec` passes `argv[]` directly to an executable without shell parsing; Dev `bash` remains the explicit shell-program path when pipes, redirects, substitutions, variables, loops, or compound shell syntax are required. Terminal communicates through the WebHarness broker socket and receives one normalized `MCP_TERMINAL_FRONTEND` presentation preference; tracked source keeps `kitty` as the compatibility default while a local deployment may select `windows-terminal`.
-
-For personal rendering, the outer config contains only `dev` and `local`. The outer `local` provider is tagged only `local` and points at the repository Local broker. The renderer atomically materializes a Local inner config at the bridge state root containing built-in `terminal`, `host`, `skill-library`, `browser-devtools`, `browser-fast`, and `browser-daily` servers, any explicitly configured `MCP_LOCAL_SERVERS_FILE` entries, and one fallback-only mirror of the fully rendered outer Dev provider. Terminal receives the same socket/frontend and validated owner runtime environment that its former outer provider received. `MCP_LOCAL_FALLBACK_ONLY_SERVERS=dev` keeps the Dev mirror out of unscoped Local discovery and ordinary `tool_call`/`tool_batch`. Explicit read-only recovery inspection may still use `tool_list(server="dev")` and `tool_schema(server="dev", tool=...)`; `fallback_dispatch` is the only Local execution path that can target Dev. The inner config is written before publishing the outer config so config reload cannot start Local against a missing file, and the outer Local provider receives a deterministic revision of the rendered inner config so a real downstream configuration change restarts only Local through 1MCP hot reload rather than requiring a full WebHarness restart. The broker keeps 1MCP's reload management action private for targeted recovery and never exposes the reserved `1mcp` namespace through Local.
-
-The Local broker manages downstream stdio providers directly through `DirectLocalServerPool`, waking only the addressed provider on demand at the first scoped `tool_list`, `tool_schema`, `tool_call`, `fallback_dispatch`, or `tool_batch` request, and stopping each idle provider after `MCP_LOCAL_INNER_IDLE_MS` milliseconds with no in-flight request (default 1800000, 30 minutes; `0` disables idle stop while keeping lazy start; a negative or non-integer value fails broker startup). The next request transparently starts a fresh provider instance. The renderer validates this variable and explicitly passes it into the outer Local provider environment. Unscoped discovery reads configured server names without waking any provider; unscoped `available` and `toolCount` are `null` because readiness and counts are not queried, and `backendState` reports each server's lifecycle state. Other provider state may be lost when evicted; Terminal PTY sessions survive because the Terminal broker is a separate systemd process.
-
-`browser-devtools` is the full Chrome DevTools MCP facade for diagnostics and rich results; `browser-fast` exposes only `observe` and `execute` for routine interaction. Both resolve the maintained managed-browser identities. On Windows, profileless calls share the dedicated MCP Chrome process. On Linux, `browser-fast.json` defines the default and CloakBrowser profile catalog, and each call can select Chrome or CloakBrowser without mutating that file. The everyday Chrome data directory is not attached or copied. The tracked templates carry generic WSLg plumbing; `GALLIUM_DRIVER`, `AGENT_BROWSER_PROFILE`, `AGENT_BROWSER_EXECUTABLE_PATH`, and `MCP_BROWSER_DEFAULT_TARGET` are mirrored to browser-fast where configured; `GALLIUM_DRIVER` and `MCP_BROWSER_DEFAULT_TARGET` also reach browser-devtools. Both browser surfaces remain behind the same `tag:local` authorization boundary.
-
-Local `server="host"` registers `pc_sleep` only for the Personal Workstation composition and uses Windows Task Scheduler for an optional wake time. Repository discovery uses Dev `exec` with `rg` and focused `read`.
-
-## Skill library configuration
-
-Personal and Server templates include the self-contained `skill-library` server.
-Its default policy is `skill-library/policy.json` within the checkout; runtime
-metadata is derived from approved files. No model credentials are required.
-For a standalone alternate library, `MCP_SKILL_POLICY_FILE` selects an operator
-policy file. It is not a model-call parameter or a change to the Local trust
-boundary. See [Skill library](skill-library.md) for updates and skills-only deployment.
-
-Optional Jev selection is disabled by default. Set `MCP_SKILL_JEV_ENABLED=1`
-and `MCP_SKILL_JEV_ENV_FILE` to a private current-user-owned mode-0600 file
-containing `TYPESAFE_API_KEY` and optional `TYPESAFE_MODEL`. Personal/Server
-rendering validates it and passes only its path to the provider. Clients must
-also request `mode="jev"`; default lexical discovery makes no model calls.
-
-## Rendering
-
-`webharness setup` calls the renderer for you. Direct rendering is also supported:
+`webharness setup` renders automatically. Direct rendering (also `just render personal|server`):
 
 ```bash
-node scripts/render-config.mjs \
-  --profile trusted-dev \
-  --env-file .env
+node scripts/render-config.mjs --profile personal --env-file .env [--check] [--state-dir PATH] [--repo-root PATH]
 ```
 
-The renderer accepts `restricted`, `trusted-dev`, `personal`, and `server`.
+Persistent state defaults to `${XDG_STATE_HOME:-$HOME/.local/state}/mcp-dev-bridge` (transient runtime under `${XDG_RUNTIME_DIR:-/run/user/$UID}/mcp-dev-bridge`):
 
-Useful options:
+- `bridge.env`, `owner.env` — rendered profile, URL, source root, and sanitized GUI vars.
+- `1mcp/{mcp.json,config.toml,instructions-template.md}` — outer 1MCP config, log policy, and OAuth/session home.
+- `local-1mcp/{mcp.json,config.toml}` — Local broker downstream pool config (written atomically before outer config, mode `0600`) and log policy.
+- `logs/{one-mcp.log,local-inner.log}` — native rotated logs (dir mode `0700`, `umask 077`).
+- `dev/` — durable wait state and retained command spools.
 
-```text
---check           validate without writing generated state
---env-file PATH
---state-dir PATH
---repo-root PATH
-```
+**Source root matters:** Rendered commands embed the checkout path. Before moving or deleting a checkout, follow [Safe source cutover](operations.md#safe-source-cutover).
 
-## Generated state
+## Output, log, and timeout policy
 
-Default persistent root:
+| Variable | Default | Bounds & behavior |
+|---|---|---|
+| `MCP_DEV_READ_DEFAULT_LINES` | `160` | `0..100000` (`0` disables line default; 16 KiB/file and 2000-line cap still apply; `targets` allows up to 20 files / 32 KiB combined). |
+| `MCP_DEV_MAX_OUTPUT_BYTES` | `16384` | Inline cap for `exec`/`bash`/`run_script` (keeps head + tail, appends `[exit N · Ts]`, writes complete output to `full_output_path`). Lower caps save context tokens. |
+| `MCP_DEV_IMPORT_MAX_BYTES` | `104857600` (100 MiB) | Cap up to 1 GiB for Personal `import_file`. |
+| `MCP_DEV_MAX_SPOOL_BYTES` | `67108864` (64 MiB) | Per-command retained spool cap (max 256 MiB). |
+| `MCP_DEV_SPOOL_TTL_SECONDS` | `604800` (7 days) | Finalized spool retention; GC runs on startup and after Bash calls. |
+| `MCP_DEV_SPOOL_MAX_TOTAL_BYTES` | `536870912` (512 MiB) | Aggregate finalized spool cap across retained logs. |
+| `MCP_ONE_MCP_LOG_MAX_SIZE_BYTES` | `10485760` (10 MiB) | `1..64` MiB per rotated file for both `one-mcp.log` and `local-inner.log`. |
+| `MCP_ONE_MCP_LOG_MAX_FILES` | `5` | `1..10` rotated files retained via tailable Winston rotation. |
 
-```text
-${XDG_STATE_HOME:-$HOME/.local/state}/mcp-dev-bridge
-```
-
-Important files:
-
-```text
-bridge.env        selected profile, public URL, workspace/default cwd, source root
-owner.env         sanitized personal GUI environment when the personal profile is rendered
-1mcp/mcp.json     rendered provider composition
-1mcp/config.toml  rendered 1MCP application policy, including bounded native logging
-1mcp/             1MCP writable application/OAuth/session state
-local-1mcp/       Local broker downstream server composition (`mcp.json`) and log policy (`config.toml`)
-logs/one-mcp.log  current native 1MCP application log; rotated siblings stay in logs/
-logs/local-inner.log  current Local broker diagnostic log; rotated siblings stay in logs/
-dev/              Dev durable retained-output state when enabled
-```
-
-Transient process state is kept under `${XDG_RUNTIME_DIR:-/run/user/$UID}/mcp-dev-bridge`.
-
-## Source root matters
-
-Generated provider commands contain the repository root used during rendering. If you move or delete that checkout/worktree, render again from the new source root before removing the old one. See [Operations: safe source cutover](operations.md#safe-source-cutover).
-
-## Output policy
-
-`MCP_DEV_READ_DEFAULT_LINES` controls how many lines Dev `read` returns when no `limit` is supplied (default 160, range 0..100000). Set it in the deployment environment or `.env`; the renderer carries it into every Dev provider, including the Personal fallback mirror. `0` disables this default line limit; the reader's 2000-line ceiling and 16 KiB text-content budget still apply. An explicit `limit` overrides the default line count. Truncated reads report total file bytes and the next line offset; complete lines are preserved. An individual line larger than the byte budget returns a diagnostic recommending a focused command extract. Binary and invalid UTF-8 files are rejected.
-
-`MCP_DEV_MAX_OUTPUT_BYTES` is deployment policy, not a model-facing tool argument. It defaults to 16384 bytes: a command or script result shows its output within that budget and, when it truncates, reports the total observed byte count and a retained-output path. Retained output has its own storage ceiling described below. Commands append a compact status/timing footer such as `[exit 0 · 0.3s]`; timeout, cancellation and termination are distinguished from normal exits. Increase the output budget only when the operator deliberately wants larger model-visible results.
-
-Local `terminal_read` has a separate model-facing `max_bytes` argument (default 16384, range 1..65536), subject to the broker's configured ceiling. A transcript read advances the persisted model cursor only past the returned bytes; if more remain, the result reports continuation cursors. Repeat the same read to retrieve the next page. A budget too small for the next UTF-8 character reports no progress and asks for a larger budget. `snapshot=true` bounds the screen locally, marks truncation, and never advances the transcript cursor.
-
-`MCP_DEV_IMPORT_MAX_BYTES` controls Personal `import_file`; it defaults to 104857600 bytes (100 MiB), is capped at 1073741824 bytes (1 GiB), and is enforced while the native file stream is read.
-
-Pi Dev also bounds retained Bash diagnostics independently of the model-visible tail. `MCP_DEV_MAX_SPOOL_BYTES` is an internal deployment/provider limit with a 64 MiB default and a 256 MiB maximum; the renderer propagates it into the Dev provider environment but it never appears as a model-facing MCP tool argument. `MCP_DEV_SPOOL_TTL_SECONDS` defaults to 604800 seconds (7 days), and `MCP_DEV_SPOOL_MAX_TOTAL_BYTES` defaults to 536870912 bytes (512 MiB) and must be at least the per-spool cap. Finalized spools are pruned on provider startup and opportunistically after every Bash command: expired files are removed, legacy oversized files are capped, and the oldest finalized files are evicted until the aggregate budget is satisfied. Active `.log.active` spools are excluded from GC. When command output exceeds the per-spool cap, `output_bytes` still counts the full observed stream, the model still receives the configured bounded tail, and any retained-output file is explicitly labeled as capped rather than complete.
-
-
-## 1MCP log policy
-
-1MCP application logging uses the pinned runtime's native Winston file transport rather than an unbounded shell `>>` capture. The renderer writes a structured `[logging]` block to `1mcp/config.toml` and keeps the log under the private bridge state directory. `MCP_ONE_MCP_LOG_MAX_SIZE_BYTES` defaults to 10485760 bytes (10 MiB) and is constrained to 1..64 MiB; `MCP_ONE_MCP_LOG_MAX_FILES` defaults to 5 and is constrained to 1..10. The pinned runtime installer forces restart-stable tailable Winston rotation when more than one file is retained, and bridge startup removes numeric siblings left by the older incrementing mode beyond the configured file count. The parent `logs/` directory is mode 0700, and bridge startup uses `umask 077`.
-
-A fresh 1MCP launch suppresses the duplicate console stream after native file logging is configured and removes the legacy runtime `one-mcp.log` append file. `scripts/smoke-local.sh` requires the generated `config.toml`, so after upgrading an existing installation re-render/bootstrap the deployment before the first restart. If startup health fails, the lifecycle helper prints a bounded tail from the native log when available.
-
-The smoke command checks readiness and unauthenticated OAuth refusal. Add `--auth-state-dir DIR --read-path PATH` to check authorized access with an existing adapter grant and a harmless UTF-8 file. The two arguments are required together.
-
-The renderer writes `instructions-template.md` into each outer configuration directory and each generated Local inner directory. Re-render after updating WebHarness. Restart the bridge later to load the template.
-
-The Local broker supervises downstream stdio servers directly via `DirectLocalServerPool` (without a second inner 1MCP process) and writes its own rotated diagnostics to `logs/local-inner.log`. The renderer therefore writes `local-1mcp/config.toml` with its own `[logging]` block, using the same `MCP_ONE_MCP_LOG_MAX_SIZE_BYTES` and `MCP_ONE_MCP_LOG_MAX_FILES` values, which the broker reads next to its inner `mcp.json`. `bin/status` reports both logs; `scripts/smoke-local.sh` rejects a missing or unbounded inner block.
-
-## Request timeouts
-
-1MCP applies a per-request timeout to every upstream call and defaults to 60000 ms. A cold `npx -y chrome-devtools-mcp` start plus a Chrome launch can exceed that, so the browser entries carry `requestTimeout` 180000 in `mcp-local.json`. The outer `local` entry carries 240000 in `mcp-personal.json` and `mcp-server.json`, because the outer wait must outlast the inner one or the outer fails before the inner can report the cause. Operator servers added through `MCP_LOCAL_SERVERS_FILE` keep the 60000 ms default.
-
-The Personal and Server profiles also set the outer Dev `requestTimeout` to
-240000 ms. Restricted and trusted-dev keep the default 60000 ms. The Dev
-`timeout_seconds` ceiling of 300 seconds is an execution deadline, not a
-promise that every connector permits a request that long. The WebSession
-adapter has a separate 120000 ms default tool deadline. For longer work, use
-`exec` or `bash` with `detach: true`, then Dev `wait` on the exit file and read
-the log. A bridge service restart can terminate detached jobs.
+**Request timeouts:** Outer `dev` and `local` carry `requestTimeout: 240000` ms in `personal`/`server` (`60000` ms in `restricted`/`trusted-dev`); browser servers carry `180000` ms; owner MCPs default to `60000` ms. Connectors still enforce shorter HTTP windows (~45s routing target), so use `detach: true`, `pueued`, or Local Terminal + `wait` for long work.
 
 ## On-demand runtimes
 
-`BRIDGE_COLD_START` defaults to `1`. The loopback wake proxy listens on `MCP_ONE_MCP_PORT` (3050 by default); 1MCP uses `BRIDGE_BACKEND_PORT`, which defaults to the public port +10. The two ports must be different, available, and in 1..65535. Existing Cloudflare ingress keeps using the public port. Set `BRIDGE_COLD_START=0` to run 1MCP continuously on the public port.
+| Variable | Default | Behavior |
+|---|---|---|
+| `BRIDGE_COLD_START` | `1` | Runs `wake-proxy` on `MCP_ONE_MCP_PORT` and starts 1MCP on `BRIDGE_BACKEND_PORT` (default port + 10) on demand. Set `0` to keep 1MCP running directly on the public port. |
+| `BRIDGE_WAKE_IDLE_MS` | `1800000` (30m) | Evicts idle 1MCP after inactivity; `/health/ready` and `/health/live` do not wake it. Active streams and leases prevent eviction. |
+| `MCP_DEV_WORKER_IDLE_MS` | `1800000` (30m) | Evicts the expendable Pi execution worker when idle (`0` disables). Durable `wait` stays in the lightweight facade. |
+| `MCP_DEV_PREWARM_WORKER` | `0` | Set `1` to pre-fork the outer Dev worker at startup (omitted on the fallback-only inner mirror). |
+| `MCP_LOCAL_INNER_IDLE_MS` | `1800000` (30m) | Evicts each idle `DirectLocalServerPool` stdio server independently (`0` disables). Unscoped `tool_list` wakes nothing. |
+| `BRIDGE_CONNECTOR_POLICY_FILE` | `~/.config/mcp-dev-bridge/connector-policy.yaml` | Hot-reloading per-client connector policy (`default`, `clients`, `connector_write_tools`, `compat_annotations`, `banner`, `log_client_identifiers`). See [Operations](operations.md#per-client-connector-policy-connector-policyyaml). |
 
-`BRIDGE_WAKE_IDLE_MS` defaults to 1800000 (30 minutes) and must be positive. Real requests wake 1MCP; `/health/ready` and `/health/live` do not. Active requests, streams, and stateful run leases prevent eviction. Failed startup returns an error and is not reported as readiness; the next request may retry startup, but the proxy never replays a dispatched operation.
+## WebSession adapter (optional)
 
-After a connection failure, health checks and real requests probe backend readiness. If the backend is healthy, the proxy clears its failed state without restarting the backend or interrupting active streams. Health checks never start a stopped backend.
-
-`MCP_DEV_WORKER_IDLE_MS` defaults to 1800000 (30 minutes); `0` disables worker eviction. Dev publishes its schemas and owner instructions without loading Pi execution code. Actual execution starts an expendable worker; durable `wait` remains in the lightweight facade so its hold budget does not include worker startup. In-flight calls keep the worker alive. Set `MCP_DEV_PREWARM_WORKER=1` (default `0`) to fork the outer Dev execution worker immediately at Dev startup (omitted from the fallback-only inner Dev mirror so read-only `tool_list`/`tool_schema` does not fork a spare worker) while still idling it out after `MCP_DEV_WORKER_IDLE_MS` if unused. Both idle and pre-warm settings are deployment policy, not tool arguments.
-
-`BRIDGE_CONNECTOR_POLICY_FILE` (default `~/.config/mcp-dev-bridge/connector-policy.yaml`) configures hot-reloading per-client connector policy in `wake-proxy` (`default:`, `clients:`, `connector_write_tools`, `compat_annotations`, `banner: default|batch-writes`, and `log_client_identifiers`). See `config/connector-policy.example.yaml` and [Operations](operations.md).
-
-`MCP_LIFECYCLE_LEASE_DIR` is rendered beneath the bridge runtime root. Both Local and the outer proxy consult the leases before idle shutdown. Terminal broker and tmux lifetime remain separate. CodeDB is no longer installed or exposed by WebHarness; existing operator installations and indexes are left untouched.
-
-## Independent headless server
-
-The `server` profile keeps Dev, the Local broker, and Terminal while excluding desktop providers and WSL GUI environment. It uses separate deployment environment and OAuth/runtime state on the server. See [Headless Server](headless-server.md) for tunnel and private approval setup.
+Operated separately via `bin/adapter`. Key knobs: pair-code TTL `3600s` (`30..3600`), session TTL `86400s` (`60..86400`), `WEBSESSION_ADAPTER_PUBLIC_URL`, `WEBSESSION_ADAPTER_STATE_DIR`, `WEBSESSION_ADAPTER_TOOL_TIMEOUT_MS` (default `120000`), and `WEBSESSION_ADAPTER_MAX_JSON_BODY_BYTES` (default `1048576`). See [WebSession clients](websession-clients.md) and [Headless Server](headless-server.md).

@@ -1,49 +1,60 @@
-# Personal Linux CLI Toolbox
+# Linux CLI Toolbox (Personal & Headless)
 
-The personal harness deliberately keeps common CLI utilities out of the MCP action catalog. Use them through native Bash so the model-facing tool surface stays small.
+WebHarness deliberately keeps common CLI utilities out of the MCP action catalog. Use them through Dev `exec` (or Bash when shell syntax is needed) so the model-facing tool surface stays compact.
 
-## Check the toolbox
+## Check or install the toolbox
+
+Check the personal workstation toolbox (WSL2/Ubuntu):
 
 ```bash
 scripts/check-personal-toolbox.sh
 ```
 
-Install/repair the qualified user-level toolbox:
+Check the minimal headless server toolbox (ARM64 or x86_64 Linux):
 
 ```bash
-scripts/setup-personal-toolbox.sh
+scripts/check-personal-toolbox.sh --headless
 ```
 
-The normal personal WSL bootstrap runs this qualification automatically. Use the standalone command when inspecting or repairing the toolbox independently.
+Install or repair missing/outdated tools at the user level:
 
-## Required capabilities
-
-The checker qualifies the normal development baseline, including:
-
-```text
-git rg jq sed awk grep find
-node (>=24.0.0) npm pnpm corepack
-python3 uv
-systemctl journalctl tmux
-ast-grep
+```bash
+scripts/setup-personal-toolbox.sh            # personal workstation
+scripts/setup-personal-toolbox.sh --headless # headless server (guards sudo -n)
 ```
 
-Optional conveniences include `fd` and `bat`.
+`webharness setup --profile personal` and `webharness setup --profile server` run the corresponding qualification automatically. Use the standalone scripts when inspecting or repairing the toolbox independently.
+
+## Required vs. optional tiers
+
+### Personal workstation (default)
+
+- **Required baseline:** `git`, `rg`, `jq`, `sed`, `awk`, `grep`, `find`, `node` (`>= 24.0.0`), `npm`, `pnpm`, `corepack`, `python3`, `uv`, `systemctl`, `journalctl`, `tmux` (`>= 3.4`), `ast-grep` (`= 0.45.0`).
+- **Optional accelerators (best-effort):** `fd`, `bat`, `yq`, `pueue`, `pueued`, `difft`, `just`, `scc`, `hyperfine`, `mcp-inspector`.
+
+### Headless server (`--headless`)
+
+- **Required core:** `git`, `rg`, `jq`, `node` (`>= 24.0.0`), `tmux` (`>= 3.4`).
+- **Optional accelerators (best-effort):** `ast-grep` (`= 0.45.0`), `fd`, `yq`, `pueue`, `pueued`, `difft`, `just`, `scc`, `hyperfine`, `mcp-inspector`.
+
+Missing optional tools are reported as optional gaps rather than failing qualification.
 
 ## Usage policy
 
-Prefer the tool that makes the local task clearer, but keep execution inside native Bash:
+Prefer the tool that makes the local task clearer, invoked through Dev `exec` (or `just` recipes) rather than adding one-off MCP tools:
 
 ```bash
 rg 'pattern' src
 ast-grep run --pattern 'console.log($A)' src
 jq '.key' data.json
 fd package.json
+just host-audit
 ```
 
-Do not add a new MCP action merely because a useful CLI exists.
-
+When `pueued` is installed, `scripts/install-pueued-user.sh` configures a user-systemd `pueued.service` (`parallel=1`) so long builds and test suites run outside `mcp-dev-bridge.service` and survive bridge restarts.
 
 ## Installation policy
 
-The setup script uses user-level installation paths and refuses unsafe packaging shortcuts. It does not silently replace already-qualified system tools. The toolbox test suite covers version qualification, optional gaps, and idempotent setup behavior.
+- **Idempotent (never installs twice):** The setup script checks existing executables and versions first and skips any tool that already satisfies the requirement; it does not silently replace already-qualified system tools.
+- **Verified user-level installs:** GitHub release binaries are SHA-256 verified, `mcp-inspector` installs with `--ignore-scripts`, and `--headless` guards privileged calls with non-interactive `sudo -n` so headless servers never hang on a password prompt.
+- Covered by `tests/personal-toolbox.sh` for version qualification, optional gaps, and idempotency.

@@ -12,7 +12,7 @@ Personal Workstation surface:
 read list_directory search edit write import_file file_ops review_changes wait exec bash run_script
 ```
 
-`import_file` and `review_changes` are Personal Workstation tools: the former streams one trusted ChatGPT-native file to a create-only WSL destination, while the latter returns a bounded aggregate view of the current Git working tree without creating checkpoints or refs. `restricted` and `trusted-dev` expose smaller subsets according to their trust policy.
+`import_file` and `review_changes` are Personal Workstation tools: the former streams one trusted ChatGPT-native file to a create-only WSL destination, while the latter returns a bounded aggregate view of the current Git working tree (or commit/range history via optional `rev`) without creating checkpoints or refs. `restricted` and `trusted-dev` expose smaller subsets according to their trust policy. Set `MCP_DEV_PREWARM_WORKER=1` to pre-fork the outer Dev execution worker on startup while retaining idle eviction (`MCP_DEV_WORKER_IDLE_MS`, default 30 minutes).
 
 `run_script` runs one bounded JavaScript program whose only capability is calling the Dev tools this process registered, minus `run_script`, `wait`, and `import_file`. It runs in a QuickJS VM inside a worker thread of the execution worker, with no filesystem, network, timers, imports, or process access. Read-only calls may overlap; a mutating call runs alone. Nested calls are real and are not rolled back if the script later fails, and the result lists every call with its status. A script's authority is exactly the profile's own Dev surface, so it adds no Local, Terminal, Browser, Host, or owner-MCP reach.
 
@@ -45,7 +45,15 @@ Stable downstream tool-broker surface:
 tool_list tool_schema tool_call fallback_dispatch tool_batch
 ```
 
-The Local provider connects over stdio to one inner 1MCP in direct mode. It exposes logical `{server, tool}` identities, bounded live discovery, exact schema lookup, ordinary one-shot `tool_call`, recovery-only `fallback_dispatch`, and bounded same-tool batch dispatch over structured arguments. The Personal Workstation inner composition contains public `terminal`, `host`, `browser-devtools`, and `browser-fast` servers plus owner-added MCPs, alongside one fallback-only mirror of outer Dev. Unscoped `tool_list` hides the Dev mirror, while explicit read-only `tool_list(server="dev")` and `tool_schema(server="dev", tool=...)` may inspect it for recovery. Ordinary `tool_call` and `tool_batch` still reject Dev; only `fallback_dispatch` can execute through that mirror. The fallback is intentionally advertised with `readOnlyHint` for transport compatibility even though the selected downstream operation may mutate state. The outer Local provider remains tagged only `local`.
+The Local provider supervises downstream stdio servers directly through `DirectLocalServerPool` (without a second inner 1MCP process), waking each addressed server lazily on demand and evicting idle servers after `MCP_LOCAL_INNER_IDLE_MS` (default 30 minutes). It exposes logical `{server, tool}` identities, bounded live discovery, exact schema lookup, ordinary one-shot `tool_call`, `fallback_dispatch` (supporting single calls and heterogeneous `calls[]` batches with `sequential: true` or bounded concurrency), and bounded same-tool `tool_batch` dispatch. The Personal Workstation inner composition contains public `terminal`, `host`, `skill-library`, `browser-devtools`, `browser-fast`, and `browser-daily` servers plus owner-added MCPs, alongside one fallback-only mirror of outer Dev. Unscoped `tool_list` hides the Dev mirror, while explicit read-only `tool_list(server="dev")` and `tool_schema(server="dev", tool=...)` may inspect it for recovery. Ordinary `tool_call` and `tool_batch` still reject Dev; only `fallback_dispatch` can execute through that mirror. The broker declares honest mutating annotations on `fallback_dispatch` (`readOnlyHint: false`, `destructiveHint: true`, `openWorldHint: true`); operators can enable `compat_annotations: true` per matched client in `connector-policy.yaml` so `wake-proxy` applies the read-only transport shim only to that client. The outer Local provider remains tagged only `local`.
+
+## Skill Library — `providers/skill-library/`
+
+Self-contained read-only specialist skill catalog (`find_skills` and `read_skill`) backed by `skill-library/policy.json` and local BM25 search, with no external service or model API key required by default.
+
+## Browser Daily (optional) — `providers/browser-daily/`
+
+Optional transparent stdio proxy to `browse mcp` (`https://opencode.ai/browse`), exposing the user's own already-open everyday browser (tabs, logins, extensions) when paired with the `browse` relay. It owns no browser process of its own and can be ignored completely if you do not install `browse` or prefer isolated automation profiles only.
 
 ## Browser — `providers/browser/`
 

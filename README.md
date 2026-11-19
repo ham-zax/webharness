@@ -1,92 +1,71 @@
 # WebHarness
 
-WebHarness is a public reference implementation for turning a WSL development machine into a high-capability MCP workstation for ChatGPT and other MCP clients.
+Turn your existing ChatGPT, Claude, or Gemini web subscription into a direct local engineering workstation on WSL2 or a headless Linux/ARM server—without paying per-token API bills or separate Codex CLI, Claude Code, or Gemini CLI subscriptions.
 
-It keeps files, processes, repositories, durable terminals, and browser state on the machine that already owns them, while presenting a compact model-facing capability surface. The maintained full deployment is the **Personal Workstation** (`personal`) profile. Smaller `restricted` and `trusted-dev` profiles demonstrate narrower authority choices.
+Files, repositories, durable tmux terminals, and browser profiles stay on the machine that already owns them, exposed over OAuth + Cloudflare Tunnel through a compact model-facing MCP surface.
 
-This repository is a capability showcase and reproducible reference, not a promise of universal host support. The qualified environment is WSL2 + Ubuntu + x86_64 + Node.js 24+ + systemd user services, with WSLg for headed Linux browser capability. See [Reference Environment](docs/reference-environment.md).
+The maintained full deployment is the **Personal Workstation** (`personal`) profile on WSL2 + Ubuntu + x86_64 + Node.js 24+ + user-systemd (see [Reference Environment](docs/reference-environment.md)). Smaller `restricted`, `trusted-dev`, and headless `server` profiles build from the same source.
 
-## What the workstation exposes
+## Why it saves money, tokens, and RAM
 
-Agents should reason about two outer MCP surfaces rather than individual backend packages:
+- **Uses the chat subscription you already pay for:** Connect ChatGPT, Claude, or Gemini web directly to your local repositories, builds, terminals, and browsers instead of paying metered CLI/API token fees.
+- **Tiny outer schema footprint:** Two outer MCP surfaces (17 tools max, or 7 tools in Gemini read-only compat mode). Adding more MCP servers behind `Local` (`DirectLocalServerPool`) adds zero outer schema tokens until inspected.
+- **One-call edit-test-review pipelines:** Chain `edit -> test -> review_changes` in a single `local_fallback_dispatch(calls:[...], sequential:true)` call, batch up to 20 files in `read(targets=[...], mode="outline")`, or run JS-computed loops (up to 32 Dev calls, 4x parallel reads) in `run_script`.
+- **Bounded outputs and quiet `just` recipes:** Default 160-line reads, 16 KiB command caps with disk spill paths, and `just` recipes that redirect verbose logs to `/tmp` and print only counts and failing lines.
+- **Zero idle RAM tax:** `wake-proxy` sleeps idle 1MCP, the Dev worker sleeps between bursts, and `DirectLocalServerPool` starts each Local server lazily and evicts it after 30 minutes idle.
 
-| Capability | Use it for | Important boundary |
+See [Bells, Whistles, Cost Savings & Extensions](docs/extending.md) for concrete tuning, extensions, and workflows.
+
+## Architecture & model-facing surface
+
+```text
+MCP client (ChatGPT / Claude / Gemini)
+  -> HTTPS + OAuth -> Cloudflare Tunnel -> loopback wake-proxy (connector-policy.yaml)
+  -> on-demand 1MCP (loopback)
+       |-- Dev    read list_directory search edit write import_file file_ops review_changes wait exec bash run_script
+       `-- Local  tool_list tool_schema tool_call fallback_dispatch tool_batch
+                    `-- DirectLocalServerPool (lazy start, 30m idle eviction)
+                          |-- dev              hidden fallback-only mirror
+                          |-- terminal         broker -> durable tmux PTYs
+                          |-- host             Windows host actions (pc_sleep)
+                          |-- skill-library    find_skills / read_skill (3 starter packs + private local sync)
+                          |-- browser-fast     Agent Browser 0.43.0 (+ optional CloakBrowser 0.7.2)
+                          |-- browser-daily    optional everyday browser via paired browse relay
+                          `-- browser-devtools Chrome DevTools MCP diagnostics
+```
+
+## Core vs. optional & personal components
+
+WebHarness separates the core bridge from optional add-ons. Pick only what fits your workflow—setup checks existing binaries first and skips already-qualified tools so nothing is installed twice or overwritten.
+
+| Layer | Component | Role & opt-in boundary |
 |---|---|---|
-| **Dev** | structured search, focused files, guarded edits, native file import, aggregate Git review, structured argv execution, native Bash, one-call code mode, durable waits | direct high-frequency workstation primitives with the authority of the selected trust profile |
-| **Local** | durable Terminal control, host actions, Browser, owner-added MCPs, and writable-call recovery | exposes only `tool_list`, `tool_schema`, `tool_call`, `fallback_dispatch`, and `tool_batch`; logical servers stay behind one compact broker surface, while only Dev is mirrored as a hidden fallback route |
-
-The full workstation composition is deliberately small at the client boundary:
-
-```text
-Dev       read list_directory search edit write import_file file_ops review_changes wait exec bash run_script
-Local     tool_list tool_schema tool_call fallback_dispatch tool_batch
-            |-- terminal          durable PTY/session control
-            |-- host              pc_sleep
-            |-- skill-library     find_skills / read_skill
-            |-- browser-fast      observe / execute
-            |-- browser-daily     everyday browser via paired browse relay
-            `-- browser-devtools  Chrome DevTools diagnostics
-```
-
-`run_script` runs one bounded JavaScript program that calls the Dev tools above, so a search, read, edit, and verify cycle costs one model round trip instead of four. Its only capability is those tools; it has no filesystem, network, timers, or process access of its own, and nested calls are not rolled back if the script later fails.
-
-`browser-fast` is for routine interaction. `browser-devtools` keeps the full Chrome DevTools MCP surface for network, console, performance, Lighthouse, heap, screenshots, and detailed debugging.
-
-For code navigation, use `search` to locate text, `read(mode="outline")` to inspect an unfamiliar file's structure, and a narrow `read(offset, limit)` for detail. `read(targets=[...])` groups up to 20 files. Default line reads return 160 lines, bounded by 16 KiB per file.
-
-Agents without native MCP can use the optional [WebSession adapter](docs/websession-clients.md). Run `bin/adapter connect --here` on the host and paste its generated HTTP prompt into the remote sandbox. The adapter starts on demand and remains separate from the WebHarness service.
-
-## Architecture
-
-```text
-MCP client (for example ChatGPT)
-  |
-  | HTTPS + OAuth
-  v
-Cloudflare Tunnel
-  |
-  v
-Loopback wake proxy (always listening)
-  |
-  v
-1MCP on loopback (on demand)
-  |
-  +-- Dev
-  `-- Local
-        |
-        `-- DirectLocalServerPool (per-server direct stdio pool)
-              |-- dev ------------------> fallback_dispatch only
-              |-- terminal -------------> broker -> tmux PTYs
-              |-- host -----------------> Windows host actions
-              |-- browser-fast ---------> Agent Browser
-              |-- browser-daily --------> everyday browser via browse relay
-              `-- browser-devtools -----> Chrome DevTools MCP
-                         |
-                         +-- Windows: dedicated persistent MCP Chrome
-                         `-- Linux: configured Chrome/CloakBrowser backend and profile through WSLg
-```
-
-Cloudflare is the current public HTTPS transport and 1MCP is the OAuth/MCP gateway. The maintained workstation uses a locally-managed Cloudflare Tunnel configured outside the repository and leaves `MCP_TUNNEL_NAME` empty, so WebHarness runs `cloudflared tunnel run` against the operator-owned default Cloudflare configuration. OpenAI Secure MCP Tunnel is a separate future connector path that could keep 1MCP private behind a local `tunnel-client`; WebHarness does not currently implement or supervise that path. See [Getting Started](docs/getting-started.md#provision-the-cloudflare-transport-used-by-the-reference-deployment) for both boundaries. Providers remain local stdio processes. A small loopback wake proxy keeps the endpoint available while idle 1MCP and its providers release memory. Dev execution uses an idle worker, and general Local discovery does not wake its inner backend. See [idle configuration](docs/configuration.md#on-demand-runtimes). The Local broker exists so adding or upgrading a large downstream tool catalog does not force the entire catalog into every client session.
+| **Core** | `Dev` + `Local` + `wake-proxy` + 1MCP + Cloudflare Tunnel | Required bridge and MCP surfaces (`restricted`, `trusted-dev`, `personal`, or `server`). |
+| **Core (`personal`/`server`)** | `terminal` (tmux PTYs) + `skill-library` | Durable interactive shells and local skill library: ships 3 default starter packs (`critical-thinking`, `lateral-thinking`, `anthropic`), while all added/Skillshare packs (`just sync-skills`) stay gitignored and private. |
+| **Optional (browsers)** | `browser-fast`, `browser-devtools` | Included in `personal`; excluded from `server`/`restricted`/`trusted-dev` unless opted in via `MCP_LOCAL_SERVERS_FILE`. Profile names like `x-main` in `config/browser-fast.example.json` are starter defaults, not fixed requirements. |
+| **Optional (everyday browser)** | `browser-daily` | Transparent proxy to your own open browser via `opencode.ai/browse`. Inactive unless you install and pair `browse`. |
+| **Optional (multi-client policy)** | `~/.config/mcp-dev-bridge/connector-policy.yaml` | Default keeps direct read + write tools for ChatGPT/Claude. Run `just init-connector-policy` (copy-if-missing) to auto-detect Gemini (`User-Agent: Google`) and apply the 7-tool compat shim only for Gemini. |
+| **Optional (accelerators & queue)** | `scripts/setup-personal-toolbox.sh` (`--headless` on servers) + `pueued.service` + `justfile` | Best-effort optional tools (`ast-grep`, `fd`, `yq`, `pueue`/`pueued`, `difft`, `just`, `scc`, `hyperfine`, `mcp-inspector`) and compact `just` recipes. |
+| **Optional (web helpers)** | `scripts/gemini-auto-continue.user.js` & `bin/adapter` (WebSession) | Client-side userscript mitigating Gemini Web confirmation cards and checkpoint cutoffs, plus an optional HTTP adapter for non-MCP sandboxes. |
 
 ## Choose an authority profile
 
-There is no silent default. Pick the authority you intend to give the agent.
+There is no silent default. Pick the authority you intend to grant:
 
 | Profile | Authority | Reference role |
 |---|---|---|
-| `personal` | WSL-user Dev primitives plus Local logical servers for persistent Terminal, Browser, host sleep, and owner-added MCPs | maintained full Personal Workstation reference |
-| `restricted` | workspace-bounded file tools without shell execution | conservative smaller example |
-| `trusted-dev` | workspace-bounded files plus unrestricted structured argv execution and Bash as the Linux service user | smaller trusted-development example; use only on a dedicated host |
+| `personal` | WSL-user Dev + Local (`terminal`, `host`, `skill-library`, browsers, owner MCPs) | Maintained full Personal Workstation reference |
+| `server` | Linux-user Dev + Local (`terminal`, `skill-library`, owner MCPs; no desktop/browser) | Separate headless Linux/ARM64 server ([Headless Server](docs/headless-server.md)) |
+| `trusted-dev` | Workspace-bounded files + unrestricted `exec`/`bash` as the Linux user | Smaller trusted-development example |
+| `restricted` | Workspace-bounded `read`/`edit`/`write` only (no shell execution) | Conservative minimal example |
 
-`trusted-dev` and `personal` can act with the Linux account's authority. The `personal` Local domain can additionally control its dedicated Windows MCP Chrome profile after explicit `tag:local` authorization. Read [Security](docs/security.md) before enabling either powerful profile.
+Read [Security](docs/security.md) before enabling `trusted-dev`, `personal`, or `server`.
 
 ## Quick start
 
-The reference operator flow is:
-
 ```bash
 cp .env.example .env
-# Set MCP_PUBLIC_URL and any profile-specific local paths.
+# Set MCP_PUBLIC_URL (and MCP_WORKSPACE_ROOT for workspace-bounded profiles).
 
 ./bin/webharness doctor --profile personal
 ./bin/webharness setup --profile personal
@@ -96,167 +75,48 @@ webharness start
 webharness status
 ```
 
-`doctor` is non-mutating. `setup` qualifies dependencies and renders configuration. `--enable-startup` is an explicit consent boundary: without it, setup does not enable user linger or persistent services.
+Optional first-run helpers (when `just` is installed):
 
-Machine-specific owner policy stays outside the checkout under operator-controlled paths referenced by `MCP_OWNER_CONTEXT_FILE` and `MCP_OWNER_ENV_FILE`. The repository also cannot silently install or replace ChatGPT Skills or client authorization.
-
-The native [skill library](docs/skill-library.md) ships 28 MIT-licensed thinking
-skills as ordinary files, with description discovery and revision-verified reads
-through Local. No JevShelf, Skillshare or hosted model is required. Access policy
-is explicit and metadata is generated; the retained `skills/` snapshot is separate.
-
-Generated configuration and OAuth/session state live outside Git by default:
-
-```text
-${XDG_STATE_HOME:-$HOME/.local/state}/mcp-dev-bridge/
+```bash
+just init-connector-policy  # copy-if-missing starter policy (auto-detects Gemini)
+just sync-skills            # sync local Skillshare skills into gitignored skill-library/packs/
+just host-audit             # compact pueued + toolbox + bridge health check
+just update                 # pull main + auto-detect profile + redeploy on this host
 ```
 
-Transient bridge state lives under:
-
-```text
-${XDG_RUNTIME_DIR:-/run/user/$UID}/mcp-dev-bridge/
-```
+Generated state and OAuth sessions live outside Git under `${XDG_STATE_HOME:-$HOME/.local/state}/mcp-dev-bridge/` (transient state under `${XDG_RUNTIME_DIR:-/run/user/$UID}/mcp-dev-bridge/`). For Cloudflare Tunnel provisioning and OpenAI Secure MCP Tunnel boundaries, see [Getting Started](docs/getting-started.md#provision-the-cloudflare-transport-used-by-the-reference-deployment) and [idle configuration](docs/configuration.md#on-demand-runtimes).
 
 ## How an agent should route work
 
-Use the narrowest domain that owns the task:
-
 | Task | Route |
 |---|---|
-| inspect or mutate known files; Git/build/test; short bounded command expected to finish comfortably inside the connector window | Dev |
-| import a ChatGPT attached/generated file into WSL | Dev -> `import_file` |
-| inspect the aggregate current Git diff after related mutations | Dev -> `review_changes` |
-| find symbols and inspect source | Dev -> `exec` with `rg`, then `read` |
-| command runtime is uncertain, may approach a minute, must persist, needs a PTY, or may need human input | Local -> `terminal`, then Dev `wait` |
-| explicitly confirmed Windows host sleep | Local -> `host` -> `pc_sleep` |
-| routine navigation/forms/clicks in a resource-local browser | Local -> `browser-fast` |
-| network/console/performance/screenshot/DevTools investigation | Local -> `browser-devtools` |
-| normal writable MCP operation is unavailable or unreliable | Local -> `fallback_dispatch` with the same logical server/tool/arguments |
+| Search text, outline files, read/edit/write, Git diff, short command (<45s target) | Dev (`search`, `read`, `list_directory`, `edit`, `review_changes`, `exec`/`bash`) |
+| Static multi-step edit + test + review in one round trip | `local_fallback_dispatch(calls:[...], sequential:true)` |
+| Long, duration-uncertain, interactive, or restart-surviving command | Local `terminal` + Dev `wait` (or `just queue <cmd>` via `pueued`) |
+| Routine browser clicks/forms (isolated profile) | Local `browser-fast` (`observe` -> `execute` with pinned `active_tab`) |
+| Your own already-open browser tabs/logins | Local `browser-daily` (optional, requires paired `browse`) |
+| Network, console, performance, screenshots, DevTools | Local `browser-devtools` |
+| Host sleep or owner-added local MCPs | Local `host` / `tool_list` -> `tool_schema` -> `tool_call` |
 
-Treat direct Dev `exec`/`bash` as short-RPC execution. Route only work expected to complete comfortably inside the model-facing connector window through them; use **45 seconds as the routing target, not a protocol guarantee**. If runtime is uncertain or may approach a minute, start it through Local `server="terminal"`, observe `terminal_exit`/`terminal_output` or other readiness through Dev `wait`, and use `terminal_read` for output. The Dev provider may accept a larger internal timeout, but that does not extend the connector request lifetime.
+## Key boundaries & security notes
 
-Use `exec(argv=["rg", ...])` and focused reads for repository discovery. Use Bash when the discovery command itself needs shell composition.
-
-For `browser-fast`, observe first and pass the returned `active_tab` to `execute`. Execution validates that exact pinned CDP target before using observation refs. `observe` is the recovery/rebind boundary if the old target disappears. A click follows exactly one newly created target before later actions; multiple new targets stop the sequence rather than guessing. Failed, partial, or unknown actions are never automatically replayed.
-
-## Why Windows Chrome and WSLg are separate targets
-
-This split came from runtime qualification, not from a preference for two browser implementations.
-
-### WSLg is the Linux GUI compatibility layer
-
-The Linux browser target and the Kitty Terminal frontend run as Linux processes beside the WSL filesystem, processes, and network namespace. WSLg gives those processes visible GUI/audio integration without requiring a separate X server.
-
-A daemon or user-systemd service cannot be assumed to inherit the graphical variables from an interactive shell. Where a GUI child needs them, the harness supplies or derives only that child's WSLg environment from the observed WSLg endpoints:
-
-```text
-XDG_RUNTIME_DIR=/mnt/wslg/runtime-dir
-WAYLAND_DISPLAY=wayland-0
-DISPLAY=:0
-PULSE_SERVER=unix:/mnt/wslg/PulseServer
-```
-
-The broker/tmux parent environment is not rewritten just to make a GUI launcher work. During Linux Chrome qualification, Chrome selected X11 through WSLg by default; the project therefore treats WSLg as the compatibility boundary and does not claim native Wayland unless a future configuration explicitly selects it.
-
-Terminal follows the same principle. tmux owns the PTY lifetime. Kitty/WSLg and Windows Terminal are presentation adapters that attach to the existing PTY; closing or replacing a frontend must not own the shell process.
-
-### Windows uses a dedicated MCP Chrome profile
-
-The earlier attempt to attach automation to the everyday Windows Chrome profile proved unreliable; direct qualification of that normal-profile debugging endpoint produced `403 Forbidden`. The current design does not require `chrome://inspect` and never copies or attaches the user's normal Chrome data directory.
-
-Instead, the harness owns:
-
-```text
-%LOCALAPPDATA%\mcp-dev-bridge\chrome-profile
-```
-
-It launches visible Chrome with that custom `--user-data-dir` and `--remote-debugging-port=0`, waits for the profile's `DevToolsActivePort`, health-checks the loopback endpoint, and reuses the browser while it remains healthy. Chrome chooses the debugging port, so the product does not reserve a global `9222`.
-
-Both Windows browser surfaces share that one profile and endpoint:
-
-```text
-browser-fast     -> Agent Browser 0.39.0 -> direct CDP WebSocket
-browser-devtools -> Chrome DevTools MCP   -> loopback browser URL
-```
-
-This gives the agent persistent cookies/sign-ins in an automation-specific browser without granting MCP control over everyday Chrome. The debugging listener remains loopback-only.
-
-Native Agent Browser on Windows also has a client/daemon lifetime wrinkle when invoked through WSL interoperability: the persistent daemon can inherit output handles from a short-lived CLI and keep the WSL call open. The harness uses a one-shot Windows Node helper that redirects CLI stdout/stderr to bounded files and waits for the CLI process exit, so the daemon does not become the lifetime owner of the WSL invocation.
-
-## Day-to-day operation
-
-```bash
-webharness start
-webharness status
-webharness stop
-```
-
-`webharness setup --profile personal --enable-startup` is the demonstrated persistent-service path. For Terminal lifetime, broker recovery, logs, safe restarts, source cutovers, and Browser runtime details, see [Operations](docs/operations.md).
-
-## What this adds beyond a direct coding bridge
-
-| Capability | WebHarness reference | Current gap |
-|---|---|---|
-| Durable interactive processes | Local `server="terminal"` preserves the Terminal split between tmux process lifetime and broker/model control | no built-in cross-chat recording/journal product |
-| Event-driven waiting | Dev `wait` persists named process/port/file/HTTP/systemd/timer conditions | a wait does not itself create a new model turn |
-| Browser interaction | `browser-fast` provides compact observe/execute with persistent browser state | Chromium/CDP is the qualified browser family |
-| Browser diagnostics | `browser-devtools` provides the full Chrome DevTools MCP surface | shares the Local authorization domain with routine Browser |
-| High-cardinality local MCPs | Local keeps five outer metatools while Terminal, Host, Browser, and owner MCPs stay behind logical server names; only Dev is a hidden fallback-only mirror | `fallback_dispatch` is intentionally read-only-annotated but can perform the selected downstream mutation, so `tag:local` must be treated as granting that recovery authority |
-| First-class delegated workers | not implemented in the stabilized runtime | Chat WSL-style Agents and cross-chat recordings are the primary current capability gap |
-
-The next planned additive capability is a small Agents surface—`spawn`, `message`, `status`, `finish`—backed by an Agent Broker. It is intentionally not part of this stabilization and does not require a Workspace/worktree/project-authority subsystem. See the [Agents implementation plan](docs/superpowers/plans/2026-08-29-webharness-agents-implementation.md) for that follow-on.
-
-## End-to-end orchestration example
-
-A single ChatGPT session can use the capability boundaries together without making one provider own the entire workflow:
-
-```text
-Dev/Local-code      inspect the repository and identify the real owner
-Local-terminal      start a long-running service in a durable tmux PTY
-Dev wait            wait on HTTP/TCP/process readiness instead of polling
-Local/browser-fast  exercise the visible application with compact refs/actions
-Local/browser-devtools
-                    inspect network, console, performance, or screenshots
-Dev                 edit the responsible source and run bounded checks
-WebHarness          rerender/restart the MCP bridge while the tmux PTY survives
-Local-terminal      yield the exact PTY to a human for MFA/sudo/manual inspection
-Local-terminal      resume model control on the same process afterward
-```
-
-That separation is deliberate: Dev owns the small direct workstation primitive surface; Local owns logical domain routing, while the Code and Terminal implementations keep their existing repository-intelligence and durable-PTY ownership internally.
-
-## Reference implementation and forking
-
-The full generic workstation source is public, but the maintained qualification is intentionally narrow. The reference currently assumes a pinned globally installed 1MCP 0.39.8 runtime with qualified compatibility patches, a Personal Workstation toolbox, WSL user-systemd, and the documented browser ownership model. Those are reproducibility constraints, not claims that every Linux/macOS/Windows environment is supported.
-
-Forks should preserve the model-facing contracts they rely on, then deliberately replace transport, package ownership, browser lifecycle, or host integration as needed. See [MCP Compatibility](docs/compatibility.md) and [Reference Environment](docs/reference-environment.md).
-
-## Compatibility and security notes
-
-- The project currently pins 1MCP 0.39.8 after qualification of the current provider composition, direct-mode rich Browser results, config reload, OAuth behavior, modern `2026-07-28` `server/discover` negotiation, and the compatibility patches described in the operations guide. Upgrade it deliberately rather than treating it as an unqualified interchangeable dependency.
-- 1MCP listens on loopback; Cloudflare supplies the public HTTPS route. OAuth remains required for the public MCP origin.
-- The Local broker is one authorization domain for Terminal, Host, Browser, and owner-added MCPs. `fallback_dispatch` additionally reaches the hidden Dev mirror and is intentionally advertised with `readOnlyHint`; treat its description and selected downstream operation—not that hint—as the real side-effect boundary.
-- Browser debugging endpoints are local implementation details and are not intentionally published beyond loopback.
-- Sudo/password/MFA input belongs in a human-controlled Terminal client, not in MCP arguments or agent-visible logs.
-
-See [Security](docs/security.md) for the full trust model.
+- **Pinned 1MCP 0.39.8:** Loopback-only behind Cloudflare Tunnel with required OAuth and two qualified compatibility patches (see [Operations](docs/operations.md)).
+- **Browser isolation:** Windows automation uses a dedicated Chrome profile (`%LOCALAPPDATA%\mcp-dev-bridge\chrome-profile`, ephemeral loopback CDP port) separate from everyday Chrome. Linux uses WSLg and `~/.config/mcp-dev-bridge/browser-fast.json`. Everyday browser access happens only if you opt into `browser-daily`.
+- **Honest annotations & `tag:local`:** `fallback_dispatch` declares mutating annotations by default. Per-client `compat_annotations: true` in `connector-policy.yaml` is strictly a client-side transport shim—treat the downstream operation as the real side-effect boundary.
+- **Human secrets stay in tmux:** Enter sudo/passwords/MFA in a human-controlled terminal (`wsl-term attach`), never in MCP arguments.
+- **Planned follow-on:** Delegated workers (`spawn`/`message`/`status`/`finish`) are scoped separately in the [Agents implementation plan](docs/superpowers/plans/2026-08-29-webharness-agents-implementation.md).
 
 ## Documentation
 
-- [Documentation index](docs/README.md) — choose the right guide
-- [Getting started](docs/getting-started.md) — reproduce the reference deployment
-- [Reference environment](docs/reference-environment.md) — qualified host/runtime assumptions and forking caveats
-- [Architecture](docs/architecture.md) — outer Dev/Local ownership and the Terminal, Host, and Browser logical servers
-- [MCP compatibility](docs/compatibility.md) — model-facing contract and breaking-change rules
-- [Operations](docs/operations.md) — run, inspect, restart, recover, and cut over source
-- [Security](docs/security.md) — authority profiles and trust boundaries
-- [WebSession clients](docs/websession-clients.md) — optional HTTPS access with one-command Python pairing, session working directories, and batched calls; operated separately with `bin/adapter`
-- [Personal Workstation](docs/personal/harness.md) — full reference deployment details
-- [Acceptance](docs/acceptance.md) — portable gate plus real-WSL qualification
-- [Development](docs/development.md) — repository/publication workflow
+- [Bells, Whistles, Cost Savings & Extensions](docs/extending.md) — cut token/subscription costs, enable add-ons, add custom MCPs, debug, and extend
+- [Getting Started](docs/getting-started.md) — Cloudflare setup, profiles, and first run
+- [Headless Server](docs/headless-server.md) — separate Linux/ARM64 server, existing Cloudflare domain setup, and Machine A -> Machine B Email OTP approval
+- [Operations](docs/operations.md) — lifecycle, safe restarts, connector policy, browsers, `pueued`, and `justfile`
+- [Configuration](docs/configuration.md) — `.env` variables, profiles, output caps, and idle tuning
+- [Architecture](docs/architecture.md) — Dev/Local split, `DirectLocalServerPool`, Terminal, and Browser seams
+- [Personal Workstation](docs/personal/harness.md) — tool cheat sheet, human-first tmux handoff, and extensions
+- [Security](docs/security.md) | [MCP Compatibility](docs/compatibility.md) | [Troubleshooting](docs/troubleshooting.md) | [Development](docs/development.md) | [Full Index](docs/README.md)
 
 ## License
 
 MIT. See [LICENSE](LICENSE).
-
-For an independently selectable connection to a Linux server, see [Headless Server](docs/headless-server.md).

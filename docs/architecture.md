@@ -3,194 +3,70 @@
 ## Runtime path
 
 ```text
-ChatGPT
-  -> HTTPS + OAuth
-Cloudflare Tunnel
-  -> loopback wake proxy (MCP_ONE_MCP_PORT; default 3050)
-  -> on-demand 1MCP (BRIDGE_BACKEND_PORT; default 3060)
-  -> Dev
-  -> Local      (Personal Workstation, tag:local)
-       -> DirectLocalServerPool (per-server direct stdio pool)
-            |-- dev (fallback_dispatch only)
-            |-- terminal
-            |-- host
-            |-- browser-fast
-            |-- browser-daily
-            `-- browser-devtools
-Linux / WSL host
+MCP client (ChatGPT / Claude / Gemini)
+  -> HTTPS + OAuth -> Cloudflare Tunnel
+  -> loopback wake-proxy (MCP_ONE_MCP_PORT, default 3050; connector-policy.yaml)
+  -> on-demand 1MCP (BRIDGE_BACKEND_PORT, default 3060)
+       |-- Dev    (lightweight facade + expendable execution worker)
+       `-- Local  (tag:local; 5 broker tools -> DirectLocalServerPool)
+                    |-- dev              hidden fallback-only mirror
+                    |-- terminal         Unix socket -> broker -> tmux PTYs
+                    |-- host             Windows host actions (pc_sleep)
+                    |-- skill-library    local BM25 + policy-checked Markdown
+                    |-- browser-fast     Agent Browser 0.43.0 (+ CloakBrowser 0.7.2)
+                    |-- browser-daily    optional stdio proxy to paired browse relay
+                    `-- browser-devtools Chrome DevTools MCP facade
 ```
 
-1MCP is the single public MCP gateway in the maintained reference deployment. Cloudflare supplies HTTPS transport; providers remain local stdio processes. The model-facing compatibility contract is documented in [MCP Compatibility](compatibility.md).
-
-## Optional WebSession transport
-
-WebSession runs as a separately started HTTP adapter in front of the authenticated 1MCP endpoint. It discovers live tool schemas and initialization guidance; discovery reconnects for current instructions, while execution reuses pooled MCP connections. Execution tool names are cached for up to 60 seconds and invalidated by tool-list change notifications. A failed dispatch is never automatically replayed.
-
-`POST /v1/pair` exchanges a reusable, expiring code for one ordinary finite capability. First redemption starts the session lifetime. Retries recover the same token without extending its expiry. The capability can carry a default cwd, shared by every client using that token. The adapter applies it to supported Dev cwd/path arguments; explicit absolute and home-relative paths retain their meaning. The Python client also maintains its own session cwd.
-
-`POST /v1/batch` accepts up to 20 calls. All operation records and turn-fence changes are admitted in one SQLite transaction, with scheduling deferred until commit. A later admission conflict rolls back the batch. Item identities use a SHA-256 digest of the complete client idempotency key plus the item index. After admission, operations have independent outcomes: reads can overlap other operations, while mutations remain serialized. This is atomic admission, not a transaction over filesystem or process effects. See [WebSession clients](websession-clients.md) for ordering, recovery, and wire formats.
+1MCP is the single public MCP gateway; Cloudflare supplies HTTPS ingress; all providers run as local stdio processes. See [MCP Compatibility](compatibility.md) for the model-facing contract.
 
 ## Capability boundaries
 
-### Dev
+### Dev (`providers/pi-dev/`)
 
-Dev uses a lightweight schema/instruction facade and an on-demand execution worker. Durable waits remain in the facade, while Pi execution dependencies load only in the worker. Worker idle shutdown never interrupts an in-flight call. Dev owns Files, ChatGPT-native file ingress, aggregate Git working-tree review, shell-free structured argv execution, native Bash, regular-file topology operations, and durable waits.
+Dev splits into a lightweight schema/instruction/`wait` facade and an on-demand Pi execution worker (evicted after `MCP_DEV_WORKER_IDLE_MS`, never interrupting active calls).
 
-Personal surface:
+- **Files & Git:** `read` (16 KiB/file, default 160 lines, `mode="outline"`, up to 20 `targets`), `search` (structured ripgrep, vendor exclusions), `list_directory` (pinned `/proc/self/fd` tree, no symlink following), `edit` (multi-file grouped replacement with exact-first + unique tolerant fallback and nearest-match hints), `write` (staged + SHA-256 verified receipts, see [Reliability](reliability.md)), `import_file` (create-only ChatGPT attachment stream), `file_ops` (same-FS move/delete for regular files), and `review_changes` (bounded read-only Git diff for working tree or `rev`).
+- **Execution & Waits:** Shell-free `exec(argv[])` and native `bash` are short-RPC execution paths (~45s connector target; `detach: true` handles background jobs within the service cgroup). `wait` persists durable readiness checks (`terminal_output`, `terminal_exit`, `process_exit`, `tcp_listen`, `file_exists`, `file_changed`, `http_ready`, `systemd_user`, `timer`) independently of `terminal_read` cursors.
+- **`run_script`:** Sandboxed QuickJS VM in a worker thread (256 MiB cap, max 4 concurrent scripts, no FS/net/timers). Exposes only the profile's Dev tools minus `run_script`, `wait`, and `import_file` (max 32 calls, up to 4x parallel reads, serialized mutations per script, 30s default / 120s max). Nested calls are real and never rolled back on later failure.
 
-```text
-read list_directory search edit write import_file file_ops review_changes wait exec bash run_script
-```
+### Local broker (`providers/local-tools/`)
 
-`edit` owns guarded mutation of existing text across one or more files. One exact `oldText` match always wins; only zero exact matches trigger tolerance for line endings, trailing whitespace, and common Unicode punctuation or space differences, and the fallback must still be unique. Exact and tolerant edits sharing a line must be merged. Callers inspect with `read`, `rg`, or ast-grep and include enough context when needed. `edit` is quiet by default and returns one `M path (+added -removed)` line per target; `diff: true` returns each unified diff. `read` returns at most 16 KiB of UTF-8 text (`mode: "outline"` returns structural landmarks, and `targets` batches up to 20 files) and defaults to `MCP_DEV_READ_DEFAULT_LINES` lines (160) when no `limit` is given. `search` runs structured, boundary-checked ripgrep queries that exclude vendored directories by default. Truncated reads report the total file size and next line offset; oversized individual lines require a focused command extract. A directory target is refused with `EISDIR` and the listing route instead of a raw read error. `list_directory` owns bounded read-only name discovery: kind, name, and byte size per entry, sorted by name, capped by `limit` (default 200, maximum 1000) with the observed total when truncated. It resolves through the same workspace/user path policy and realpath containment as `read`, lists symbolic links without following them, and adds no authority beyond reading. Long command output preserves the beginning and end with an omitted-byte marker (very small configured budgets retain tail-only behavior). Command results end with one compact exit-status and elapsed-time footer; truncation notes include the observed byte count and retained-output path. `write` owns new text-file creation (create-only by default; `overwrite` atomically replaces an existing regular file under the same per-path lease as `edit`, refusing symlinks and directories), `import_file` owns create-only ingress of one ChatGPT-native file into a WSL-user path, and `file_ops` owns move/delete for existing regular files. `review_changes` owns one bounded read-only aggregate view of a Git working tree, including untracked file content when it fits the patch budget; it creates no refs, commits, or temporary Git index state. `exec` passes one `argv[]` directly to an executable without a shell parser and Bash remains the explicit path for pipes, redirects, substitutions, loops, compound commands, and other shell semantics. Both are short-RPC execution paths: agents route only work expected comfortably inside the connector request window through direct Dev, using 45 seconds as the routing target. Runtime that is uncertain, may approach a minute, or must survive the call belongs in Local Terminal; Dev `wait` observes Terminal output/exit/readiness across short RPCs and `terminal_read` retrieves output. The provider's larger internal timeout does not extend the connector lifetime. Syntax-shaped discovery/codemods can therefore run ast-grep through `exec` when no shell composition is needed and normally feed guarded `edit`; an existing authoritative `.patch`/`.diff` artifact may still use Bash for the guarded `git apply --check -- "$patch" && git apply -- "$patch"` compound command.
+Exposes exactly five outer tools under `tag:local`: `tool_list`, `tool_schema`, `tool_call`, `fallback_dispatch`, and `tool_batch`.
 
-`write` stages and verifies decoded bytes before exclusive creation or atomic
-replacement. It returns byte count, SHA-256, outcome, and operation identity in
-text and structured output. Optional new-content size/hash expectations fail
-before mutation. [Reliability guidance](reliability.md) defines receipts,
-correlation metadata, diagnostic coverage, and uncertain mutation outcomes.
+- **`DirectLocalServerPool`:** Supervises each downstream stdio server directly (no second 1MCP process). Wakes only the addressed server on first scoped request and evicts idle servers independently after `MCP_LOCAL_INNER_IDLE_MS` (default 30m). Unscoped `tool_list` reads config without waking any provider.
+- **Hidden Dev mirror:** `MCP_LOCAL_FALLBACK_ONLY_SERVERS=dev` keeps Dev out of unscoped `tool_list`, `tool_call`, and `tool_batch`. Explicit `tool_list(server="dev")` / `tool_schema(server="dev", ...)` allow inspection, and `fallback_dispatch` executes single calls or heterogeneous `calls[]` batches (`sequential: true` or bounded concurrency) across Dev and Local.
+- **Honest annotations & per-client shim:** The broker advertises mutating annotations on `fallback_dispatch`. When `connector-policy.yaml` matches a client with `compat_annotations: true`, `wake-proxy` rewrites `tools/list` annotations to read-only for that client only without changing authority.
+- **Failure semantics:** Owner stdio servers default to `restartOnExit: true`. A failed call is never auto-replayed because downstream side effects may be ambiguous.
 
-`wait` owns durable named wait state and generic local readiness checks. Terminal-specific waits use private broker transcript/session observations, but `wait` is not a Terminal MCP action.
-
-
-`run_script` owns one bounded JavaScript program per call. It runs in a QuickJS VM
-inside a worker thread of the Dev execution worker, so a spinning script cannot
-block the facade and a runaway allocation is capped at 256 MiB. The VM has no
-filesystem, network, timers, imports, or process access; its only capability is
-the `tools` table, which forwards each call to the same registered handler the MCP
-`tools/call` path uses. The table is the profile's own Dev surface minus
-`run_script` (recursion), `wait` (a durable condition would hold the connector
-window), and `import_file` (it needs a ChatGPT-native file value a script cannot
-construct), so a script adds no authority the caller did not already have. Up to four scripts may run concurrently per Dev worker process (`SCRIPT_MAX_CONCURRENT = 4`, 256 MiB cap each, ~1 GiB worst-case worker ceiling); read-only
-calls within one script may overlap up to four while a mutating call waits for them and runs alone. That read/mutation gate is per-script rather than cross-script: `edit`, `write`, and `file_ops` serialize per path via `withMutationPath`, while overlapping `exec`/`bash` calls across concurrent scripts are not serialized. The
-adapter bounds nested calls (default and maximum 32), the overall deadline
-(default 30s, maximum 120s), and the model-facing output (the deployment's
-`MCP_DEV_MAX_OUTPUT_BYTES`, with the complete text retained on the remote host).
-Each nested call is validated against the same input schema `tools/call` enforces
-and dispatches the parsed value, so a script cannot exceed a bound the direct path
-rejects. Waiting for a free script slot counts against the deadline rather than
-starting it. `run_script`'s own `cwd` is the base directory for nested calls that
-omit `cwd` or `path`, which is how a WebSession capability's `default_cwd` reaches
-a script: the adapter rewrites only the top-level call, and Dev applies that base
-to the calls the script makes.
-Nested calls are real and are not rolled back if the script later fails; the result
-lists every call with its status and says so. `store()` and `load()` do not persist
-across calls. The tool is advertised as mutating, so the WebSession adapter
-serializes it with other mutations rather than treating it as a read.
-
-### Terminal logical server
-
-Terminal owns exactly seven actions:
+### Terminal (`providers/terminal/`)
 
 ```text
-terminal_open terminal_read terminal_send terminal_resize terminal_list terminal_yield terminal_close
-```
-
-tmux is the PTY/process lifetime authority. A separate broker owns session metadata, transcripts, model cursors, generation identity, and human/model control leases. Each live pane streams transcript bytes through `pipe-pane`; when a retained pane dies, a pane-local finalizer closes that pipe with real EOF and restores the same dead pane state so the transcript writer exits instead of remaining attached for the lifetime of the retained session. A personal frontend helper owns presentation only: it may launch Kitty under WSLg or Windows Terminal through WSL re-entry, and either path attaches to the exact existing tmux session through `wsl-term present`. MCP owns the agent interface, broker owns authority, tmux owns lifetime, and the frontend never becomes a process-lifetime owner.
-
-## Durable Terminal data flow
-
-```text
-Terminal MCP -> Unix socket -> broker -> tmux pane / transcript
-      |                  |
-      |                  +-> generation + model cursor + human lease
-      |
-      +-> frontend.mjs
-            |-> Kitty / WSLg -> wsl-term present -> exact tmux PTY
-            `-> Windows Terminal / wsl.exe
-                     `-> wsl-term present -> same tmux PTY
-
+Terminal MCP -> Unix socket -> broker (metadata, transcripts, cursors, human leases) -> tmux PTY
+                                  `-> optional frontend (Kitty/WSLg or Windows Terminal via wsl-term present)
 Dev wait -> private broker observation -> independent wait cursor
 ```
 
-Normal Terminal reads and output waits therefore do not consume each other's cursor. `terminal_read` defaults to a 16 KiB content budget; optional `max_bytes` accepts 1..65536 bytes within the broker ceiling. Incomplete reads report the next cursor and remaining byte count; repeating the read consumes the next page without skipping unread bytes. Snapshot reads are also bounded, explicitly mark truncation, and never consume the transcript cursor. The GUI path is presentation only: normal Terminal sessions remain headless by default, and a designated read-only frontend keeps model mutation/resize authority until control is explicitly yielded to the human.
+`tmux` owns PTY/process lifetime; the broker owns transcripts and human/model control leases; GUI frontends are pure presentation adapters. Retained dead panes finalize `pipe-pane` cleanly so writers exit on EOF.
 
-### Host logical server
+### Browser (`browser-fast`, `browser-devtools`, `browser-daily`)
 
-The Personal Workstation Local catalog exposes `server="host"` with `pc_sleep`. It requires explicit confirmation, optionally registers one replaceable Windows Task Scheduler `WakeToRun` task, returns an acknowledgement, and then asks Windows to enter sleep after a short grace period. It does not provide on-demand wake while the host is already asleep.
+- **`browser-devtools`:** Full Chrome DevTools MCP catalog plus `browser_target`, `browser_backend`, `browser_profile` routing.
+- **`browser-fast`:** Compact `observe`/`execute`/`inspect` over Agent Browser `0.43.0` (Windows and Linux) and managed CloakBrowser `0.7.2` (Linux humanized input, coalesced per-profile startup, concurrent tabs, serialized same-tab execution). Loads bounded read-only exact-host/platform browser memory (`~/.config/mcp-dev-bridge/browser-memory/`) and allowlisted file uploads (`browser-artifacts.json`). Learning (`propose`/`promote`) stays Dev-only.
+- **`browser-daily`:** Optional transparent stdio proxy to `browse mcp` (`opencode.ai/browse`), driving the user's already-open browser without owning any browser process.
+- **Windows vs. Linux isolation:** Windows automation uses `%LOCALAPPDATA%\mcp-dev-bridge\chrome-profile` (or `chrome-profiles\<name>`) on ephemeral loopback `DevToolsActivePort` via a one-shot Node helper so daemon startup cannot hold WSL interop pipes open. Everyday Chrome is never copied or launched.
 
-## State boundaries
+### Skill library (`providers/skill-library/`) & Host (`providers/pi-dev/host-server.mjs`)
 
-By default:
+- **`skill-library`:** Read-only BM25 discovery (`find_skills`) and revision-verified UTF-8 reads (`read_skill`) over `skill-library/policy.json` with zero external model dependency by default.
+- **`host`:** Personal-only Windows `pc_sleep` with explicit `confirm: true` and optional Windows Task Scheduler `WakeToRun`.
 
-```text
-bridge persistent state  ${XDG_STATE_HOME:-$HOME/.local/state}/mcp-dev-bridge
-bridge runtime state     ${XDG_RUNTIME_DIR:-/run/user/$UID}/mcp-dev-bridge
-Terminal state           ${XDG_STATE_HOME:-$HOME/.local/state}/wsl-agent-terminal
-Terminal broker socket   ${XDG_RUNTIME_DIR:-/run/user/$UID}/wsl-agent-terminal.sock
-```
+## Optional WebSession HTTP transport
 
-1MCP receives one external writable application root because its config, PID, and OAuth/session data live together beneath that root.
+`providers/websession-adapter/` runs separately in front of 1MCP for non-MCP HTTP sandboxes. `POST /v1/pair` redeems reusable codes for finite bearer tokens with optional default cwd; `POST /v1/batch` admits up to 20 calls atomically in SQLite (concurrent reads, serialized mutations; atomic admission, not filesystem rollback). See [WebSession clients](websession-clients.md).
 
-## Lifecycle boundaries
+## State, lifecycle & profile boundaries
 
-The bridge supervises one loopback wake proxy, one cloudflared process, and one watchdog. The proxy owns on-demand startup and idle shutdown of the config-scoped 1MCP backend; the watchdog reconciles the proxy without resurrecting an intentionally sleeping backend. Lifecycle operations use an exclusive lock and validated process ownership. When user-systemd is installed, the watchdog stays in the foreground as the service main process instead of leaving systemd with an `active (exited)` one-shot launcher. 1MCP additionally holds a kernel `flock` lease for its full process lifetime; upstream `runtime.owner` cleanup is therefore recovery metadata rather than WebHarness's authoritative liveness lock.
-
-Personal Workstation Terminal lifetime is split into two user services:
-
-```text
-wsl-agent-tmux.service             PTY/process lifetime
-wsl-agent-terminal-broker.service  broker/transcript/control state
-```
-
-Restart the broker without restarting tmux when only broker/provider code changes.
-
-### Local tool broker
-
-Personal Workstation domain capabilities are model-facing through one `local` provider under `tag:local`. Terminal, Host, Browser, and owner-added capabilities are logical servers behind it. The provider exposes exactly:
-
-```text
-tool_list tool_schema tool_call fallback_dispatch tool_batch
-```
-
-The Local broker owns stable logical `{server, tool}` routing and supervises each downstream stdio server directly through `DirectLocalServerPool` (no second 1MCP process). It keeps no broker catalog/schema cache. Unscoped discovery reads configured names without starting any downstream provider; counts and per-server availability remain unknown until scoped inspection. Unscoped `tool_list` is server-oriented and excludes fallback-only mirrors. Explicit read-only inspection may still target a known fallback-only server: `tool_list(server="dev")` lists its tools and `tool_schema(server="dev", tool=...)` loads the exact schema. Ordinary `tool_call` and `tool_batch` remain limited to the public Local server set, including `terminal`, `host`, Browser, and owner-added MCPs. `fallback_dispatch` is the unified execution route: it can reach the hidden Dev mirror as well as public Local servers in single-call or bounded-concurrency/sequential batch mode (including heterogeneous per-entry `{server, tool}` pipelines). The broker declares honest mutating annotations (`readOnlyHint: false`, `destructiveHint: true`, `openWorldHint: true`) on `fallback_dispatch`; operators may optionally enable `compat_annotations: true` per matched client in `connector-policy.yaml` so `wake-proxy` applies the `readOnlyHint: true` transport-compatibility shim only to that client's `tools/list` response without changing downstream authority. `tool_batch` states one public route once then dispatches a bounded set of structured argument objects with bounded concurrency. Batch routing fields and argument-object shapes are preflighted before dispatch; downstream MCPs retain ownership of their own tool-schema validation. Member results preserve input order and distinguish broker/transport rejection from a fulfilled downstream result whose own `isError` may be true. Discovery remains bounded with an opaque self-contained cursor; downstream catalog churn does not change the outer five-tool surface.
-
-`DirectLocalServerPool` manages the built-in `terminal`, `host`, `browser-fast`, `browser-daily`, and `browser-devtools` servers, owner-configured Local servers, and one fallback-only mirror of outer Dev, waking only the addressed server on demand and evicting idle servers independently after `MCP_LOCAL_INNER_IDLE_MS`. The reserved `1mcp` namespace remains rejected and filtered from model routes. A failed direct `tool_call` or `fallback_dispatch` is never automatically replayed: if Local proves the selected server disappeared, it may recover the server but returns a retry-required error because the original action's side-effect outcome could be ambiguous. Owner-configured stdio MCPs default to `restartOnExit: true` (with an explicit `false` opt-out) so ordinary post-start crashes are supervised cleanly.
-
-### Skill library
-
-Personal and Server include `server="skill-library"` with `find_skills` and
-`read_skill`. The native provider owns explicit file policy, generated metadata,
-local BM25 and bounded UTF-8 reads. `skill-library/` contains portable source
-packs, licenses and provenance; existing snapshots are separate. Revisions cover
-all declared readable dependencies. Local retains routing/lifecycle ownership
-and its five-tool ABI. See [Skill library](skill-library.md).
-
-### Browser
-
-The Local pool publishes three browser surfaces in the same `tag:local` trust domain:
-
-```text
-Local
-  +-- server="browser-devtools" -> Chrome DevTools MCP facade
-  |    +-- windows (default) -> dedicated persistent MCP Chrome profile
-  |    `-- linux             -> same backend/profile selector as browser-fast
-  +-- server="browser-fast" -> compact observe/execute facade
-  |    +-- windows (default) -> pinned native Agent Browser 0.39.0 -> same MCP Chrome profile
-  |    `-- linux             -> per-call backend: managed Chrome or managed CloakBrowser
-  `-- server="browser-daily" -> stdio proxy to user's paired `browse` relay (everyday browser)
-```
-
-`browser-devtools` keeps the complete Chrome DevTools MCP catalog for network, console, performance, Lighthouse, heap, screenshots, and detailed debugging. It adds `browser_target`, `browser_backend`, and `browser_profile`, strips those routing fields before forwarding, and returns downstream `CallToolResult` objects unchanged. On Linux, omitted backend/profile values resolve through `browser-fast.json`. Managed CloakBrowser attaches to the already running profile's loopback CDP endpoint instead of launching a second browser process.
-
-`browser-fast` is an experimental routine-interaction surface with only `observe` and `execute`. `observe` returns compact interactive refs plus stable Agent Browser/CDP target IDs. It also resolves bounded read-only browser memory from `~/.config/mcp-dev-bridge/browser-memory/`: exact-host policy, exact-host site knowledge, then reusable platform knowledge whose `match.json` matches the current host/URL. Exact site lookup scales without scanning every learned company; platform scans stay limited to the reusable platform catalog. The resolver strips only leading `www.` and does not collapse arbitrary subdomains into one key. Up to six Markdown files are returned, capped at 16 KiB per file and 48 KiB total; malformed/missing local memory becomes a warning rather than a browser failure. `execute` requires the tab ID returned by `observe`. Linux operations are serialized by resolved backend/profile/tab, so independent tabs can proceed concurrently while the same tab remains fail-closed and ordered. Windows operations serialize by profile because each profile has one native Agent Browser session; different named Windows profiles have independent queues. Each Linux tab is driven through a deterministic Agent Browser session derived from its CDP target ID. After each click, `execute` compares the target set: exactly one new target is bound before later actions and final observation only after a bounded read-only CDP lookup confirms that its opener is the clicked target. Zero new targets continues on the current target; multiple new targets, missing opener metadata, or lookup failure stop the sequence without guessing. Other tab switching remains an Agent Browser operation through `observe(tab=...)` or an explicit `tab_switch` action.
-
-The Linux browser-process seam uses `~/.config/mcp-dev-bridge/browser-fast.json` as default/profile policy rather than as a required runtime switch. A Browser Fast call can explicitly select `browser_backend=chrome` or `browser_backend=cloakbrowser`. Omitted `browser_profile` keeps the existing shared default. With Chrome, an explicit profile name creates or reuses a persistent directory under bridge state and a profile-specific Agent Browser session. With CloakBrowser, the name selects a profile defined in the V2 configuration catalog. CloakBrowser owns persistent profiles beneath bridge state and launches one headed or headless Chromium context per active profile with an ephemeral loopback CDP endpoint. Concurrent callers for the same not-yet-started profile share one in-process launch promise, while different profiles may start independently; no filesystem lock is used for routine browser concurrency. For managed CloakBrowser, the first no-tab observation may claim an existing page and later independent no-tab observations allocate fresh pages in that same authenticated profile. Agent Browser attaches with a per-target pinned session for snapshots, refs, and target IDs. Chrome remains a separate backend, so a Chrome call does not close CloakBrowser or require editing shared configuration. Supported CloakBrowser input actions execute through its humanized Playwright context, while navigation, tab bookkeeping, waits, and approved uploads keep the existing Agent Browser path. Owner-managed V1 `cdpPort` CloakBrowser configuration remains readable, but Personal bootstrap converges the known maintained `cloakbrowser:9222` selector to V2 `cloakbrowser/x-main`. Firefox is outside this seam because Agent Browser 0.39.0 is Chromium-CDP-only.
-
-File upload reuses Agent Browser 0.39.0's native `upload` command rather than adding Browser Harness's Python/CDP runtime. The model supplies an observed input ref plus a logical `artifact` name. `browser-fast` resolves that name through `~/.config/mcp-dev-bridge/browser-artifacts.json`, requires the configured target to resolve to a regular file, and passes only the resolved approved path to Agent Browser. Windows uploads translate the WSL path with `wslpath -w`; Linux uploads keep the WSL path. Arbitrary model-supplied filesystem paths are not part of the action schema.
-
-The memory design ports Browser Harness's MIT-licensed disk-backed domain-skill discovery idea without adding Browser Harness as a runtime/browser owner. `browser-fast` reads Markdown and platform `match.json` only; it does not execute Browser Harness-style `agent_helpers.py`, write learned memory, change Chrome lifecycle, or add another MCP tool. Provenance is recorded under `providers/browser-fast/vendor/browser-harness/`.
-
-Learning stays outside Local browser authority. The Dev-only `providers/browser-fast/browser-memory-author.mjs` stages one exact-host observation with `propose` under `candidates/<host>/`, which `observe` never loads. A separate `promote` call creates `sites/<host>/<name>.md` with create-only semantics and removes the candidate after success. Both operations derive the exact host from the URL; provenance drops query strings and fragments. No page, successful form submission, or Browser call promotes memory automatically.
-
-Optional domain workflows are extensions above this generic browser layer. `bin/extension` installs or removes manifest-declared browser-memory contributions, namespaced approved-artifact aliases, and configured source mappings; Browser core imports no extension. Required sources, artifacts, memory targets, and alias conflicts are preflighted before mutation. Removal deletes only extension-lifetime contributions while shared platform recognition, learned exact-site memory, and operator-owned source data remain outside the extension lifetime. ChatGPT Skill installation is separate client-side state. Enabling or disabling an extension therefore does not require modifying `browser-fast`, `browser-devtools`, Local, or Chrome lifecycle.
-
-Windows browser ownership defaults to one runtime shared below the browser-devtools and profileless browser-fast surfaces. It keeps persistent state under `%LOCALAPPDATA%\\mcp-dev-bridge\\chrome-profile`; `browser-devtools` and profileless `browser-fast` calls connect to that same instance. Browser Fast may instead select a named persistent profile under `%LOCALAPPDATA%\\mcp-dev-bridge\\chrome-profiles\\<name>`. Each named profile gets a separate visible Chrome process, DevTools endpoint, Agent Browser session, and operation queue; Browser DevTools does not currently select those named profiles. Every runtime launches Chrome with `--user-data-dir` plus `--remote-debugging-port=0`, waits for that directory's `DevToolsActivePort`, and returns loopback endpoints. The everyday Chrome data directory is never launched or copied as an MCP execution target; `browser-daily` instead proxies through the user's separately paired `browse` relay and browser extension. Profile state persists cookies, local storage, extensions, and sign-ins across restarts. Agent Browser's one-shot Windows Node helper owns bounded stdout/stderr capture so cold daemon startup cannot keep the WSL interop lifetime open. On Linux, Agent Browser remains the pinned observation/ref layer for both backends; managed Chrome also uses it for execution, while managed CloakBrowser uses its own Playwright context for humanized input. Linux tab operations use independent pinned sessions and tab-scoped queues, normalized tab IDs prefer the CDP `targetId`, and each `observe` explicitly rebinds the chosen/current target before snapshotting so a strict pin can recover after its prior target is closed.
-
-## Trust/profile separation
-
-`restricted` and `trusted-dev` remain smaller explicit compositions; they do not inherit Local or its Code/Terminal/Host/Browser logical servers, `wait`, or the Personal Workstation Terminal socket. `personal` is the full reference composition and remains an explicit authority choice.
-
-## Separate server deployment
-
-The headless `server` profile reuses Dev, Local, Terminal, and the existing bridge lifecycle on Linux. Each computer owns a separate public origin, tunnel, and OAuth/runtime state. The two client connections remain independently selectable; no cross-machine provider or combined catalog is introduced. See [Headless Server](headless-server.md).
+- **State roots:** Bridge persistent state in `${XDG_STATE_HOME:-$HOME/.local/state}/mcp-dev-bridge`, runtime in `${XDG_RUNTIME_DIR:-/run/user/$UID}/mcp-dev-bridge`; Terminal state in `wsl-agent-terminal` and socket at `wsl-agent-terminal.sock`.
+- **Supervision:** `mcp-dev-bridge.service` runs the foreground watchdog supervising `wake-proxy` and `cloudflared`; 1MCP holds a kernel `flock` lease. Terminal runs as two separate units (`wsl-agent-tmux.service` + `wsl-agent-terminal-broker.service`).
+- **Profile separation:** `restricted` and `trusted-dev` never inherit Local, Terminal, Host, or Browser. `server` deploys independently on headless Linux/ARM with its own tunnel and OAuth state (see [Headless Server](headless-server.md)).

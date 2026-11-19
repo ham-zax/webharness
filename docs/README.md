@@ -6,6 +6,7 @@ Use the guide that matches what you are doing:
 
 | Need | Guide |
 |---|---|
+| Save tokens/money, enable bells & whistles, and extend WebHarness | [Bells, Whistles, Cost Savings & Extensions](extending.md) |
 | Reproduce the reference deployment | [Getting Started](getting-started.md) |
 | Deploy or connect a separate headless server | [Headless Server](headless-server.md) |
 | Check the qualified host/runtime assumptions | [Reference Environment](reference-environment.md) |

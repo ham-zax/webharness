@@ -1,6 +1,6 @@
 # Getting Started
 
-WebHarness is a reference implementation for a high-capability ChatGPT workstation. The maintained full deployment is the `personal` profile, documented as the **Personal Workstation**. `restricted` and `trusted-dev` are smaller authority examples built from the same source.
+WebHarness is a reference implementation for a high-capability MCP workstation (supporting ChatGPT, Claude, Gemini, and other MCP clients). The maintained full deployment is the `personal` profile, documented as the **Personal Workstation**. `restricted`, `trusted-dev`, and `server` are narrower profiles built from the same source.
 
 Before installing anything, read [Reference Environment](reference-environment.md). The maintained qualification target is WSL2 + Ubuntu + x86_64 + Node.js 24+ + systemd user services, with WSLg for headed Linux browser capability.
 
@@ -110,9 +110,20 @@ webharness stop
 
 A healthy running deployment reports local 1MCP health, Cloudflare transport, watchdog health, public health, and `issues: 0`.
 
-When the model-facing provider composition changes, refresh the ChatGPT MCP connection/catalog so the client sees the current schemas.
+When the model-facing provider composition changes, refresh your MCP client's connection/catalog so it sees the current schemas.
 
-## 5. Generated state
+## 5. Optional add-ons (pick only what you use)
+
+Everything below is opt-in and independent of the core bridge. Skip any piece that does not fit your workflow:
+
+- **Per-client connector policy (`connector-policy.yaml`):** By default, WebHarness exposes all direct read and write tools with honest annotations (ideal for ChatGPT, Claude, and standard MCP clients). If you also connect Gemini Web, run `just init-connector-policy` (or copy `config/connector-policy.example.yaml` to `~/.config/mcp-dev-bridge/connector-policy.yaml`) once. It never overwrites an existing file and automatically detects Gemini via `User-Agent: Google` (with `?client=gemini` as an optional URL backup) while leaving other clients untouched.
+- **Everyday browser (`browser-daily`):** Only active if you separately install and pair `browse` (`curl -fsSL https://opencode.ai/browse/install | bash`). If you prefer isolated automation browsers (`browser-fast` / `browser-devtools`) or no browser at all, skip it.
+- **Linux browser backend (`browser-fast.json`):** `config/browser-fast.example.json` ships a starter managed CloakBrowser profile (`x-main`); rename, add, or replace profiles per host without modifying tracked files.
+- **Optional CLI accelerators & `pueued.service`:** `scripts/setup-personal-toolbox.sh` (and `--headless` on servers) checks existing binaries first and skips any tool that already meets version requirements, so it never installs duplicates. See [Personal Linux CLI Toolbox](personal/toolbox.md).
+- **Optional `justfile` workflows:** When `just` is installed, run `just host-audit`, `just test-fast`, `just deploy`, or `just update` from the repository root instead of typing multi-step shell commands.
+- **Optional Gemini Web userscript:** `scripts/gemini-auto-continue.user.js` is a standalone browser userscript (Tampermonkey/Violentmonkey) for Gemini Web checkpoints and confirmation cards. Review its default-armed behavior in [Operations](operations.md#per-client-connector-policy-connector-policyyaml) before enabling it.
+
+## 6. Generated state
 
 Persistent configuration, logs, and OAuth/session state stay outside Git by default:
 

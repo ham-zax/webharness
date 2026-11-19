@@ -1,46 +1,97 @@
 # Personal Workstation
 
-The `personal` profile is the full WebHarness reference deployment. It runs with the authority of the WSL user and is intentionally more powerful than the smaller `restricted` and `trusted-dev` examples.
+The `personal` profile is the full WSL2 reference deployment running with the WSL user's authority. See [Configuration](../configuration.md) for `.env` options, [Operations](../operations.md) for service/browser lifecycle, and [Bells, Whistles & Extensions](../extending.md) for add-ons and token-saving workflows.
 
-## Mental model
+## Surface & routing
 
 ```text
 Dev       read list_directory search edit write import_file file_ops review_changes wait exec bash run_script
 Local     tool_list tool_schema tool_call fallback_dispatch tool_batch
-            |-- terminal          durable PTY/session control
-            |-- host              pc_sleep
+            |-- terminal          durable tmux PTYs
+            |-- host              Windows pc_sleep
             |-- skill-library     find_skills / read_skill
-            |-- browser-fast      observe/execute interaction; Windows default, WSLg on request
-            |-- browser-daily     everyday browser via paired browse relay (when installed)
-            `-- browser-devtools  full Chrome DevTools diagnostics; Windows default, WSLg on request
+            |-- browser-fast      observe / execute (Windows default; WSLg on request)
+            |-- browser-daily     optional everyday browser via paired browse relay
+            `-- browser-devtools  full Chrome DevTools diagnostics
 ```
 
-Think in two model-facing surfaces:
+- **Dev** owns direct file access, Git review, short commands (<45s target), and durable waits.
+- **Local** hides downstream catalog size behind 5 metatools (`DirectLocalServerPool`, lazy start, 30m idle eviction). Use `tool_call` / `tool_batch` for public servers; use `fallback_dispatch` for single or sequential `calls[]` pipelines across Dev and Local (or when outer write tools are hidden for a connector like Gemini).
 
-- **Dev** handles focused text/file work, ChatGPT-native file ingress, aggregate Git review, bounded execution, and durable waits. Prefer `exec` with structured `argv[]` for ordinary executable invocation; use `bash` only when shell syntax is actually required.
-- **Local** exposes five stable broker tools and owns the public `terminal`, `host`, Browser, and owner-added logical servers. Use `tool_call` for an ordinary one-shot downstream invocation and `tool_batch` when the same public logical `{server, tool}` should receive several independent structured argument objects; do not rebuild that batching in Bash. Use `fallback_dispatch` only when an already-authorized writable MCP operation is unavailable or unreliable. The fallback can additionally reach the hidden Dev mirror. The broker declares honest mutating annotations (`readOnlyHint: false`, `destructiveHint: true`, `openWorldHint: true`) on `fallback_dispatch`; operators may optionally enable `compat_annotations: true` per matched client in `connector-policy.yaml` so `wake-proxy` applies the `readOnlyHint: true` transport-compatibility shim only to that client's `tools/list` response without changing downstream authority. If the outer Dev tool catalog/schema is also unavailable, inspect the recovery route read-only with `tool_list(server="dev")` and `tool_schema(server="dev", tool=...)`; Dev remains unavailable to ordinary `tool_call`/`tool_batch`. Preserve the same intended server/tool/arguments; do not use fallback dispatch to broaden authority or invent a different operation. Terminal is `server="terminal"`, Windows host actions are `server="host"`, and the browser routes are `browser-fast` and `browser-devtools`. Personal deployments may additionally grant owner-selected local MCPs through `MCP_LOCAL_SERVERS_FILE`; discover them by logical server name and load only the exact downstream schema needed. All such servers share the same `tag:local` authorization domain. For `browser-fast`, observe once, consume any returned `memory` that applies to the current host, then pass the returned `active_tab` to `execute` with the mechanical sequence. Omit `arguments.browser_target` for the dedicated persistent Windows MCP Chrome profile; use `arguments.browser_target="linux"` for WSLg. The Windows MCP profile is separate from everyday Chrome and keeps its own persistent sign-ins; Windows MCP and Linux browser state remain separate.
+## Setup & owner overlays
+
+```bash
+./bin/webharness doctor --profile personal
+./bin/webharness setup --profile personal --enable-startup
+just init-connector-policy   # optional: copy-if-missing multi-client policy (auto-detects Gemini)
+```
+
+Keep machine-specific policy outside Git under `~/.config/mcp-dev-bridge/owner/`:
+
+- `MCP_OWNER_CONTEXT_FILE` (<=32 KiB): appended to `pi-dev` MCP initialization instructions for every connected client.
+- `MCP_OWNER_ENV_FILE` (<=64 KiB): whitelisted GUI/browser overrides (`GALLIUM_DRIVER`, `MOZ_ENABLE_WAYLAND`, `AGENT_BROWSER_PROFILE`, `AGENT_BROWSER_EXECUTABLE_PATH`, `MCP_BROWSER_DEFAULT_TARGET`).
+- `MCP_LOCAL_SERVERS_FILE` (<=128 KiB): extra owner-configured stdio MCP servers loaded lazily by `DirectLocalServerPool`.
+
+For clients without native MCP, use [non-native-ai-mcp-python.md](non-native-ai-mcp-python.md) (direct Python MCP SDK) or the separately operated WebSession adapter (`bin/adapter`).
+
+## Dev tool reference
+
+| Tool | Purpose & key bounds |
+|---|---|
+| `read` | UTF-8 text (default 160 lines, 16 KiB/file), `mode="outline"` for structural landmarks, `targets` for up to 20 files (32 KiB combined). Expands `~`. Refuses directories with `EISDIR` -> use `list_directory`. |
+| `search` | Structured ripgrep (`pattern`, `path`, `globs`, `literal`, `case_sensitive`), smart-case, vendor dirs excluded by default. Default 80 matches (20/file, max 500/200, 32 KiB cap). |
+| `list_directory` | Pinned read-only directory/tree listing (`depth` 1..4, `limit` 200..1000). Lists symlinks without following; skips vendor trees when `depth > 1`. Use instead of `exec ls/find`. |
+| `edit` | Grouped multi-file guarded text replacement: `edit({ targets: [{ path, edits: [{ oldText, newText }] }], diff? })`. Exact match wins; whitespace/Unicode fallback only when 0 exact matches and still unique. Missed anchors return nearest-match snippets. |
+| `write` | Create-only by default (`overwrite: true` replaces atomically with SHA-256 receipt); supports `encoding: "base64"`, `mode`, `mkdir_parents`. |
+| `import_file` | Streams one trusted ChatGPT-native attachment to a create-only WSL path (`MCP_DEV_IMPORT_MAX_BYTES`, default 100 MiB). |
+| `file_ops` | Move (same-FS hard-link + unlink, no copy fallback) or delete existing regular files. Rejects final-component symlinks. |
+| `review_changes` | One bounded read-only Git review of the working tree (including untracked files) or commit range via `rev` (e.g. `HEAD~3..HEAD`). Creates no refs or index state. |
+| `exec` | Shell-free `argv[]` execution (short-RPC target <45s). `detach: true` returns `job_id`/`log_path`/`exit_path` for noninteractive background work (stops on bridge restart; use `pueued` or Terminal for restart survival). |
+| `bash` | Short-RPC native Bash only when pipes, redirects, variables, or compound syntax are required. Never run bare `pkill -f <pattern>` (can kill the runner); use `pgrep -f "[p]attern"`. |
+| `run_script` | Sandboxed QuickJS VM (no FS/net/timers) calling Dev tools (max 32 calls, 4x parallel reads, 30s default / 120s max). Reserve for dynamic JS-computed loops; prefer `local_fallback_dispatch(calls:[...], sequential:true)` for static pipelines. |
+| `wait` | Durable named conditions: `terminal_output`, `terminal_exit`, `process_exit`, `tcp_listen`, `file_exists`, `file_changed`, `http_ready`, `systemd_user`, `timer` (`after_seconds` or `at`). Independent cursor from `terminal_read`; `hold_seconds=0` arms without blocking. |
+
+Built-in Dev initialization instructions always enforce: search with `search`, outline large files with `read(mode="outline")`, discover names with `list_directory`, treat `ENOENT`/`EISDIR`/`ENOTDIR` as routing signals, and never conclude filesystem access is gone solely because `exec`/`bash` failed.
+
+## Local `host/pc_sleep`
+
+Sleeps the Windows host after a 10s grace period (`confirm: true` required). Optional timezone-qualified `wake_at` (at least 2 minutes ahead) registers a replaceable Windows Task Scheduler wake task; omitting `wake_at` clears any prior wake task.
+
+## Local Terminal & human handoff
+
+Seven actions: `terminal_open`, `terminal_read` (default 16 KiB, `max_bytes` 1..65536, cursor-tracked; `snapshot=true` does not advance cursor), `terminal_send`, `terminal_resize`, `terminal_list`, `terminal_yield`, `terminal_close`.
+
+`tmux` (private namespace `wsl-agent`) owns PTY lifetime—sessions survive bridge and broker restarts. Sessions open headless unless `present: true` is requested.
+
+| Operator command | Effect |
+|---|---|
+| `wsl-term new <session>` | Create session under immediate human control (model can read; mutations return `HUMAN_HAS_CONTROL`). |
+| `wsl-term give <session>` | Keep your terminal attached read-only (`ignore-size`) and hand control to the model. |
+| `wsl-term take <session>` | Reclaim writable human control from another shell. |
+| `Ctrl-b T` | Toggle the current tmux client between writable human control and read-only model control. |
+| `wsl-term watch <session>` | Attach as an anonymous read-only observer without blocking model mutations. |
+| `wsl-term present <session>` | Attach as the designated read-only collaborative viewport while the model keeps control. |
+| `wsl-term attach <session>` | Take writable control of an existing session (use for sudo/passwords/MFA). |
+
+The model can return control voluntarily via `terminal_yield`, reusing an attached frontend or launching `MCP_TERMINAL_FRONTEND` (`kitty` or `windows-terminal`). It can never seize control from a human.
 
 ## Learning exact-site browser memory
 
-After a browser task completes safely, stage only a reusable site mechanic through Dev. The candidate is inert and is not returned by `browser-fast.observe`:
+Stage a reusable site mechanic as an inert candidate (not loaded by `browser-fast.observe`), then promote it explicitly:
 
 ```bash
-printf '%s' '{"url":"https://careers.example.com/jobs/123","name":"application","content":"Country selection requires choosing the autocomplete option before continuing."}' \
+printf '%s' '{"url":"https://careers.example.com/jobs/123","name":"application","content":"Select the country autocomplete option before continuing."}' \
   | node providers/browser-fast/browser-memory-author.mjs propose
-```
 
-Promote it only after deciding the observation should guide future visits to that exact host:
-
-```bash
 printf '%s' '{"url":"https://careers.example.com/jobs/123","name":"application"}' \
   | node providers/browser-fast/browser-memory-author.mjs promote
 ```
 
-`propose` and `promote` derive the exact canonical host, strip query/fragment data from stored provenance, keep files private, and refuse to overwrite an existing candidate or active site-memory file. Use normal Dev `read`/`edit` when an existing active memory needs revision. Do not copy webpage instructions, personal data, credentials, or job-specific answers into browser memory.
+Both derive the exact canonical host, strip queries/fragments, refuse overwrites, and stay out of Local browser authority. Never store credentials, personal data, or webpage prompt text in browser memory.
 
 ## Optional extensions
 
-Domain workflows can sit above the generic browser/runtime layer without changing Browser core. The public reference ships the generic extension manager, not the machine-specific extension packs used by the engineering checkout.
+Package reusable artifact aliases, browser memory, and source mappings above Browser core:
 
 ```bash
 webharness extension list
@@ -48,316 +99,10 @@ webharness extension install <name>
 webharness extension remove <name>
 ```
 
-An extension manifest may contribute namespaced approved-artifact aliases, browser-memory files, or configured source mappings. Installation preflights its declared sources and conflicts before mutation. Removal deletes only extension-lifetime contributions and matching aliases; shared platform recognition, learned exact-site memory, and operator-owned source data remain outside the extension lifetime. ChatGPT Skill installation is separate client-side state.
-
-## Setup
-
-`bin/webharness` is the normal operator entrypoint. It routes `personal` to the dedicated Personal Workstation bootstrap while the lower-level `scripts/setup.sh` continues to own only `restricted` and `trusted-dev`.
-
-Create/configure `.env` first, at minimum supplying the public MCP URL. The personal default cwd is optional: set `MCP_PERSONAL_DEFAULT_CWD=/absolute/path` when you want something other than this WSL user's `$HOME`.
-
-Keep the live machine-specific owner policy outside the checkout. A typical runtime layout is:
-
-```text
-~/.config/mcp-dev-bridge/owner/
-    context.md
-    gui.env
-```
-
-Point the personal deployment at those files rather than copying their contents into tracked configuration:
-
-```text
-MCP_OWNER_CONTEXT_FILE=/home/user/.config/mcp-dev-bridge/owner/context.md
-MCP_OWNER_ENV_FILE=/home/user/.config/mcp-dev-bridge/owner/gui.env
-```
-
-`pi-dev` reads `MCP_OWNER_CONTEXT_FILE` as a current-user-owned regular file, limits it to 32 KiB, and publishes non-empty content as its MCP server `instructions`. 1MCP includes those upstream instructions in the initialization instructions sent to a matching client. Use this file for WSL- or workstation-specific guidance, not project invariants or current-task instructions.
-
-Keep a concise summary of the owner's global agent guidance here: task scope,
-repository instructions, canonical skill routing, verification and communication.
-Reference the full global guidance for task-specific details rather than copying
-all skill bodies or host-specific worker commands into startup context. Native
-MCP clients receive this guidance during initialization; WebSession discovery
-forwards the same authenticated instructions as `instructions_json`. Clients
-should read it before choosing tools or specialist guidance. Guidance remains
-subordinate to the current user's instructions and grants no additional access.
-
-`MCP_OWNER_ENV_FILE` is also current-user-owned and bounded. The renderer accepts `GALLIUM_DRIVER`, `MOZ_ENABLE_WAYLAND`, `AGENT_BROWSER_PROFILE`, `AGENT_BROWSER_EXECUTABLE_PATH`, and `MCP_BROWSER_DEFAULT_TARGET`, validates their values, and writes only the GUI subset to the sanitized `owner.env` under the private bridge state directory. Dev, the Local `terminal` server, and the Terminal/tmux services receive the supported owner GUI environment; Linux Browser receives `GALLIUM_DRIVER` when configured, while Agent Browser settings go to Linux `browser-fast`. `MCP_BROWSER_DEFAULT_TARGET` goes to both browser servers. Other variables are rejected rather than imported into service environments. Context changes are read on the next `pi-dev` start; GUI changes take effect after personal configuration is rendered again and relevant processes restart.
-
-Linux `browser-fast` uses `~/.config/mcp-dev-bridge/browser-fast.json` for its default and managed CloakBrowser profile catalog; start from `config/browser-fast.example.json`. The Personal bootstrap installs the tracked `cloakbrowser` / `x-main` policy when the file is missing and preserves every existing file, including owner-managed V1 external-CDP configurations. That install uses atomic temporary-file replacement without a persistent lock. An unsupported backend fails the call with a clear configuration error. Use `browser_backend="chrome"` or `browser_backend="cloakbrowser"` per call instead of rewriting the shared selector. Linux `browser_backend="chrome"` does not launch today, so use CloakBrowser for every Linux task. Omit `browser_profile` to share the existing state. For explicit isolation, send a stable profile name with the backend: Chrome creates or reuses a persistent bridge-state profile, while CloakBrowser requires that name in the configuration catalog. The provider owns one persistent CloakBrowser runtime per active profile and coalesces concurrent startup of the same profile. Within managed CloakBrowser, the first no-tab observation may claim the blank launch tab, and a later observation reuses a blank tab that has sat untouched for 10 minutes instead of opening another; otherwise it opens a new tab, with tab-specific Agent Browser sessions and tab-scoped operation queues. Same-tab work remains serialized and fail-closed, while different Linux tabs can proceed concurrently. Chrome does not require closing CloakBrowser. On Windows, profileless calls use the shared MCP Chrome process; explicit Browser Fast profile names use separate persistent processes and per-profile queues. Firefox is not supported by the current Chromium-CDP driver.
-
-Keep the ownership boundary explicit: repository invariants belong in tracked repository guidance, personal WSL/machine policy belongs in the owner overlay, and current-task instructions belong in the conversation.
-
-For a complete install with automatic startup in later WSL sessions:
-
-```bash
-webharness setup --profile personal --enable-startup
-```
-
-`--enable-startup` is explicit consent to install the user-systemd units, enable user linger, enable the services, and start them now. After that, the services start automatically whenever this WSL user's systemd manager starts. The bootstrap does **not** configure Windows to launch WSL.
-
-The same command also qualifies the Personal Workstation CLI toolbox, installs/verifies the pinned 1MCP runtime through the repository's shared runtime installer, installs all six pinned personal in-repo provider dependency trees, prepares CloakBrowser's Ubuntu/WSL runtime dependencies and pinned browser build, renders the outer Personal Workstation composition plus the Local inner browser composition, and installs:
-
-```text
-~/.local/bin/webharness -> <this checkout>/bin/webharness
-~/.local/bin/wsl-term   -> <this checkout>/bin/wsl-term
-```
-
-Omit `--enable-startup` when you only want dependencies/configuration plus the user-local commands and do not want persistent startup state changed:
-
-```bash
-webharness setup --profile personal
-```
-
-The direct renderer, toolbox setup, unit installers, and `bin/start`/`bin/stop` remain supported lower-level repair and source-cutover primitives. They are not the normal first-install sequence.
-
-### New ChatGPT client
-
-The WSL side is persistent after the explicit startup install, but a new ChatGPT environment still owns two client-side pieces that the repository cannot silently mutate:
-
-1. connect ChatGPT to the configured public MCP endpoint and complete OAuth;
-2. install any desired client-side Skills separately, then refresh/reopen the MCP connection when the outer model-facing schema changes. Ordinary Local downstream tool additions/removals are discovered through Local and do not by themselves change the outer five-tool broker schema.
-
-These are client-side actions, not recurring WSL service-start commands.
-
-### AI clients without native MCP support
-
-There are two supported HTTP-oriented paths, depending on what the AI environment can actually do:
-
-- **Direct standards-native MCP:** if the environment can run a real MCP client or Python SDK, use the copy/paste bootstrap prompt in [`non-native-ai-mcp-python.md`](non-native-ai-mcp-python.md). It connects directly to `/mcp` through normal MCP OAuth/PKCE and Streamable HTTP.
-- **WebSession compatibility:** if the environment has only generic HTTPS capabilities, run the adapter with `bin/adapter start`, or install the supervised unit with `scripts/install-websession-adapter-user.sh`, and use [`websession-clients.md`](../websession-clients.md). Programmable HTTP agents with POST/custom headers use the enhanced JSON profile; constrained GET/open/fetch-only agents use the universal GET profile with a finite capability and confirmation step.
-
-The WebSession adapter is deliberately not part of Personal Workstation automatic startup and is not supervised by `webharness start`/`stop`. Once running, it mirrors the live authenticated 1MCP tool catalog rather than maintaining model-specific or per-tool adapters. Stop it explicitly with `bin/adapter stop` when that compatibility access is no longer needed.
-
-## Dev
-
-### File access
-
-The Dev provider sends this policy as MCP initialization instructions, so it reaches every client without an owner context file:
-
-1. Search text with `search`; use `read(mode="outline")` before reading an unfamiliar large file. Read known files with `read`.
-2. Discover names with `list_directory`, not with `exec` or Bash.
-3. If `exec` or Bash fails, do not conclude that filesystem access is unavailable. Retry with `read` or `list_directory`.
-4. Messages start with a code. `ENOENT`: correct or discover the path. `ENOTDIR` or `EISDIR`: call `list_directory`. `EACCES`: report the restriction.
-5. A folder the user names may differ from the directory name. List the parent, then use the exact name.
-6. Read only, unless the user asks for a change.
-
-When a natural-language request names a project, resolve the real directory first. `repo/Ahmed Hamza/workout`, `repo/ahmed hamza workout`, and `repo/ahmed-hamza-workout` differ on a case-sensitive filesystem. One `list_directory` on the parent settles the mapping, and a repository `README.md` or index usually names the active document.
-
-### `read`
-
-Use for focused text/source reads. Relative paths resolve from the personal default cwd; harmless absolute paths are accepted. User-mode `~` and `~/...` paths expand against the service user's home. Output is capped at 16 KiB per file and 160 lines by default; continue with `offset` from the truncation note. `mode: "outline"` returns numbered structural landmarks, or a bounded text fallback. `targets` accepts up to 20 files in one call with a combined 32 KiB output budget.
-
-A directory target fails with `EISDIR` and names `list_directory` as the recovery route. Treat that as a routing signal, not as a broken connection.
-
-### `search`
-
-Use structured ripgrep search for text discovery before reading full files. `pattern` is required; `path`, `globs`, `literal`, and `case_sensitive` refine the search without shell quoting. Smart-case is the default. Results are bounded at 80 overall and 20 per file by default (maximum 500 and 200 respectively), with a 32 KiB output budget. Vendored trees are excluded unless `include_vendor: true`; normal ripgrep ignore/hidden-file rules still apply. Search shares the configured Dev path authority.
-
-### `list_directory`
-
-Read-only discovery of one directory, or a bounded tree when `depth` is set (`1..4`, default `1`). Each entry reports its kind and relative name, and regular files add their size in bytes. Entries sort by name, hidden entries are included, and symbolic links are listed without ever being followed. When `depth > 1`, `.git`, `node_modules`, `third_party`, and `skill-library/packs` are listed as directories without expanding their contents unless `include_vendor: true`. `path` is optional and defaults to the authority root; `limit` defaults to 200 entries and cannot exceed 1000. Single-directory listings report an exact observed total; recursive traversal stops at the entry limit and reports a lower bound when truncated. Listings use pinned directory handles through Linux `/proc/self/fd` and fail explicitly if that access is unavailable, rather than falling back to a mutable pathname.
-
-Use it before reading an unknown path, and after an `ENOENT` or `ENOTDIR` error. Do not use `exec` with `ls`, `find`, or `rg --files` for this route; that needs shell or process authority for a read-only question.
-
-Path errors stay distinguishable after any client wrapper: `ENOENT` with a parent-listing hint, `ENOTDIR` with a `read` hint, and `EACCES` for a permission restriction.
-
-### `edit`
-
-Use for existing-text mutation across one or more files. One exact `oldText` match always wins; only zero exact matches trigger tolerance for line endings, trailing whitespace, and common Unicode punctuation or space differences. Exact and tolerant edits sharing a line must be merged into one edit. Matching must still be unique, so inspect with `search`, `read`, or ast-grep and include enough context when needed. `edit` rejects missing, ambiguous, overlapping, stale, non-text, or duplicate-alias targets; all targets are planned before the first mutation, and partial post-mutation failures are reported explicitly. File count or a structural label does not change this route.
-
-The canonical request is always grouped, including one-file edits:
-
-```text
-edit({
-  targets: [
-    { path: "src/a.ts", edits: [{ oldText: "old", newText: "new" }] }
-  ]
-})
-```
-
-For multiple existing text files, add more target records to the same request rather than switching tools only because the file count increased.
-
-A missed anchor can include a bounded closest-match snippet with line numbers. Inspect it and correct the anchor rather than repeating the same failed edit.
-
-### `write`
-
-Creates a new file and refuses an existing path unless `overwrite: true`, which atomically replaces a regular file. `encoding: "base64"` writes binary content, `mode` (octal string such as `"755"`) sets permissions, and `mkdir_parents: true` creates missing parent directories. Content passes through model context, so use it for small files; for many files, write one base64 tar archive and extract it with `exec`. ChatGPT-native attachments should still use `import_file`.
-
-### `import_file`
-
-Use when ChatGPT supplies or generates a native file that does not yet exist on the WSL host. The tool streams the file directly to a requested WSL destination, refuses to overwrite an existing path, requires the parent directory to exist, enforces the deployment byte limit, and accepts only trusted OpenAI file-download hosts. Do not recreate a ChatGPT-native file with `write` base64 or shell download commands. Importing a file does not add it to the Browser artifact upload allowlist.
-
-### `file_ops`
-
-Use only to move or delete existing regular files. Final-component symlinks are rejected. A move stays on one filesystem, creates a no-overwrite hard link to the same inode, then removes the source name under stale-state guards; there is no copy fallback. See [Security](../security.md) for the cooperative serialization and final-path race boundary.
-
-### `review_changes`
-
-Use once after the final related file mutation when you need the aggregate current Git review. It returns status, tracked line counts, and a bounded unified patch; untracked file contents are included when they fit the same patch budget. `paths` narrows the review to literal repository paths when unrelated dirty work exists. The tool is read-only and does not create review refs, commits, or temporary Git index state.
-
-### `exec`
-
-Runs one bounded executable directly from a structured `argv[]` with no shell parser. Treat it as **short-RPC execution only**: use it when completion is expected comfortably inside the model-facing connector window, with 45 seconds as the routing target. If runtime is uncertain, may approach a minute, or must survive the call, do not start it with `exec`; use Local `server="terminal"`/`terminal_open`, observe completion or readiness with Dev `wait`, then use `terminal_read`. Use `exec` for short Git, builds, tests, structured extraction, repository inspection, and other commands that do not require shell semantics. `argv[0]` is the executable and later elements are passed literally. The provider may accept a timeout up to 300 seconds, but that does not extend the connector request lifetime. There is no hidden mutable global cwd; use `cwd` explicitly when needed.
-
-For long noninteractive work such as installs and builds, `detach: true` starts the command in the background and returns at once with `job_id`, `pid`, `log_path` and `exit_path`. Wait on it with Dev `wait` `{kind:"file_exists", path:exit_path}`; the exit file holds the exit code once the job ends, and the log holds combined stdout and stderr. Detached jobs have stdin closed, have no timeout, and stop if the WebHarness service restarts. Use Terminal instead when the work is interactive or a human should watch it.
-
-### `bash`
-
-Runs one bounded, noninteractive native Bash program. It has the same **short-RPC-only** lifetime rule as `exec`: use it only when completion is expected comfortably inside the connector window, with 45 seconds as the routing target. If runtime is uncertain or may approach a minute, use Local Terminal + Dev `wait` instead of increasing `timeout_seconds`; the provider-side 300-second maximum does not extend connector lifetime. Within short work, use Bash only when shell semantics such as pipes, redirects, substitutions, variables, loops, or compound commands are materially required. Do not use Bash to orchestrate repeated MCP calls when Local `tool_batch` is available. Resolve unknown names with `list_directory` first, then use `search` plus focused `read` for content discovery.
-
-For syntax-shaped discovery or codemods, use ast-grep through `exec` when no shell composition is needed. Inspect bounded matches and normally perform the final mutation through guarded `edit`; use ast-grep bulk rewrite only when the transformation is deterministic and every bounded match is intentionally changed.
-
-For an existing authoritative `.patch`/`.diff` artifact, use native Git:
-
-```bash
-git apply --check -- "$patch" && git apply -- "$patch"
-```
-
-Use `--3way` only when the user explicitly requests merge-style recovery. Do not automatically add fuzzy patch recovery.
-
-Native Dev execution output remains the source of truth for short work; prefer `exec` unless the command genuinely requires Bash semantics. For long or duration-uncertain work, the mandatory Personal Workstation path is `terminal_open` -> Dev `wait` (`terminal_exit`/`terminal_output` or another readiness condition) -> `terminal_read`.
-
-Never use bare `pkill -f <pattern>` from Dev: the pattern matches the runner's own `bash -c` command line and can kill the calling RPC. Use `pgrep -f "[p]attern"` to inspect first, or filter the caller PID (e.g. `ps -o pid= -o args= | grep "[p]attern"`).
-
-### `wait`
-
-`wait` creates durable named observations. First-phase condition kinds are:
-
-```text
-terminal_output
-terminal_exit
-process_exit
-tcp_listen
-file_exists
-file_changed
-http_ready
-systemd_user
-timer
-```
-
-Typical flow:
-
-```text
-1. wait(name, condition, timeout_seconds, hold_seconds=0) -> pending
-2. continue other work / let the source change
-3. wait(name, hold_seconds=2) -> matched | pending | timeout | stable source error
-```
-
-Important semantics:
-
-- timeout is an absolute durable safety deadline;
-- `timer` supports relative `{kind:"timer", after_seconds:N}` wakeups and absolute `{kind:"timer", at:"<timezone-qualified instant>"}` wakeups;
-- `timer.after_seconds` is 1..86399 seconds, while `timeout_seconds` remains at most 86400 seconds and must be strictly later than the timer target because the safety deadline wins ties;
-- `hold_seconds=0` allows one bounded arm/check and does not poll-hold the call;
-- positive hold limits one invocation, not the underlying resource;
-- if positive hold expires before the first durable baseline commits, `WAIT_HOLD_EXPIRED` is returned and no wait exists;
-- after durable state exists, a hold expiry returns `pending` and preserves the same baseline/deadline; other reasoning/tool work may happen before resuming the same wait name;
-- Terminal output waits observe only new transcript output after arming;
-- the wait cursor is independent from normal `terminal_read` unread state;
-- explicit Terminal destruction and same-name replacement remain explicit (`WAIT_SOURCE_ENDED`, `WAIT_SOURCE_REPLACED`).
-
-### Local `host/pc_sleep`
-
-Sleeps the Windows host after a 10-second grace period. The call requires `confirm: true` from a direct user request. Supply an optional timezone-qualified `wake_at` value, such as `2026-08-22T07:00:00+05:30`, to register one replaceable Windows Task Scheduler wake task before sleeping. The wake time must be at least two minutes in the future. Omitting `wake_at` clears the previous MCP wake task before sleep.
-
-This action only schedules a wake before the host sleeps; it cannot receive a new on-demand MCP call while Windows, WSL, and the bridge are already asleep.
-
-
-## Local Terminal server
-
-### Durable session workflow
-
-```text
-terminal_open   create a model-owned named tmux-backed PTY; optionally present it
-terminal_read   read unread output; use cursor/snapshot for recovery
-terminal_send   send text or a control/navigation key while model-owned
-terminal_resize resize the PTY while model-owned
-terminal_list   inspect live/dead sessions and human-control state
-terminal_yield  reuse or ensure a collaborative human frontend, then hand it control
-terminal_close  explicitly destroy a session
-```
-
-A broker restart or 1MCP restart does not own the PTY lifetime; tmux does. Terminal sessions live in the harness-owned private tmux namespace (production default `wsl-agent`), not the user's default tmux server.
-
-The tmux/broker backend remains emulator-neutral. Operator-side `wsl-term` commands work from any interactive tmux-compatible TTY. The Personal Workstation presentation helper uses `MCP_TERMINAL_FRONTEND=kitty|windows-terminal` only when it must create a visible collaborative frontend; `kitty` is the compatibility default. Kitty launches under WSLg. Windows Terminal re-enters the same WSL distribution and runs `wsl-term present <session>` against the exact existing PTY. Either frontend is presentation only and never becomes the PTY lifetime authority.
-
-Normal `terminal_open` stays headless. Set `present:true` only when the human should watch the exact PTY from the start; background servers and other model-only durable work should not open a GUI merely because they use Terminal.
-
-### Collaborative human-first terminals
-
-Create a durable session from the interactive terminal you are already using:
-
-```bash
-wsl-term new <session>
-```
-
-`new` creates the private tmux session under an immediate human lease and attaches the invoking TTY as the writable human client. ChatGPT may read the terminal immediately, but model send/resize/ordinary close return `HUMAN_HAS_CONTROL` until control is given away.
-
-Hand the same attached PTY to the model:
-
-```bash
-wsl-term give <session>
-```
-
-The human client stays attached but becomes tmux read-only + ignore-size. Human terminal resizing no longer changes the PTY; model send and `terminal_resize` become authoritative.
-
-Take it back from another shell or terminal tab:
-
-```bash
-wsl-term take <session>
-```
-
-For same-pane handoff, `Ctrl-b T` directly toggles the current tmux client between writable and read-only. A read-only watcher remains unable to type until this explicit takeover. The broker reconciles real tmux client flags before every model mutation: a unique writable client becomes the designated human owner; multiple writable human clients block model mutation and are never auto-resolved.
-
-ChatGPT can voluntarily return a model-owned collaborative session with `terminal_yield`. If a designated human frontend is already attached, it reuses that exact client and makes it writable regardless of the configured emulator. If none is attached, the personal provider launches the configured frontend on the exact tmux session, waits for broker attachment evidence, then yields to it. If a human attachment lease is still settling at the readiness deadline, re-list before retrying or manually attaching; when neither a lease nor attachment remains, the provider reports the exact `wsl-term attach <session>` fallback. It never lets the model seize control from a human.
-
-### Observation, takeover, and recovery
-
-Watch an existing exact PTY without becoming the collaborative handoff target:
-
-```bash
-wsl-term watch <session>
-```
-
-A watcher starts as an anonymous tmux read-only, ignore-size client. It receives the live terminal display, cannot inject pane input, does not resize the PTY, and does not block model send/resize/ordinary close unless the human explicitly presses `Ctrl-b T` to take control.
-
-Attach a persistent designated collaborative viewport while the model keeps control:
-
-```bash
-wsl-term present <session>
-```
-
-`present` attaches read-only to the exact PTY, registers that client as the handoff target, and freezes the tmux window in manual-size mode before attachment so a smaller passive viewport does not resize the model-owned PTY. Model `terminal_resize` remains authoritative while the client is read-only. If the client later becomes writable through `terminal_yield` or `wsl-term take`, normal terminal resize events can resize the PTY; `wsl-term give` or `Ctrl-b T` returns the same visible client to read-only model-owned mode.
-
-Take writable control of an existing exact PTY or rejoin after the original human client disappeared:
-
-```bash
-wsl-term attach <session>
-```
-
-Writable attach uses the same lease/client reconciliation as collaborative `new`; while attached, model mutation is blocked and model reads remain available. Human input, including sudo/password entry, flows directly from the terminal client to tmux/PTY and is not copied into a separate broker input log.
-
-Manual `wsl-term new`, `watch`, `present`, and writable `attach` require an interactive TTY. Model-owned sessions created with `terminal_open` continue to work headlessly. On the personal WSL profile, frontend-aware presentation/yield may launch Kitty when WSLg and an executable Kitty are available, or Windows Terminal when `wt.exe`, WSL interoperability, and current-distro resolution are available. If automatic presentation cannot establish or begin an attachment, the exact manual attach fallback remains available.
-
-## Typical coding loop
-
-```text
-Code      locate a symbol or implementation
-Dev       read focused source
-Dev       exec/ast-grep for syntax-shaped discovery; Bash only for shell composition
-Dev       edit existing text; write new text; file_ops regular-file move/delete
-Dev       exec focused tests + git diff
-Terminal  start a watch/dev server if work must persist
-Dev wait  wait for readiness/output/exit without polling the full transcript
-Terminal  inspect/interact incrementally
-Code      re-check repository intelligence after watcher convergence
-Dev       final tests and git status/diff
-```
+Install preflights conflicts before mutation; removal deletes only extension-owned entries.
 
 ## Safety boundaries
 
-- Same-canonical-path cooperating Dev mutations serialize their final compare+mutation section.
-- Native Bash and arbitrary external writers do not participate in that in-process coordinator.
-- Hard-link/inode alias synchronization is not claimed.
-- A wait timing out or being cancelled never owns or kills the observed Terminal/process/resource.
+- Cooperating Dev mutations serialize by canonical path and inode; external editors, Git, and arbitrary shell commands do not participate (use Git worktrees for parallel agents).
+- A `wait` timeout or cancel never kills the observed Terminal or process.
+- Never pass sudo passwords or MFA codes through MCP arguments—enter them in `wsl-term attach <session>`.

@@ -4,11 +4,13 @@
 
 ```text
 bin/                 WebHarness operator, lifecycle, extension, and Terminal entrypoints
-lib/bridge/          lifecycle/process supervision internals
+justfile             single-command verification, audit, queue, and deploy/update recipes
+lib/                 shared route-policy, schema-hint, lease, and bridge/connector-policy modules
 providers/pi-dev/    Dev read/list_directory/search/edit/write/import_file/file_ops/review_changes/exec/Bash/wait/run_script provider
 providers/websession-adapter/ optional HTTP transport, pairing, Python client, operation store
 providers/terminal/  Terminal MCP, broker, tmux/transcript logic
 providers/browser/   Chrome DevTools facade + resource-local child routing
+providers/browser-daily/ optional stdio proxy to user's paired `browse` relay (everyday browser)
 providers/browser-fast/ compact observe/execute facade over Agent Browser on Windows + Linux
 providers/local-tools/ stable Local tool broker over DirectLocalServerPool
 providers/skill-library/ native read-only policy/catalog/search/reader
@@ -38,10 +40,15 @@ npm --prefix providers/skill-library ci --omit=dev
 
 ## Portable verification
 
-Run the complete portable gate via the test runner:
+Run the complete portable gate via the test runner (or compact `just` recipes when `just` is installed):
 
 ```bash
 bash scripts/test-all.sh
+# Or compact log-redirecting recipes:
+just test-fast   # bridge, local-tools, skill-library, lib (+ websession-adapter if present)
+just test-pidev  # all pi-dev unit + integration suites
+just test-shell  # harness.sh + lifecycle.sh
+just test-all    # test-fast + test-pidev + test-shell sequentially
 ```
 
 Or execute the individual steps manually:
