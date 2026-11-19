@@ -59,7 +59,9 @@ and the policy forbids the "access is gone" conclusion.
 
 **Proposal, part one: `find_files`.** A case-insensitive name search under an
 authorized root, bounded by depth and result count. Deferred because one
-`list_directory` call on the parent answers the same question for every case in
+`list_directory` call on the parent — now supplemented by bounded normalized
+sibling suggestions (`did you mean ...`) on `ENOENT` in `read`,
+`list_directory`, and `search` — answers the same question for every case in
 the report, and a search tool adds an unbounded traversal surface for a result
 count that `limit` already caps.
 
@@ -96,7 +98,7 @@ specific layer and `bin/status` plus the 1MCP log no longer suffice.
 
 **Proposal.** Add a small CLI subcommand (e.g. `wh-bridge policy explain --ua ... --client ... --client-info ...`) that evaluates `connector-policy.yaml` offline and prints the matched rule and effective flags.
 
-**Why deferred.** `wake-proxy` already emits `connector_client_identified` diagnostic records on `initialize` and `tools/list` showing the exact live match.
+**Why deferred.** `wake-proxy` already emits `connector_client_identified` diagnostic records on `initialize` and `tools/list` whenever connector-policy evaluation is active (a non-default policy, a `clients:` rule, or `log_client_identifiers: true`), showing the exact live match.
 
 **Do it when** `connector-policy.yaml` grows beyond a few client rules and operators need offline dry-run debugging.
 

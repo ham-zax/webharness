@@ -47,9 +47,11 @@ the ID and mutation state in `_meta`. Successful write receipts use that ID as
 `operation_id`. The metadata additions preserve native image and structured
 result blocks. Batch subcalls can share the parent invocation ID.
 
-`run_script` nested calls share the parent invocation ID and emit their own
-`call_started`/`call_completed` records with the nested tool name, so one script
-call stays traceable per step. A failed script reports a bounded code
+`run_script` nested calls derive bounded step IDs (`<parent-uuid>#<step>`) from
+the parent invocation ID and emit their own `call_started`/`call_completed`
+records with the nested tool name (and nested `write` receipts inherit that step
+ID as `operation_id`), so one script call stays traceable per step. External
+HTTP `x-webharness-request-id` validation remains strict UUID-only. A failed script reports a bounded code
 (`SCRIPT_FAILED`, `SCRIPT_TIMEOUT`, `SCRIPT_ABORTED`, `SCRIPT_BUSY`, or
 `SCRIPT_SANDBOX_FAILED`) in `_meta["webharness/error-code"]`.
 
@@ -62,7 +64,11 @@ trace alone does not prove that a request never reached the process.
 
 The wake proxy returns and forwards `x-webharness-request-id`, accepting a UUID
 or generating one. HTTP diagnostics record forwarding attempts and completion,
-without bodies, URLs, query strings, credentials, or raw errors. A forwarding
+without raw bodies, full URLs, credentials, or raw errors. When connector-policy
+evaluation is active (via `clients:`, policy overrides, or
+`log_client_identifiers: true`), `initialize` and `tools/list` additionally log a
+bounded `connector_client_identified` record with truncated (`<=160` chars)
+`user_agent`, `client_info`, and `query_client` values plus the matched rule. A forwarding
 attempt does not prove that a provider received the invocation. HTTP 200 can
 still contain an MCP error.
 

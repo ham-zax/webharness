@@ -24,6 +24,7 @@ Local     tool_list tool_schema tool_call fallback_dispatch tool_batch
             |-- host              pc_sleep
             |-- skill-library     find_skills / read_skill
             |-- browser-fast      observe / execute
+            |-- browser-daily     everyday browser via paired browse relay
             `-- browser-devtools  Chrome DevTools diagnostics
 ```
 
