@@ -220,7 +220,7 @@ try {
   process.exit(2);
 }
 
-const idleValue = process.env.MCP_DEV_WORKER_IDLE_MS ?? '600000';
+const idleValue = process.env.MCP_DEV_WORKER_IDLE_MS ?? '1800000';
 const idleMs = Number(idleValue);
 if (!/^\d+$/.test(idleValue) || !Number.isSafeInteger(idleMs) || idleMs < 0 || idleMs > 2147483647) {
   console.error('MCP_DEV_WORKER_IDLE_MS must be an integer from 0 to 2147483647');

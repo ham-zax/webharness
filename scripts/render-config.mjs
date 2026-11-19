@@ -364,9 +364,9 @@ export async function renderConfig(options) {
   };
   const backendPort = integerSetting('BRIDGE_BACKEND_PORT', coldStart === '1' ? oneMcpPort + 10 : oneMcpPort, 1, 65535);
   if (coldStart === '1' && backendPort === oneMcpPort) throw new Error('BRIDGE_BACKEND_PORT must differ from MCP_ONE_MCP_PORT when cold start is enabled');
-  const wakeIdleMs = integerSetting('BRIDGE_WAKE_IDLE_MS', 600000, 1, 2147483647);
+  const wakeIdleMs = integerSetting('BRIDGE_WAKE_IDLE_MS', 1800000, 1, 2147483647);
   const localIdleMs = integerSetting('MCP_LOCAL_INNER_IDLE_MS', 1800000, 0, 2147483647);
-  const devIdleMs = integerSetting('MCP_DEV_WORKER_IDLE_MS', 600000, 0, 2147483647);
+  const devIdleMs = integerSetting('MCP_DEV_WORKER_IDLE_MS', 1800000, 0, 2147483647);
   const oneMcpLogMaxSizeRaw = deployment.MCP_ONE_MCP_LOG_MAX_SIZE_BYTES ?? String(10 * 1024 * 1024);
   const oneMcpLogMaxSize = Number(oneMcpLogMaxSizeRaw);
   if (!Number.isInteger(oneMcpLogMaxSize) || oneMcpLogMaxSize < 1024 * 1024 || oneMcpLogMaxSize > 64 * 1024 * 1024) {

@@ -1,7 +1,7 @@
 import { fork } from 'node:child_process';
 
 export class IdleExecutionWorker {
-  constructor({ serverPath, idleMs = 600_000, env = process.env }) {
+  constructor({ serverPath, idleMs = 1_800_000, env = process.env }) {
     this.serverPath = serverPath;
     this.env = env;
     this.idleMs = idleMs;

@@ -64,7 +64,7 @@ const keys = cfg => Object.keys(cfg.mcpServers ?? {}).sort();
 if (JSON.stringify(keys(restricted)) !== JSON.stringify(['dev'])) process.exit(1);
 if (JSON.stringify(keys(trusted)) !== JSON.stringify(['dev'])) process.exit(1);
 if (JSON.stringify(keys(personal)) !== JSON.stringify(['dev', 'local'])) process.exit(1);
-if (JSON.stringify(keys(personalLocal)) !== JSON.stringify(['browser-devtools', 'browser-fast', 'dev', 'host', 'skill-library', 'terminal'])) process.exit(1);
+if (JSON.stringify(keys(personalLocal)) !== JSON.stringify(['browser-daily', 'browser-devtools', 'browser-fast', 'dev', 'host', 'skill-library', 'terminal'])) process.exit(1);
 if (restricted.mcpServers?.code || trusted.mcpServers?.code) process.exit(1);
 if (restricted.mcpServers?.terminal || trusted.mcpServers?.terminal) process.exit(1);
 if (restricted.mcpServers?.local || trusted.mcpServers?.local) process.exit(1);
@@ -110,8 +110,8 @@ if (!personal.mcpServers.local.args.includes(root + '/providers/local-tools/serv
 if (personal.mcpServers.local.env.MCP_LOCAL_INNER_CONFIG !== personalLocalFile) process.exit(1);
 if (personal.mcpServers.local.env.MCP_LOCAL_ONE_MCP_ENTRY !== undefined) process.exit(1);
 if (personal.mcpServers.local.env.MCP_LOCAL_INNER_IDLE_MS !== '1800000') process.exit(1);
-if (personal.mcpServers.dev.env.MCP_DEV_WORKER_IDLE_MS !== '600000') process.exit(1);
-if (personalLocal.mcpServers.dev.env.MCP_DEV_WORKER_IDLE_MS !== '600000') process.exit(1);
+if (personal.mcpServers.dev.env.MCP_DEV_WORKER_IDLE_MS !== '1800000') process.exit(1);
+if (personalLocal.mcpServers.dev.env.MCP_DEV_WORKER_IDLE_MS !== '1800000') process.exit(1);
 if (personal.mcpServers.local.env.MCP_LOCAL_FALLBACK_ONLY_SERVERS !== 'dev') process.exit(1);
 if (JSON.stringify(personal.mcpServers.local.tags) !== JSON.stringify(['local'])) process.exit(1);
 if (personalLocal.mcpServers['browser-devtools'].command !== 'node') process.exit(1);
@@ -131,7 +131,7 @@ if (personalLocal.mcpServers['browser-fast'].tags !== undefined) process.exit(1)
 if (JSON.stringify(keys(server)) !== JSON.stringify(['dev', 'local'])) process.exit(1);
 if (JSON.stringify(keys(serverLocal)) !== JSON.stringify(['dev', 'skill-library', 'terminal'])) process.exit(1);
 if (server.mcpServers.shell || serverLocal.mcpServers.shell) process.exit(1);
-for (const absent of ['browser-devtools', 'browser-fast', 'host', 'code', 'codedb']) {
+for (const absent of ['browser-daily', 'browser-devtools', 'browser-fast', 'host', 'code', 'codedb']) {
   if (serverLocal.mcpServers[absent] || server.mcpServers[absent]) process.exit(1);
 }
 if (server.mcpServers.dev.env.MCP_DEV_SHELL_MODE !== 'unrestricted') process.exit(1);
@@ -154,8 +154,8 @@ if (serverLocal.mcpServers.dev.tags !== undefined) process.exit(1);
 if (server.mcpServers.local.env.MCP_LOCAL_INNER_CONFIG !== serverLocalFile) process.exit(1);
 if (server.mcpServers.local.env.MCP_LOCAL_ONE_MCP_ENTRY !== undefined) process.exit(1);
 if (server.mcpServers.local.env.MCP_LOCAL_INNER_IDLE_MS !== '1800000') process.exit(1);
-if (server.mcpServers.dev.env.MCP_DEV_WORKER_IDLE_MS !== '600000') process.exit(1);
-if (serverLocal.mcpServers.dev.env.MCP_DEV_WORKER_IDLE_MS !== '600000') process.exit(1);
+if (server.mcpServers.dev.env.MCP_DEV_WORKER_IDLE_MS !== '1800000') process.exit(1);
+if (serverLocal.mcpServers.dev.env.MCP_DEV_WORKER_IDLE_MS !== '1800000') process.exit(1);
 if (!serverEnv.includes("MCP_BRIDGE_PROFILE='server'")) process.exit(1);
 if (!personalEnv.includes("MCP_BRIDGE_PROFILE='personal'")) process.exit(1);
 if (personalLocal.mcpServers['browser-devtools'].requestTimeout !== 180000) process.exit(1);
