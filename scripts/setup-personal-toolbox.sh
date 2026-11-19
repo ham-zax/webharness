@@ -200,10 +200,45 @@ detect_arch_tokens() {
   esac
 }
 
+# Pinned SHA-256 checksums for optional GitHub release assets (x86_64 + aarch64).
+declare -A OPTIONAL_BINARY_SHA256=(
+  ["yq:x86_64"]="129534601871538efe0ba4c5e62a34fb1d5f469bcb975c4fddeb467d82974973"
+  ["yq:aarch64"]="89f69310b61b68d1245065a1241d1fc843f7a36cd6103ffd77ad987613bd1b67"
+  ["pueue:x86_64"]="5bf543b1861a5e5f449e38a5c6902cbcef473dca4d510023c22ec707b7c9307f"
+  ["pueue:aarch64"]="745a34f73719636dbb2b37b44e08c47f011dc46c13e49b84646abf3b88c7d3f5"
+  ["pueued:x86_64"]="de73266add8b61d622bd011a078929a2a788609b7e8511fb07e9162e6977ad7e"
+  ["pueued:aarch64"]="0b93fbd026d8df88010189e4e2f7d300a4f16354a6e4f9b2a81ec4bd072f6797"
+  ["difft:x86_64"]="33ea1f003081e9f2422299a434e6040c89085bd9f102b08f3fe30393720d5d4a"
+  ["difft:aarch64"]="0993a82a6708a24adc6c6b8de366924728ed08f537a5b488940082c8edc79353"
+  ["just:x86_64"]="409044617b6f06517c1035e55ca38c8c856ff8b650e41bc2aa1ef82d5903a23e"
+  ["just:aarch64"]="23871b1702bfd550fb5f901778fd4290ecf2ee034a45a889fbe96d89b188086d"
+  ["scc:x86_64"]="c7328436d3027f4357d3d7853f7dc3ac2bbcb4ca08f1adad91a27c593884079b"
+  ["scc:aarch64"]="6e0d2a1f8d3540ba7df185477dec40bb7340f1b214bfd303147de5cad2bd7b8b"
+  ["hyperfine:x86_64"]="ae2beda2ac99c098427e4f755244552daf20e514422889cca6d44421e2d93c87"
+  ["hyperfine:aarch64"]="f8244d1e17f8da23ee6b3ae2cdc04a6a185a450f6b74e09bff12e498038fcbc9"
+)
+
+verify_sha256() {
+  local file="$1" expected="$2" actual=""
+  if command -v sha256sum >/dev/null 2>&1; then
+    actual="$(sha256sum "$file" | awk '{print $1}')"
+  elif command -v shasum >/dev/null 2>&1; then
+    actual="$(shasum -a 256 "$file" | awk '{print $1}')"
+  else
+    printf 'WARN sha256sum/shasum unavailable; refusing unverified binary download.\n' >&2
+    return 1
+  fi
+  if [ "$actual" != "$expected" ]; then
+    printf 'WARN SHA-256 mismatch for %s (expected %s, got %s).\n' "$file" "$expected" "$actual" >&2
+    return 1
+  fi
+  return 0
+}
+
 install_github_binary_raw() {
-  local name="$1" url="$2" tmp
+  local name="$1" url="$2" expected_sha="$3" tmp
   tmp="$(mktemp -d)"
-  if curl -fsSL "$url" -o "$tmp/$name"; then
+  if curl -fsSL "$url" -o "$tmp/$name" && verify_sha256 "$tmp/$name" "$expected_sha"; then
     install -m 0755 "$tmp/$name" "$USER_PREFIX/bin/$name"
     rm -rf "$tmp"
     return 0
@@ -213,9 +248,11 @@ install_github_binary_raw() {
 }
 
 install_github_binary_tarball() {
-  local name="$1" url="$2" tmp found
+  local name="$1" url="$2" expected_sha="$3" tmp found
   tmp="$(mktemp -d)"
-  if curl -fsSL "$url" | tar -xz -C "$tmp"; then
+  if curl -fsSL "$url" -o "$tmp/archive.tar.gz" && \
+     verify_sha256 "$tmp/archive.tar.gz" "$expected_sha" && \
+     tar -xzf "$tmp/archive.tar.gz" -C "$tmp"; then
     found="$(find "$tmp" -type f -name "$name" | head -n 1 || true)"
     if [ -n "$found" ]; then
       install -m 0755 "$found" "$USER_PREFIX/bin/$name"
@@ -228,9 +265,14 @@ install_github_binary_tarball() {
 }
 
 install_optional_binary() {
-  local name="$1" url="" kind=""
+  local name="$1" url="" kind="" expected_sha=""
   if ! detect_arch_tokens; then
     printf 'WARN optional %s skipped (unsupported architecture %s).\n' "$name" "${PERSONAL_TOOLBOX_ARCH:-$(uname -m)}" >&2
+    return 0
+  fi
+  expected_sha="${OPTIONAL_BINARY_SHA256["${name}:${ARCH_RUST}"]:-}"
+  if [ -z "$expected_sha" ]; then
+    printf 'WARN optional %s skipped (no pinned SHA-256 for %s).\n' "$name" "$ARCH_RUST" >&2
     return 0
   fi
   case "$name" in
@@ -264,7 +306,7 @@ install_optional_binary() {
   esac
 
   if [ "$DRY_RUN" -eq 1 ]; then
-    printf 'PLAN optional %s | %s -> %s/bin/%s\n' "$name" "$url" "$USER_PREFIX" "$name"
+    printf 'PLAN optional %s | %s (sha256:%s) -> %s/bin/%s\n' "$name" "$url" "$expected_sha" "$USER_PREFIX" "$name"
     return 0
   fi
 
@@ -273,11 +315,11 @@ install_optional_binary() {
     return 0
   fi
   if [ "$kind" = "raw" ]; then
-    if ! install_github_binary_raw "$name" "$url"; then
+    if ! install_github_binary_raw "$name" "$url" "$expected_sha"; then
       printf 'WARN optional %s install failed from %s (continuing).\n' "$name" "$url" >&2
     fi
   else
-    if ! install_github_binary_tarball "$name" "$url"; then
+    if ! install_github_binary_tarball "$name" "$url" "$expected_sha"; then
       printf 'WARN optional %s install failed from %s (continuing).\n' "$name" "$url" >&2
     fi
   fi
@@ -300,7 +342,7 @@ if [ "$need_ast_grep" -eq 1 ]; then
 fi
 
 if [ "$need_mcp_inspector" -eq 1 ] && [ "$DRY_RUN" -eq 1 ]; then
-  printf 'PLAN optional mcp-inspector | npm install --global --prefix %s @modelcontextprotocol/inspector@%s\n' "$USER_PREFIX" "$MCP_INSPECTOR_VERSION"
+  printf 'PLAN optional mcp-inspector | npm install --global --prefix %s --ignore-scripts @modelcontextprotocol/inspector@%s\n' "$USER_PREFIX" "$MCP_INSPECTOR_VERSION"
 fi
 
 if [ "${#APT_PACKAGES[@]}" -gt 0 ]; then
@@ -310,7 +352,7 @@ if [ "${#APT_PACKAGES[@]}" -gt 0 ]; then
 fi
 
 if [ "${#OPTIONAL_APT_PACKAGES[@]}" -gt 0 ]; then
-  printf 'PLAN optional-apt | sudo apt-get install -y --no-install-recommends'
+  printf 'PLAN optional-apt | DEBIAN_FRONTEND=noninteractive sudo -n apt-get install -y --no-install-recommends'
   printf ' %s' "${OPTIONAL_APT_PACKAGES[@]}"
   printf '\n'
 fi
@@ -342,14 +384,14 @@ if [ "${#APT_PACKAGES[@]}" -gt 0 ]; then
 fi
 
 if [ "${#OPTIONAL_APT_PACKAGES[@]}" -gt 0 ]; then
-  if command -v sudo >/dev/null 2>&1 && command -v apt-get >/dev/null 2>&1; then
+  if command -v sudo >/dev/null 2>&1 && command -v apt-get >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
     if [ "$apt_updated" -eq 0 ]; then
-      sudo apt-get update || true
+      DEBIAN_FRONTEND=noninteractive sudo -n apt-get update || true
     fi
-    sudo apt-get install -y --no-install-recommends "${OPTIONAL_APT_PACKAGES[@]}" || \
+    DEBIAN_FRONTEND=noninteractive sudo -n apt-get install -y --no-install-recommends "${OPTIONAL_APT_PACKAGES[@]}" || \
       printf 'WARN optional apt packages failed (%s); continuing.\n' "${OPTIONAL_APT_PACKAGES[*]}" >&2
   else
-    printf 'WARN optional apt packages skipped (sudo/apt-get unavailable): %s\n' "${OPTIONAL_APT_PACKAGES[*]}" >&2
+    printf 'WARN optional apt packages skipped (non-interactive sudo/apt-get unavailable): %s\n' "${OPTIONAL_APT_PACKAGES[*]}" >&2
   fi
 fi
 
@@ -401,7 +443,7 @@ done
 
 if [ "$need_mcp_inspector" -eq 1 ]; then
   if command -v npm >/dev/null 2>&1; then
-    npm install --global --prefix "$USER_PREFIX" "@modelcontextprotocol/inspector@$MCP_INSPECTOR_VERSION" || \
+    npm install --global --prefix "$USER_PREFIX" --ignore-scripts "@modelcontextprotocol/inspector@$MCP_INSPECTOR_VERSION" || \
       printf 'WARN optional mcp-inspector install failed; continuing.\n' >&2
   else
     printf 'WARN optional mcp-inspector skipped (npm not found).\n' >&2

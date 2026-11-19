@@ -285,12 +285,14 @@ test_setup_headless_dry_run_plans_arm64_optional_accelerators() {
     capture "$out" bash "$SETUP" --headless --dry-run
   rc=$?
   if [ "$rc" -ne 0 ] ||
-     ! contains "$out" 'PLAN optional pueue | https://github.com/Nukesor/pueue/releases/download/v4.0.5/pueue-aarch64-unknown-linux-musl' ||
-     ! contains "$out" 'PLAN optional difft | https://github.com/Wilfred/difftastic/releases/download/0.72.0/difft-0.72.0-aarch64-unknown-linux-gnu.tar.gz' ||
-     ! contains "$out" 'PLAN optional scc | https://github.com/boyter/scc/releases/download/v4.1.0/scc_Linux_arm64.tar.gz' ||
-     ! contains "$out" 'PLAN optional yq | https://github.com/mikefarah/yq/releases/download/v4.54.3/yq_linux_arm64' ||
-     ! contains "$out" 'PLAN optional just | https://github.com/casey/just/releases/download/1.59.0/just-1.59.0-aarch64-unknown-linux-musl.tar.gz' ||
-     ! contains "$out" 'PLAN optional mcp-inspector | npm install --global'; then
+     ! contains "$out" 'PLAN optional pueue | https://github.com/Nukesor/pueue/releases/download/v4.0.5/pueue-aarch64-unknown-linux-musl (sha256:' ||
+     ! contains "$out" 'PLAN optional difft | https://github.com/Wilfred/difftastic/releases/download/0.72.0/difft-0.72.0-aarch64-unknown-linux-gnu.tar.gz (sha256:' ||
+     ! contains "$out" 'PLAN optional scc | https://github.com/boyter/scc/releases/download/v4.1.0/scc_Linux_arm64.tar.gz (sha256:' ||
+     ! contains "$out" 'PLAN optional yq | https://github.com/mikefarah/yq/releases/download/v4.54.3/yq_linux_arm64 (sha256:' ||
+     ! contains "$out" 'PLAN optional just | https://github.com/casey/just/releases/download/1.59.0/just-1.59.0-aarch64-unknown-linux-musl.tar.gz (sha256:' ||
+     ! contains "$out" 'PLAN optional-apt | DEBIAN_FRONTEND=noninteractive sudo -n apt-get install -y --no-install-recommends fd-find' ||
+     ! contains "$out" 'PLAN optional mcp-inspector | npm install --global --prefix' ||
+     ! contains "$out" '--ignore-scripts @modelcontextprotocol/inspector@'; then
     cat "$out"
     rm -rf "$tmp"
     return 1
