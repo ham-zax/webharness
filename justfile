@@ -89,13 +89,13 @@ loc:
     fi
 
 # Probe local-tools MCP stdio server with official MCP Inspector CLI.
-inspect-local METHOD="tools/list" *ARGS:
+inspect-local METHOD="tools/list" *ARGS="":
     @mcp-inspector --cli \
       -e "MCP_LOCAL_INNER_CONFIG=${HOME}/.local/state/mcp-dev-bridge/local-1mcp/mcp.json" \
       --method {{METHOD}} {{ARGS}} node providers/local-tools/server.mjs
 
 # Probe pi-dev MCP stdio server with official MCP Inspector CLI.
-inspect-dev METHOD="tools/list" *ARGS:
+inspect-dev METHOD="tools/list" *ARGS="":
     @mcp-inspector --cli \
       -e MCP_DEV_SHELL_MODE=unrestricted \
       -e MCP_DEV_PATH_MODE=user \
@@ -105,7 +105,7 @@ inspect-dev METHOD="tools/list" *ARGS:
       --method {{METHOD}} {{ARGS}} node providers/pi-dev/server.mjs
 
 # Probe live local WebHarness HTTP MCP endpoint (pass extra --header args if auth required).
-inspect-mcp METHOD="tools/list" *ARGS:
+inspect-mcp METHOD="tools/list" *ARGS="":
     mcp-inspector --cli --transport http --method {{METHOD}} {{ARGS}} http://127.0.0.1:43050/mcp
 
 # Check personal CLI toolbox qualification.
