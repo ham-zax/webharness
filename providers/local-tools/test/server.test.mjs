@@ -8,7 +8,7 @@ import {
   BROKER_TOOL_NAMES,
   DEFAULT_INNER_IDLE_MS,
   DirectLocalServerPool,
-  LazyInner1Mcp,
+  LazyIdleSupervisor,
   LocalDiagnosticLogger,
   LocalToolBroker,
   MAX_LIST_LIMIT,
@@ -57,25 +57,40 @@ test('stale 1MCP ownership is reclaimed without disturbing a matching runtime', 
   assert.equal((await fs.stat(ownerDir)).isDirectory(), true);
 });
 
-function fakeInner({ pages, callResult = { content: [{ type: 'text', text: 'ok' }] }, callHandler }) {
+function fakeInner({
+  pages,
+  callResult = { content: [{ type: 'text', text: 'ok' }] },
+  callHandler,
+  restartHandler,
+  isLive = () => true,
+  state = 'unknown',
+}) {
   const listCalls = [];
   const callCalls = [];
+  const restartCalls = [];
   let closed = false;
   return {
     listCalls,
     callCalls,
+    restartCalls,
     get closed() { return closed; },
-    async listTools(cursor) {
-      listCalls.push(cursor);
+    serverState: () => state,
+    isServerLive: server => (typeof isLive === 'function' ? isLive(server) : Boolean(isLive)),
+    async listServerTools(server, cursor) {
+      listCalls.push({ server, cursor });
       const key = cursor ?? 'FIRST';
-      const page = typeof pages === 'function' ? pages(key) : pages[key];
+      const page = typeof pages === 'function' ? pages(server, key) : pages[key];
       if (page instanceof Error) throw page;
       return structuredClone(page ?? { tools: [] });
     },
-    async callTool(name, args, signal) {
-      callCalls.push({ name, args });
-      if (callHandler) return callHandler(name, args, signal);
+    async callServerTool(server, tool, args, signal) {
+      callCalls.push({ server, tool, args });
+      if (callHandler) return callHandler(server, tool, args, signal);
       return callResult;
+    },
+    async restartServer(server, opts) {
+      restartCalls.push({ server, opts });
+      if (restartHandler) return restartHandler(server, opts);
     },
     async close() { closed = true; }
   };
@@ -201,9 +216,8 @@ test('tool_list without server discovers logical servers and filters only server
   const inner = fakeInner({ pages: {
     FIRST: {
       tools: [
-        { name: '1mcp_1mcp_mcp_reload', description: 'private recovery tool' },
-        { name: 'browser-devtools_1mcp_take_heapsnapshot', description: 'analyze browser memory distribution' },
-        { name: 'repo-search_1mcp_search_codebase', description: 'semantic repository search' }
+        { name: 'take_heapsnapshot', description: 'analyze browser memory distribution' },
+        { name: 'search_codebase', description: 'semantic repository search' }
       ]
     }
   } });
@@ -230,17 +244,16 @@ test('tool_list without server discovers logical servers and filters only server
 test('scoped discovery coalesces targeted recovery for a configured missing server', async t => {
   const configPath = await configFile(t, ['codebase-memory-mcp']);
   let recovered = false;
-  let reloads = 0;
+  let restarts = 0;
   const inner = fakeInner({
     pages: () => ({
-      tools: recovered ? [{ name: 'codebase-memory-mcp_1mcp_list_projects', description: 'list indexed projects' }] : []
+      tools: recovered ? [{ name: 'list_projects', description: 'list indexed projects' }] : []
     }),
-    callHandler: async (name) => {
-      assert.equal(name, '1mcp_1mcp_mcp_reload');
-      reloads += 1;
+    restartHandler: async (server) => {
+      assert.equal(server, 'codebase-memory-mcp');
+      restarts += 1;
       await new Promise(resolve => setTimeout(resolve, 10));
       recovered = true;
-      return { structuredContent: { status: 'success' }, content: [{ type: 'text', text: 'reloaded' }] };
     }
   });
   const broker = new LocalToolBroker({ inner, configPath, recovery: { pollMs: 5, timeoutMs: 400 } });
@@ -249,7 +262,7 @@ test('scoped discovery coalesces targeted recovery for a configured missing serv
     broker.list({ server: 'codebase-memory-mcp' }),
     broker.list({ server: 'codebase-memory-mcp' })
   ]);
-  assert.equal(reloads, 1);
+  assert.equal(restarts, 1);
   assert.deepEqual(first.tools.map(tool => tool.tool), ['list_projects']);
   assert.deepEqual(second.tools.map(tool => tool.tool), ['list_projects']);
 });
@@ -259,14 +272,15 @@ test('failed direct call may recover an absent server but never auto-replays the
   let recovered = false;
   let targetCalls = 0;
   const inner = fakeInner({
+    isLive: () => recovered,
     pages: () => ({
-      tools: recovered ? [{ name: 'codebase-memory-mcp_1mcp_list_projects', description: 'list indexed projects' }] : []
+      tools: recovered ? [{ name: 'list_projects', description: 'list indexed projects' }] : []
     }),
-    callHandler: async (name) => {
-      if (name === '1mcp_1mcp_mcp_reload') {
-        recovered = true;
-        return { structuredContent: { status: 'success' }, content: [{ type: 'text', text: 'reloaded' }] };
-      }
+    restartHandler: async (server) => {
+      assert.equal(server, 'codebase-memory-mcp');
+      recovered = true;
+    },
+    callHandler: async (_server, _tool) => {
       targetCalls += 1;
       if (!recovered) throw new Error('Error calling tool');
       return { content: [{ type: 'text', text: 'ok' }] };
@@ -295,38 +309,37 @@ test('recovery budget exceeds the measured cold browser boot time', () => {
 
 test('recovery polls a slow backend instead of reporting it unavailable', async t => {
   const configPath = await configFile(t, ['browser-devtools']);
-  let reloaded = false;
-  let listingsAfterReload = 0;
-  let reloadTimeout;
+  let restarted = false;
+  let listingsAfterRestart = 0;
+  let restartTimeout;
   const inner = fakeInner({
     pages: () => {
-      if (!reloaded) return { tools: [] };
-      listingsAfterReload += 1;
+      if (!restarted) return { tools: [] };
+      listingsAfterRestart += 1;
       // A cold backend registers no tools until its third listing.
       return {
-        tools: listingsAfterReload >= 3 ? [{ name: 'browser-devtools_1mcp_take_screenshot', description: 'shot' }] : []
+        tools: listingsAfterRestart >= 3 ? [{ name: 'take_screenshot', description: 'shot' }] : []
       };
     },
-    callHandler: async (name, args) => {
-      assert.equal(name, '1mcp_1mcp_mcp_reload');
-      reloadTimeout = args.timeout;
-      reloaded = true;
-      return { structuredContent: { status: 'success' }, content: [{ type: 'text', text: 'reloaded' }] };
+    restartHandler: async (server, opts) => {
+      assert.equal(server, 'browser-devtools');
+      restartTimeout = opts.timeoutMs;
+      restarted = true;
     }
   });
   const broker = new LocalToolBroker({ inner, configPath, recovery: { pollMs: 5, timeoutMs: 2_000 } });
 
   const listed = await broker.list({ server: 'browser-devtools' });
   assert.deepEqual(listed.tools.map(tool => tool.tool), ['take_screenshot']);
-  assert.ok(listingsAfterReload >= 3, 'the broker must re-check until the backend registers its tools');
-  assert.equal(reloadTimeout, broker.recoveryTimeoutMs, 'the inner reload must receive the recovery budget');
+  assert.ok(listingsAfterRestart >= 3, 'the broker must re-check until the backend registers its tools');
+  assert.equal(restartTimeout, broker.recoveryTimeoutMs, 'restartServer must receive the recovery budget');
 });
 
 test('recovery reports the waited time when a backend never registers tools', async t => {
   const configPath = await configFile(t, ['codebase-memory-mcp']);
   const inner = fakeInner({
     pages: () => ({ tools: [] }),
-    callHandler: async () => ({ structuredContent: { status: 'success' }, content: [{ type: 'text', text: 'reloaded' }] })
+    restartHandler: async () => {}
   });
   const broker = new LocalToolBroker({ inner, configPath, recovery: { pollMs: 5, timeoutMs: 60 } });
 
@@ -341,18 +354,16 @@ test('tool_list is bounded, lightweight, resumable without a page cache, and fil
   const inner = fakeInner({ pages: {
     FIRST: {
       tools: [
-        { name: '1mcp_1mcp_tool_search', description: 'internal', inputSchema: { type: 'object' } },
-        { name: 'browser_1mcp_alpha', title: 'Alpha', description: 'network alpha', inputSchema: { type: 'object', properties: { secret: { type: 'string' } } } },
-        { name: 'browser_1mcp_beta', description: 'network beta', annotations: { readOnlyHint: true }, inputSchema: { type: 'object' } },
-        { name: 'future_1mcp_gamma', description: 'future provider', inputSchema: { type: 'object' } },
-        { name: 'browser_1mcp_delta', description: 'network delta', inputSchema: { type: 'object' } }
+        { name: 'alpha', title: 'Alpha', description: 'network alpha', inputSchema: { type: 'object', properties: { secret: { type: 'string' } } } },
+        { name: 'beta', description: 'network beta', annotations: { readOnlyHint: true }, inputSchema: { type: 'object' } },
+        { name: 'delta', description: 'network delta', inputSchema: { type: 'object' } }
       ],
       nextCursor: 'P2'
     },
     P2: {
       tools: [
-        { name: 'browser_1mcp_epsilon', description: 'network epsilon', inputSchema: { type: 'object' } },
-        { name: 'browser_1mcp_tool_1mcp_suffix', description: 'network separator tool', inputSchema: { type: 'object' } }
+        { name: 'epsilon', description: 'network epsilon', inputSchema: { type: 'object' } },
+        { name: 'tool_1mcp_suffix', description: 'network separator tool', inputSchema: { type: 'object' } }
       ]
     }
   } });
@@ -364,12 +375,14 @@ test('tool_list is bounded, lightweight, resumable without a page cache, and fil
   assert.equal(typeof first.nextCursor, 'string');
   assert.ok(first.tools.every(tool => tool.inputSchema === undefined));
   assert.ok(first.tools.every(tool => tool.server === 'browser'));
-  assert.ok(first.tools.every(tool => tool.tool !== '1mcp_tool_search'));
 
   const second = await broker.list({ server: 'browser', query: 'network', limit: MAX_LIST_LIMIT, cursor: first.nextCursor });
   assert.deepEqual(second.tools.map(tool => tool.tool), ['delta', 'epsilon', 'tool_1mcp_suffix']);
   assert.equal(second.hasMore, false);
-  assert.deepEqual(inner.listCalls.slice(0, 2), [undefined, undefined]);
+  assert.deepEqual(inner.listCalls.slice(0, 2), [
+    { server: 'browser', cursor: undefined },
+    { server: 'browser', cursor: undefined }
+  ]);
 
   await assert.rejects(
     () => broker.list({ server: 'browser', query: 'different', cursor: first.nextCursor }),
@@ -381,7 +394,7 @@ test('tool_schema reads current inner catalog state and preserves a separator in
   const configPath = await configFile(t);
   let description = 'first';
   const inner = fakeInner({ pages: () => ({ tools: [{
-    name: 'browser_1mcp_tool_1mcp_suffix',
+    name: 'tool_1mcp_suffix',
     description,
     annotations: { readOnlyHint: true },
     inputSchema: { type: 'object', properties: { browser_target: { type: 'string' } } },
@@ -431,7 +444,8 @@ test('tool_call validates only routing fields and returns downstream rich result
   });
   assert.strictEqual(result, image);
   assert.deepEqual(inner.callCalls, [{
-    name: 'browser_1mcp_take_screenshot',
+    server: 'browser',
+    tool: 'take_screenshot',
     args: { browser_target: 'linux', format: 'png' }
   }]);
   assert.equal(inner.listCalls.length, 0);
@@ -451,8 +465,8 @@ test('tool_batch preflights all entries, bounds concurrency, preserves order, an
   let active = 0;
   let maxActive = 0;
   const inner = fakeInner({
-    pages: { FIRST: { tools: [{ name: 'browser_1mcp_observe', description: 'fixture' }] } },
-    callHandler: async (_name, args) => {
+    pages: { FIRST: { tools: [{ name: 'observe', description: 'fixture' }] } },
+    callHandler: async (_server, _tool, args) => {
       active += 1;
       maxActive = Math.max(maxActive, active);
       try {
@@ -500,8 +514,8 @@ test('tool_batch cancellation stops queued dispatches', async t => {
   let dispatches = 0;
   let completed = 0;
   const inner = fakeInner({
-    pages: { FIRST: { tools: [{ name: 'browser_1mcp_observe', description: 'fixture' }] } },
-    callHandler: async (_name, _args, signal) => {
+    pages: { FIRST: { tools: [{ name: 'observe', description: 'fixture' }] } },
+    callHandler: async (_server, _tool, _args, signal) => {
       dispatches += 1;
       return new Promise((resolve, reject) => {
         const timer = setTimeout(() => {
@@ -594,7 +608,7 @@ test('inner idle timeout parsing defaults and validates', () => {
 
 test('lazy inner does not start until the first operation and shares one start', async () => {
   const { created, start } = fakeInnerFactory();
-  const lazy = new LazyInner1Mcp({ start, idleMs: 0 });
+  const lazy = new LazyIdleSupervisor({ start, idleMs: 0 });
   assert.equal(created.length, 0);
   await Promise.all([lazy.listTools(), lazy.callTool('a_1mcp_b', {}), lazy.listTools('c')]);
   assert.equal(created.length, 1);
@@ -606,7 +620,7 @@ test('lazy inner does not start until the first operation and shares one start',
 test('lazy inner retries after a failed start', async () => {
   let attempts = 0;
   const { created, start } = fakeInnerFactory();
-  const lazy = new LazyInner1Mcp({
+  const lazy = new LazyIdleSupervisor({
     idleMs: 0,
     start: async () => {
       attempts += 1;
@@ -623,7 +637,7 @@ test('lazy inner retries after a failed start', async () => {
 
 test('lazy inner closes after the idle timeout and restarts on the next call', async () => {
   const { created, start } = fakeInnerFactory();
-  const lazy = new LazyInner1Mcp({ start, idleMs: 30 });
+  const lazy = new LazyIdleSupervisor({ start, idleMs: 30 });
   await lazy.listTools();
   assert.equal(created[0].closeCount, 0);
   await sleep(120);
@@ -637,7 +651,7 @@ test('lazy inner closes after the idle timeout and restarts on the next call', a
 
 test('lazy inner never closes while an operation is in flight', async () => {
   const { created, start } = fakeInnerFactory();
-  const lazy = new LazyInner1Mcp({ start, idleMs: 20 });
+  const lazy = new LazyIdleSupervisor({ start, idleMs: 20 });
   await lazy.listTools();
   let release;
   created[0].hold = new Promise(resolve => { release = resolve; });
@@ -653,7 +667,7 @@ test('lazy inner never closes while an operation is in flight', async () => {
 
 test('lazy inner starts a fresh inner after the peer died', async () => {
   const { created, start } = fakeInnerFactory();
-  const lazy = new LazyInner1Mcp({ start, idleMs: 0 });
+  const lazy = new LazyIdleSupervisor({ start, idleMs: 0 });
   await lazy.listTools();
   created[0].alive = false;
   await Promise.all([lazy.listTools(), lazy.listTools()]);
@@ -664,7 +678,7 @@ test('lazy inner starts a fresh inner after the peer died', async () => {
 
 test('lazy inner with idleMs 0 never idle-stops', async () => {
   const { created, start } = fakeInnerFactory();
-  const lazy = new LazyInner1Mcp({ start, idleMs: 0 });
+  const lazy = new LazyIdleSupervisor({ start, idleMs: 0 });
   await lazy.listTools();
   await sleep(80);
   assert.equal(created[0].closeCount, 0);
@@ -674,7 +688,7 @@ test('lazy inner with idleMs 0 never idle-stops', async () => {
 
 test('lazy inner close is idempotent, cancels the timer, and rejects later calls', async () => {
   const { created, start } = fakeInnerFactory();
-  const lazy = new LazyInner1Mcp({ start, idleMs: 20 });
+  const lazy = new LazyIdleSupervisor({ start, idleMs: 20 });
   await lazy.listTools();
   await lazy.close();
   await lazy.close();
@@ -691,7 +705,7 @@ test('lazy inner close waits for a pending start and closes the started inner', 
   const { created, start } = fakeInnerFactory();
   let release;
   const gate = new Promise(resolve => { release = resolve; });
-  const lazy = new LazyInner1Mcp({ idleMs: 0, start: async () => { await gate; return start(); } });
+  const lazy = new LazyIdleSupervisor({ idleMs: 0, start: async () => { await gate; return start(); } });
   const pending = lazy.listTools();
   const rejected = assert.rejects(pending, { code: 'INNER_UNAVAILABLE' });
   const closing = lazy.close();
@@ -706,7 +720,7 @@ test('concurrent lazy inner close calls both wait for in-flight eviction', async
   let releaseClose;
   const closeGate = new Promise(resolve => { releaseClose = resolve; });
   let closeFinished = false;
-  const lazy = new LazyInner1Mcp({
+  const lazy = new LazyIdleSupervisor({
     idleMs: 0,
     start: async () => ({
       alive: true,
@@ -729,8 +743,15 @@ test('concurrent lazy inner close calls both wait for in-flight eviction', async
 
 test('broker works through the lazy inner wrapper without starting it on construction', async t => {
   const { created, start } = fakeInnerFactory();
-  const lazy = new LazyInner1Mcp({ start, idleMs: 0 });
-  const broker = new LocalToolBroker({ inner: lazy, configPath: await configFile(t) });
+  const lazy = new LazyIdleSupervisor({ start, idleMs: 0 });
+  const pool = {
+    serverState: () => lazy.state,
+    isServerLive: () => lazy.state === 'running',
+    listServerTools: (_server, cursor, options) => lazy.listTools(cursor, options),
+    callServerTool: (_server, tool, args, signal) => lazy.callTool(tool, args, signal),
+    close: () => lazy.close(),
+  };
+  const broker = new LocalToolBroker({ inner: pool, configPath: await configFile(t) });
   assert.equal(created.length, 0);
   const discovery = await broker.list({});
   assert.equal(created.length, 0);
@@ -744,7 +765,12 @@ test('broker works through the lazy inner wrapper without starting it on constru
 
 test('unscoped discovery paginates and filters without touching a sleeping backend', async t => {
   const configPath = await configFile(t, ['alpha', 'beta', 'gamma', 'dev']);
-  const inner = { state: 'asleep', async listTools() { throw new Error('must stay asleep'); }, async callTool() {}, async close() {} };
+  const inner = {
+    serverState: () => 'asleep',
+    async listServerTools() { throw new Error('must stay asleep'); },
+    async callServerTool() {},
+    async close() {},
+  };
   const broker = new LocalToolBroker({ inner, configPath, fallbackOnlyServers: ['dev'] });
   const first = await broker.list({ limit: 1 });
   assert.deepEqual(first.servers.map(item => item.server), ['alpha']);
@@ -759,7 +785,7 @@ test('unscoped discovery paginates and filters without touching a sleeping backe
 test('idle inner stays alive while a background lease pins it', async () => {
   const { created, start } = fakeInnerFactory();
   let pinned = true;
-  const lazy = new LazyInner1Mcp({ start, idleMs: 15, isPinned: async () => pinned });
+  const lazy = new LazyIdleSupervisor({ start, idleMs: 15, isPinned: async () => pinned });
   await lazy.listTools();
   await new Promise(resolve => setTimeout(resolve, 65));
   assert.equal(created[0].closeCount, 0);
@@ -776,7 +802,7 @@ test('runtime lease file protects the inner until its owner releases it', async 
   const lease = await acquireRuntimeLease({ directory, kind: 'jev-run' });
   t.after(() => lease.close());
   const { created, start } = fakeInnerFactory();
-  const lazy = new LazyInner1Mcp({ start, idleMs: 15, isPinned: () => hasActiveRuntimeLeases(directory) });
+  const lazy = new LazyIdleSupervisor({ start, idleMs: 15, isPinned: () => hasActiveRuntimeLeases(directory) });
   t.after(() => lazy.close());
   await lazy.listTools();
   await new Promise(resolve => setTimeout(resolve, 65));
@@ -792,17 +818,17 @@ test('tool_list shows parameter names with required ones starred, and omits para
     FIRST: {
       tools: [
         {
-          name: 'terminal_1mcp_terminal_read',
+          name: 'terminal_read',
           description: 'read terminal output',
           inputSchema: { type: 'object', properties: { name: { type: 'string' }, max_bytes: { type: 'number' } }, required: ['name'] }
         },
         {
-          name: 'terminal_1mcp_terminal_open',
+          name: 'terminal_open',
           description: 'open a terminal',
           inputSchema: { type: 'object', properties: { command: { type: 'string' }, name: { type: 'string' } } }
         },
-        { name: 'terminal_1mcp_terminal_list', description: 'list terminals', inputSchema: { type: 'object', properties: {} } },
-        { name: 'terminal_1mcp_terminal_noschema', description: 'no schema at all' }
+        { name: 'terminal_list', description: 'list terminals', inputSchema: { type: 'object', properties: {} } },
+        { name: 'terminal_noschema', description: 'no schema at all' }
       ]
     }
   } });
@@ -1028,6 +1054,8 @@ test('fallback_dispatch reaches every Dev operation and ordinary Local routes', 
     },
   });
   assert.notEqual(batchLocal.isError, true);
+  assert.equal(batchLocal.content.length, 1);
+  assert.match(batchLocal.content[0].text, /call 0 \(a\): fulfilled\nalpha:one\ncall 1 \(b\): fulfilled\nalpha:two/);
   assert.deepEqual(batchLocal.structuredContent.results.map(r => r.result.content[0].text), ['alpha:one', 'alpha:two']);
 
   const ambiguous = await client.callTool({
@@ -1503,8 +1531,6 @@ test('local broker explains live field-level schema_input_invalid violations for
       }
       return { isError: true, content: [{ type: 'text', text: 'schema_input_invalid' }] };
     },
-    listTools: async () => ({ tools: [] }),
-    callTool: async () => ({ content: [] }),
     isServerLive: () => true,
     close: async () => {},
   };
@@ -1562,8 +1588,6 @@ test('_lookupSchemaViolation aborts promptly on caller signal and never wakes de
     }),
     listServerTools: async s => { if (s === 'dead') wokeDead = true; return { tools: [{ name: 'op' }] }; },
     callServerTool: async () => ({ content: [] }),
-    listTools: async () => ({ tools: [] }),
-    callTool: async () => ({ content: [] }),
     close: async () => {},
   };
   const broker = new LocalToolBroker({ inner, configPath });
@@ -1595,4 +1619,63 @@ test('_lookupSchemaViolation aborts promptly on caller signal and never wakes de
   );
   assert.equal(seqOne.sequential, true);
   assert.equal(seqOne.results[0].status, 'fulfilled');
+});
+
+test('batchResult coalesces consecutive plain text blocks while preserving non-plain blocks, empty content, and immutability', async t => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'local-batch-coalesce-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const configPath = path.join(dir, 'inner.json');
+  await fs.writeFile(configPath, JSON.stringify({ mcpServers: { media: { command: process.execPath } } }));
+
+  const img = { type: 'image', data: 'cG5n', mimeType: 'image/png' };
+  const annotated = { type: 'text', text: 'note', annotations: { audience: ['user'] } };
+  const inner = {
+    isServerLive: () => true,
+    listServerTools: async () => ({ tools: [{ name: 'op' }] }),
+    callServerTool: async (_server, _tool, args) => {
+      if (args.kind === 'img') return { content: [{ type: 'text', text: 'before-img' }, img, { type: 'text', text: 'after-img' }] };
+      if (args.kind === 'annotated') return { content: [annotated] };
+      if (args.kind === 'empty') return { content: [] };
+      return { content: [{ type: 'text', text: `res:${args.kind}` }] };
+    },
+    close: async () => {},
+  };
+  const broker = new LocalToolBroker({ inner, configPath });
+  const server = createLocalBrokerServer({ broker });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const client = new Client({ name: 'batch-coalesce-test', version: '1.0.0' });
+  t.after(async () => {
+    await client.close();
+    await server.close();
+    await broker.shutdown();
+  });
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+
+  const res = await client.callTool({
+    name: 'fallback_dispatch',
+    arguments: {
+      server: 'media',
+      tool: 'op',
+      calls: [
+        { id: 't1', arguments: { kind: 'one' } },
+        { id: 'e1', arguments: { kind: 'empty' } },
+        { id: 'm1', arguments: { kind: 'img' } },
+        { id: 'a1', arguments: { kind: 'annotated' } },
+        { id: 't2', arguments: { kind: 'two' } },
+      ],
+    },
+  });
+  assert.equal(res.isError, undefined);
+  assert.equal(res.content.length, 5);
+  assert.equal(res.content[0].type, 'text');
+  assert.equal(res.content[0].text, 'call 0 (t1): fulfilled\nres:one\ncall 1 (e1): fulfilled\ncall 2 (m1): fulfilled\nbefore-img');
+  assert.deepEqual(res.content[1], img);
+  assert.equal(res.content[2].type, 'text');
+  assert.equal(res.content[2].text, 'after-img\ncall 3 (a1): fulfilled');
+  assert.deepEqual(res.content[3], annotated);
+  assert.equal(res.content[4].type, 'text');
+  assert.equal(res.content[4].text, 'call 4 (t2): fulfilled\nres:two');
+  assert.deepEqual(res.structuredContent.results[0].result.content, [{ type: 'text', text: 'res:one' }]);
+  assert.deepEqual(res.structuredContent.results[1].result.content, []);
 });

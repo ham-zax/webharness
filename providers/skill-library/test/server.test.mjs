@@ -8,7 +8,7 @@ import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 import { createSkillServer, DEFAULT_POLICY } from '../server.mjs';
 import { SkillLibrary } from '../library.mjs';
-import { INNER_TOOL_SEPARATOR, LocalToolBroker, createLocalBrokerServer } from '../../local-tools/server.mjs';
+import { LocalToolBroker, createLocalBrokerServer } from '../../local-tools/server.mjs';
 
 const serverPath = fileURLToPath(new URL('../server.mjs', import.meta.url));
 
@@ -71,12 +71,16 @@ test('Local maintains its five-tool ABI and routes skill discovery, schema and r
   await skillServer.connect(innerServerTransport);
   await innerClient.connect(innerClientTransport);
   const inner = {
-    state: 'running',
-    async listTools() {
-      const { tools } = await innerClient.listTools();
-      return { tools: tools.map(tool => ({ ...tool, name: `skill-library${INNER_TOOL_SEPARATOR}${tool.name}` })) };
+    serverState: () => 'running',
+    isServerLive: () => true,
+    async listServerTools(server) {
+      assert.equal(server, 'skill-library');
+      return innerClient.listTools();
     },
-    async callTool(name, args) { return innerClient.callTool({ name: name.slice(`skill-library${INNER_TOOL_SEPARATOR}`.length), arguments: args }); },
+    async callServerTool(server, tool, args) {
+      assert.equal(server, 'skill-library');
+      return innerClient.callTool({ name: tool, arguments: args });
+    },
     async close() { await innerClient.close(); await skillServer.close(); },
   };
   const broker = new LocalToolBroker({ configPath, inner });
