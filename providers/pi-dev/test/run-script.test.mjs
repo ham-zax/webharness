@@ -134,7 +134,10 @@ test('nested calls dispatch the parsed value, not the raw arguments', async () =
 test('withDefaultCwd seeds the base directory into nested call arguments', () => {
   const base = '/work/project';
   assert.deepEqual(withDefaultCwd('bash', { command: 'pwd' }, base), { command: 'pwd', cwd: base });
+  assert.deepEqual(withDefaultCwd('bash', { command: 'pwd', cwd: '.' }, base), { command: 'pwd', cwd: base });
+  assert.deepEqual(withDefaultCwd('exec', { argv: ['ls'], cwd: 'sub' }, base), { argv: ['ls'], cwd: '/work/project/sub' });
   assert.deepEqual(withDefaultCwd('bash', { command: 'pwd', cwd: '/elsewhere' }, base), { command: 'pwd', cwd: '/elsewhere' });
+  assert.deepEqual(withDefaultCwd('bash', { command: 'pwd', cwd: '~/other' }, base), { command: 'pwd', cwd: '~/other' });
   assert.deepEqual(withDefaultCwd('read', { path: 'a.txt' }, base), { path: '/work/project/a.txt' });
   assert.deepEqual(withDefaultCwd('read', { path: '/etc/hosts' }, base), { path: '/etc/hosts' });
   assert.deepEqual(withDefaultCwd('read', { path: '~/notes.txt' }, base), { path: '~/notes.txt' });
@@ -150,6 +153,8 @@ test('withDefaultCwd seeds the base directory into nested call arguments', () =>
   assert.deepEqual(withDefaultCwd('bash', { command: 'pwd' }, undefined), { command: 'pwd' });
   // Workspace mode passes a workspace-relative base, which must stay relative.
   assert.deepEqual(withDefaultCwd('read', { path: 'a.txt' }, 'sub/dir'), { path: 'sub/dir/a.txt' });
+  assert.deepEqual(withDefaultCwd('exec', { argv: ['ls'], cwd: '.' }, 'sub/dir'), { argv: ['ls'], cwd: 'sub/dir' });
+  assert.deepEqual(withDefaultCwd('exec', { argv: ['ls'], cwd: 'nested' }, 'sub/dir'), { argv: ['ls'], cwd: 'sub/dir/nested' });
 });
 
 test('a small timeout_ms bounds the wait for a free slot', async () => {
@@ -567,6 +572,8 @@ test('run_script cwd is the base directory for nested calls', async () => {
         script: `
           const pwd = await tools.bash({ command: 'pwd' });
           text('pwd: ' + pwd.split('\\n')[0]);
+          const dotPwd = await tools.exec({ argv: ['pwd'], cwd: '.' });
+          text('dotPwd: ' + dotPwd.split('\\n')[0]);
           const file = await tools.read({ path: 'a.txt' });
           text('file: ' + file.trim());
         `,
@@ -576,6 +583,7 @@ test('run_script cwd is the base directory for nested calls', async () => {
     const text = result.content.map(block => block.text).join('\n');
     assert.match(text, /^Script completed/);
     assert.ok(text.includes(`pwd: ${projectDir}`), text);
+    assert.ok(text.includes(`dotPwd: ${projectDir}`), text);
     assert.match(text, /file: alpha/);
   });
 });

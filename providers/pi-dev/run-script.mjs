@@ -176,8 +176,13 @@ export function withDefaultCwd(tool, args, base) {
     if (updated === args) updated = { ...args };
     return updated;
   };
-  if (CWD_TOOLS.has(tool) && args.cwd === undefined) {
-    clone().cwd = base;
+  if (CWD_TOOLS.has(tool)) {
+    if (args.cwd === undefined) {
+      clone().cwd = base;
+    } else if (typeof args.cwd === 'string') {
+      const resolved = resolveAgainstBase(base, args.cwd);
+      if (resolved !== args.cwd) clone().cwd = resolved;
+    }
   }
   if (OPTIONAL_PATH_TOOLS.has(tool) && args.path === undefined) {
     clone().path = base;
