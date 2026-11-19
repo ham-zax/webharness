@@ -106,9 +106,9 @@ test('model-facing broker exposes discovery, call, fallback, and batch', async t
   const batch = tools.find(tool => tool.name === 'tool_batch');
   assert.equal(call.annotations.readOnlyHint, false);
   assert.equal(call.annotations.openWorldHint, true);
-  assert.equal(fallback.annotations.readOnlyHint, true);
-  assert.equal(fallback.annotations.destructiveHint, false);
-  assert.equal(fallback.annotations.openWorldHint, false);
+  assert.equal(fallback.annotations.readOnlyHint, false);
+  assert.equal(fallback.annotations.destructiveHint, true);
+  assert.equal(fallback.annotations.openWorldHint, true);
   for (const tool of tools) {
     for (const hint of ['readOnlyHint', 'destructiveHint', 'idempotentHint', 'openWorldHint']) {
       assert.equal(typeof tool.annotations?.[hint], 'boolean', `${tool.name}.${hint} must be explicit`);

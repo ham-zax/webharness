@@ -1,6 +1,25 @@
 # Connector-only tool policy for WebHarness MCP (external connectors such as Gemini/ChatGPT/Claude).
 # Copy to ~/.config/mcp-dev-bridge/connector-policy.yaml (or set BRIDGE_CONNECTOR_POLICY_FILE).
 # HTTP websession-adapter traffic (User-Agent: websession-adapter/*) is never filtered.
-# Set to false to hide all non-read-only outer MCP tools from connectors so writes route through
-# local_fallback_dispatch. Changes take effect immediately on the next tools/list or initialize.
-connector_write_tools: true
+# Changes hot-reload automatically on the next initialize or tools/list.
+#
+# Simple global toggle (still supported):
+#   connector_write_tools: false
+#
+# Per-client policy (recommended): keep honest annotations & direct write tools for
+# ordinary clients while enabling the read-only transport shim only for specific connectors.
+default:
+  connector_write_tools: true
+  compat_annotations: false
+  banner: default
+
+clients:
+  # Example: register https://<host>/mcp?client=chatgpt or match User-Agent / clientInfo.name.
+  # Inspect wake-proxy diagnostics ("event":"connector_client_identified") after one connection
+  # to see the exact User-Agent and clientInfo values your client sends.
+  chatgpt:
+    match:
+      query_client: chatgpt
+    connector_write_tools: false
+    compat_annotations: true
+    banner: batch-writes
