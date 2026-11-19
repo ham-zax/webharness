@@ -9,8 +9,10 @@ import { getDefaultEnvironment } from '@modelcontextprotocol/client/stdio';
 import { Server } from '@modelcontextprotocol/server';
 import { StdioServerTransport, serveStdio } from '@modelcontextprotocol/server/stdio';
 import { hasActiveRuntimeLeases } from '../../lib/runtime-leases.mjs';
+import { explainSchemaViolation } from '../../lib/schema-hint.mjs';
 import { createStdioErrorReporter } from '../../lib/stdio-diagnostics.mjs';
 import {
+  DEV_ROUTE_ARG_HINTS,
   isArgumentSensitiveReadOnlyRoute,
   isKnownReadOnlyRoute,
   normalizeRouteTool,
@@ -136,6 +138,38 @@ function causeSummary(error, maxLen = MAX_CAUSE_SUMMARY_LENGTH) {
   const clean = raw.replace(/[\r\n]+/g, ' ').trim();
   if (!clean) return '';
   return clean.length > maxLen ? `${clean.slice(0, maxLen)}...` : clean;
+}
+
+function routeSchemaHint(server, tool) {
+  if (server === 'dev' && Object.hasOwn(DEV_ROUTE_ARG_HINTS, tool)) {
+    return `${DEV_ROUTE_ARG_HINTS[tool]} Inspect full schema with tool_schema(server="${server}", tool="${tool}").`;
+  }
+  return `Inspect required fields with tool_schema(server="${server}", tool="${tool}").`;
+}
+
+const SCHEMA_HINT_LOOKUP_TIMEOUT_MS = 2_000;
+
+function looksLikeSchemaValidationError(text) {
+  return typeof text === 'string'
+    && /(?:^|\b)(?:schema_input_invalid|input validation error:|invalid arguments for tool\b|mcp error -32602\b|invalid params\b)/i.test(text);
+}
+
+function formatSchemaValidationHint(server, tool, detail) {
+  const baseHint = routeSchemaHint(server, tool);
+  return detail ? `Schema mismatch for ${server}/${tool}: ${detail}. ${baseHint}` : baseHint;
+}
+
+function enrichSchemaValidationResult(server, tool, result, detail = null) {
+  if (!result || typeof result !== 'object' || result.isError !== true || !Array.isArray(result.content)) {
+    return result;
+  }
+  const idx = result.content.findIndex(item => item?.type === 'text' && looksLikeSchemaValidationError(item.text));
+  if (idx === -1) return result;
+  const hint = formatSchemaValidationHint(server, tool, detail);
+  if (result.content[idx].text.includes(hint)) return result;
+  const nextContent = result.content.slice();
+  nextContent[idx] = { ...nextContent[idx], text: `${nextContent[idx].text}\n${hint}` };
+  return { ...result, content: nextContent };
 }
 
 function withCauseDetail(prefix, error) {
@@ -1197,6 +1231,16 @@ export class DirectLocalServerPool {
     return entry.supervisor.listTools(cursor, options);
   }
 
+  // Read-only live-server listing for diagnostic schema hints: never wakes,
+  // respawns, or pins idle eviction of a sleeping or dead server.
+  async listLiveServerTools(server, cursor, options) {
+    if (this.closed) return null;
+    const entry = this.entries.get(server);
+    const liveInner = entry && !entry.permanentlyExited ? entry.supervisor.inner : null;
+    if (!liveInner?.alive) return null;
+    return liveInner.listTools(cursor, options);
+  }
+
   async callServerTool(server, tool, args = {}, signal) {
     const entry = await this._ensureEntry(server);
     if (this.closed) throw brokerError('INNER_UNAVAILABLE', 'local backend is shut down');
@@ -1320,20 +1364,20 @@ export class LocalToolBroker {
       || error?.code === 'UNKNOWN_SERVER';
   }
 
-  async page(cursor) {
+  async page(cursor, options) {
     if (this.closed) throw brokerError('LOCAL_BROKER_CLOSED', 'local tool broker is shut down');
     try {
-      return await this.inner.listTools(cursor);
+      return await this.inner.listTools(cursor, options);
     } catch (error) {
       if (this._passthroughBackendError(error)) throw error;
       throw brokerError('INNER_LIST_FAILED', withCauseDetail('failed to list inner tools', error), error);
     }
   }
 
-  async serverPage(server, cursor) {
+  async serverPage(server, cursor, options) {
     if (this.closed) throw brokerError('LOCAL_BROKER_CLOSED', 'local tool broker is shut down');
     try {
-      const page = await this.inner.listServerTools(server, cursor);
+      const page = await this.inner.listServerTools(server, cursor, options);
       this._recordToolAnnotations(server, page?.tools);
       return page;
     } catch (error) {
@@ -1609,16 +1653,94 @@ export class LocalToolBroker {
     return args;
   }
 
+  async _lookupSchemaViolation(server, tool, args, signal, { timeoutMs = SCHEMA_HINT_LOOKUP_TIMEOUT_MS } = {}) {
+    if (this.closed || signal?.aborted) return null;
+    // Never trigger downstream wake/recovery/restart merely to format a schema hint.
+    if (this._directMode) {
+      if (typeof this.inner.isServerLive === 'function' && !this.inner.isServerLive(server)) return null;
+    } else if (this.inner.alive === false || (this.inner.state !== undefined && this.inner.state !== 'running')) {
+      return null;
+    }
+    const lookupController = new AbortController();
+    const onCallerAbort = () => lookupController.abort(signal?.reason ?? new Error('aborted'));
+    signal?.addEventListener('abort', onCallerAbort, { once: true });
+    const timer = setTimeout(() => lookupController.abort(new Error('schema hint lookup timed out')), timeoutMs);
+    timer.unref?.();
+    const lookupOptions = { signal: lookupController.signal, timeout: timeoutMs };
+
+    const fetchSchema = async () => {
+      let cursor;
+      const seen = new Set();
+      while (true) {
+        if (lookupController.signal.aborted) return null;
+        const key = cursor ?? '';
+        if (seen.has(key)) return null;
+        seen.add(key);
+        if (this._directMode) {
+          const page = typeof this.inner.listLiveServerTools === 'function'
+            ? await this.inner.listLiveServerTools(server, cursor, lookupOptions)
+            : (typeof this.inner.isServerLive === 'function' && !this.inner.isServerLive(server)
+              ? null
+              : await this.serverPage(server, cursor, lookupOptions));
+          if (!page) return null;
+          const found = (page.tools ?? []).find(t => t?.name === tool);
+          if (found) return found.inputSchema ?? null;
+          if (page.nextCursor === undefined) return null;
+          cursor = page.nextCursor;
+        } else {
+          if (this.inner.alive === false || (this.inner.state !== undefined && this.inner.state !== 'running')) return null;
+          const target = qualifiedName(server, tool);
+          const page = await this.page(cursor, lookupOptions);
+          if (!page) return null;
+          const found = (page.tools ?? []).find(t => t?.name === target);
+          if (found) return found.inputSchema ?? null;
+          if (page.nextCursor === undefined) return null;
+          cursor = page.nextCursor;
+        }
+      }
+    };
+    const abortWait = new Promise(resolve => {
+      if (lookupController.signal.aborted) { resolve(null); return; }
+      lookupController.signal.addEventListener('abort', () => resolve(null), { once: true });
+    });
+    const fetchPromise = fetchSchema().catch(() => null);
+    try {
+      const inputSchema = await Promise.race([fetchPromise, abortWait]);
+      return explainSchemaViolation(inputSchema, args);
+    } catch {
+      return null;
+    } finally {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', onCallerAbort);
+      lookupController.abort();
+    }
+  }
+
   async dispatch({ server, tool }, args, signal) {
     if (!this.isReadOnlyRoute(server, tool, args)) markMutation('unknown');
     try {
-      if (this._directMode) {
-        return await this.inner.callServerTool(server, tool, args, signal);
+      const result = this._directMode
+        ? await this.inner.callServerTool(server, tool, args, signal)
+        : await this.inner.callTool(qualifiedName(server, tool), args, signal);
+      if (
+        result?.isError === true
+        && Array.isArray(result.content)
+        && result.content.some(item => item?.type === 'text' && looksLikeSchemaValidationError(item.text))
+      ) {
+        const detail = await this._lookupSchemaViolation(server, tool, args, signal);
+        return enrichSchemaValidationResult(server, tool, result, detail);
       }
-      return await this.inner.callTool(qualifiedName(server, tool), args, signal);
+      return result;
     } catch (error) {
       if (this._passthroughBackendError(error)) throw error;
-      throw brokerError('INNER_CALL_FAILED', withCauseDetail(`failed to call ${server}/${tool}`, error), error);
+      const baseMsg = withCauseDetail(`failed to call ${server}/${tool}`, error);
+      const isSchemaErr = error?.code === -32602 || looksLikeSchemaValidationError(baseMsg);
+      if (isSchemaErr) {
+        const detail = await this._lookupSchemaViolation(server, tool, args, signal);
+        const hint = formatSchemaValidationHint(server, tool, detail);
+        throw brokerError('INNER_CALL_FAILED', `${baseMsg}\n${hint}`, error);
+      }
+      throw brokerError('INNER_CALL_FAILED', baseMsg, error);
     }
   }
 
@@ -1682,6 +1804,9 @@ export class LocalToolBroker {
     if (stopOnError !== undefined && !sequential) {
       throw brokerError('INVALID_ARGUMENT', 'stop_on_error requires sequential: true');
     }
+    if (concurrency !== undefined && sequential) {
+      throw brokerError('INVALID_ARGUMENT', 'concurrency cannot be combined with sequential: true');
+    }
     const effectiveStopOnError = sequential ? (stopOnError ?? true) : false;
     if (concurrency !== undefined) normalizeBatchConcurrency(concurrency, calls.length);
 
@@ -1707,8 +1832,10 @@ export class LocalToolBroker {
       };
     });
 
-    const uniqueServers = [...new Set(prepared.map(item => item.route.server))];
-    await Promise.all(uniqueServers.map(serverName => this.ensureServerAvailable(serverName)));
+    if (!sequential) {
+      const uniqueServers = [...new Set(prepared.map(item => item.route.server))];
+      await Promise.all(uniqueServers.map(serverName => this.ensureServerAvailable(serverName)));
+    }
 
     const homogeneous = prepared.every(
       item => item.route.server === prepared[0].route.server && item.route.tool === prepared[0].route.tool
@@ -1734,6 +1861,7 @@ export class LocalToolBroker {
           continue;
         }
         try {
+          await this.ensureServerAvailable(call.route.server);
           const result = await this.dispatch(call.route, call.arguments, signal);
           results[index] = { ...identity, status: 'fulfilled', result };
           if (effectiveStopOnError && isFailedBatchEntryResult(call.route, result)) {

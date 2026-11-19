@@ -1430,3 +1430,161 @@ test('LocalDiagnosticLogger rotates local-inner*.log files within maxSize * maxF
   }
   assert.ok(totalBytes <= 512 * 3, `total bytes ${totalBytes} exceeded policy budget ${512 * 3}`);
 });
+
+test('fallback_dispatch enriches downstream schema validation errors with actionable route hints', async t => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'local-schema-hint-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const configPath = path.join(dir, 'inner.json');
+  await fs.writeFile(configPath, JSON.stringify({
+    mcpServers: {
+      dev: {
+        type: 'stdio',
+        command: process.execPath,
+        args: [path.resolve('providers/pi-dev/server.mjs')],
+        env: {
+          MCP_DEV_SHELL_MODE: 'unrestricted',
+          MCP_DEV_PATH_MODE: 'user',
+          MCP_DEV_DEFAULT_CWD: dir,
+          MCP_DEV_STATE_DIR: dir,
+          MCP_DEV_TERMINAL_SOCKET: path.join(dir, 'broker.sock'),
+        },
+      },
+    },
+  }));
+  const inner = new DirectLocalServerPool({ configPath, idleMs: 0 });
+  const broker = new LocalToolBroker({ inner, configPath, fallbackOnlyServers: ['dev'] });
+  const server = createLocalBrokerServer({ broker });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const client = new Client({ name: 'hint-test', version: '1' });
+  t.after(async () => {
+    await client.close();
+    await server.close();
+    await broker.shutdown();
+  });
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+
+  const badExec = await client.callTool({
+    name: 'fallback_dispatch',
+    arguments: { server: 'dev', tool: 'exec', arguments: { command: 'echo hi | cat' } },
+  });
+  assert.equal(badExec.isError, true);
+  assert.match(badExec.content[0].text, /Schema mismatch for dev\/exec:.*missing required property "argv"/);
+  assert.match(badExec.content[0].text, /Hint: dev\/exec takes \{ argv: string\[\]/);
+  assert.match(badExec.content[0].text, /use dev\/bash/);
+  assert.match(badExec.content[0].text, /tool_schema\(server="dev", tool="exec"\)/);
+});
+
+test('local broker explains live field-level schema_input_invalid violations for non-Dev Local routes', async t => {
+  const inner = {
+    async listServerTools(server) {
+      assert.equal(server, 'custom');
+      return {
+        tools: [{
+          name: 'deploy_widget',
+          description: 'Deploy a widget.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              target: { type: 'string', enum: ['staging', 'prod'] },
+              replicas: { type: 'integer', minimum: 1 },
+            },
+            required: ['target', 'replicas'],
+            additionalProperties: false,
+          },
+        }],
+      };
+    },
+    async callServerTool(_server, _tool, args) {
+      if (args.throwMode) {
+        const err = new Error('schema_input_invalid');
+        err.code = -32602;
+        throw err;
+      }
+      return { isError: true, content: [{ type: 'text', text: 'schema_input_invalid' }] };
+    },
+    listTools: async () => ({ tools: [] }),
+    callTool: async () => ({ content: [] }),
+    isServerLive: () => true,
+    close: async () => {},
+  };
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'local-nondev-schema-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const configPath = path.join(dir, 'inner.json');
+  await fs.writeFile(configPath, JSON.stringify({ mcpServers: { custom: { command: process.execPath } } }));
+  const broker = new LocalToolBroker({ inner, configPath });
+  const server = createLocalBrokerServer({ broker });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const client = new Client({ name: 'nondev-schema-test', version: '1' });
+  t.after(async () => {
+    await client.close();
+    await server.close();
+    await broker.shutdown();
+  });
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+
+  // Case 1: isError result carrying opaque schema_input_invalid
+  const res1 = await client.callTool({
+    name: 'fallback_dispatch',
+    arguments: { server: 'custom', tool: 'deploy_widget', arguments: { target: 'dev', extra: true } },
+  });
+  assert.equal(res1.isError, true);
+  assert.match(res1.content[0].text, /Schema mismatch for custom\/deploy_widget:/);
+  assert.match(res1.content[0].text, /missing required property "replicas"/);
+  assert.match(res1.content[0].text, /target: expected one of "staging", "prod"/);
+  assert.match(res1.content[0].text, /unexpected property "extra"/);
+  assert.match(res1.content[0].text, /tool_schema\(server="custom", tool="deploy_widget"\)/);
+
+  // Case 2: thrown -32602 InvalidParams error
+  const res2 = await client.callTool({
+    name: 'tool_call',
+    arguments: { server: 'custom', tool: 'deploy_widget', arguments: { target: 'prod', replicas: 0, throwMode: true } },
+  });
+  assert.equal(res2.isError, true);
+  assert.match(res2.content[0].text, /Schema mismatch for custom\/deploy_widget:/);
+  assert.match(res2.content[0].text, /replicas: must be >= 1/);
+  assert.match(res2.content[0].text, /unexpected property "throwMode"/);
+});
+
+test('_lookupSchemaViolation aborts promptly on caller signal and never wakes dead servers', async t => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'local-schema-abort-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const configPath = path.join(dir, 'inner.json');
+  await fs.writeFile(configPath, JSON.stringify({ mcpServers: { slow: { command: process.execPath }, dead: { command: process.execPath } } }));
+
+  let wokeDead = false;
+  let abortedLookup = false;
+  const inner = {
+    isServerLive: s => s === 'slow',
+    listLiveServerTools: async (_s, _c, opts) => new Promise((_resolve, reject) => {
+      opts?.signal?.addEventListener('abort', () => { abortedLookup = true; reject(new Error('aborted')); }, { once: true });
+    }),
+    listServerTools: async s => { if (s === 'dead') wokeDead = true; return { tools: [] }; },
+    callServerTool: async () => ({ content: [] }),
+    listTools: async () => ({ tools: [] }),
+    callTool: async () => ({ content: [] }),
+    close: async () => {},
+  };
+  const broker = new LocalToolBroker({ inner, configPath });
+
+  // 1. Dead server returns null without calling listServerTools.
+  assert.equal(await broker._lookupSchemaViolation('dead', 'op', {}, undefined), null);
+  assert.equal(wokeDead, false);
+
+  // 2. Caller signal abort terminates hung lookup immediately instead of stalling 2s.
+  const controller = new AbortController();
+  setTimeout(() => controller.abort(), 30);
+  const started = Date.now();
+  const detail = await broker._lookupSchemaViolation('slow', 'op', {}, controller.signal, { timeoutMs: 2000 });
+  const elapsed = Date.now() - started;
+  assert.equal(detail, null);
+  assert.equal(abortedLookup, true);
+  assert.ok(elapsed < 500, `lookup abort took too long: ${elapsed}ms`);
+
+  // 3. sequential: true rejects explicit concurrency.
+  await assert.rejects(
+    () => broker.batchWithAllowedServers({ sequential: true, concurrency: 2, calls: [{ server: 'slow', tool: 'op', arguments: {} }] }, new Set(['slow'])),
+    { code: 'INVALID_ARGUMENT' },
+  );
+});
