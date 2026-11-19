@@ -53,11 +53,12 @@ Loopback wake proxy (always listening)
   +-- Dev
   `-- Local
         |
-        `-- inner 1MCP
+        `-- DirectLocalServerPool (per-server direct stdio pool)
               |-- dev ------------------> fallback_dispatch only
               |-- terminal -------------> broker -> tmux PTYs
               |-- host -----------------> Windows host actions
               |-- browser-fast ---------> Agent Browser
+              |-- browser-daily --------> everyday browser via browse relay
               `-- browser-devtools -----> Chrome DevTools MCP
                          |
                          +-- Windows: dedicated persistent MCP Chrome
