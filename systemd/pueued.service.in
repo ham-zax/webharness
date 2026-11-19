@@ -1,0 +1,14 @@
+[Unit]
+Description=Pueue background task queue daemon (WebHarness)
+After=default.target
+
+[Service]
+Type=simple
+Environment=HOME=@USER_HOME@
+Environment=PATH=@PATH@
+ExecStart=@PUEUED_BIN@
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target

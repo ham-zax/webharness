@@ -50,6 +50,14 @@ make_complete_toolbox() {
   make_stub "$dir" tmux 'tmux 3.4'
   make_stub "$dir" fd 'fd 10.4.1'
   make_stub "$dir" bat 'bat 0.26.1'
+  make_stub "$dir" yq 'yq (https://github.com/mikefarah/yq/) version v4.54.3'
+  make_stub "$dir" pueue 'pueue 4.0.5'
+  make_stub "$dir" pueued 'pueued 4.0.5'
+  make_stub "$dir" difft 'Difftastic 0.72.0'
+  make_stub "$dir" just 'just 1.59.0'
+  make_stub "$dir" scc 'scc version 4.1.0'
+  make_stub "$dir" hyperfine 'hyperfine 2.0.0'
+  make_stub "$dir" mcp-inspector '2.16.0'
   make_stub "$dir" ast-grep 'ast-grep 0.45.0'
 }
 
@@ -239,6 +247,79 @@ test_setup_is_noop_when_toolbox_is_complete() {
   rm -rf "$tmp"
 }
 
+test_headless_checker_requires_minimal_core_and_marks_accelerators_optional() {
+  local tmp out rc
+  tmp="$(mktemp -d)" || return 1
+  out="$tmp/out"
+  mkdir -p "$tmp/bin"
+  make_stub "$tmp/bin" git 'git version 2.43.0'
+  make_stub "$tmp/bin" rg 'ripgrep 14.1.0'
+  make_stub "$tmp/bin" jq 'jq-1.7'
+  make_stub "$tmp/bin" node 'v24.19.0'
+  make_stub "$tmp/bin" tmux 'tmux 3.4'
+  PERSONAL_TOOLBOX_PATH="$tmp/bin" capture "$out" bash "$CHECKER" --headless
+  rc=$?
+  if [ "$rc" -ne 0 ] ||
+     ! contains "$out" 'MISSING optional ast-grep' ||
+     ! contains "$out" 'MISSING optional pueue' ||
+     ! contains "$out" 'MISSING optional difft' ||
+     ! contains "$out" 'SUMMARY required_missing=0 required_invalid=0 optional_missing=10 optional_invalid=0'; then
+    cat "$out"
+    rm -rf "$tmp"
+    return 1
+  fi
+  rm -rf "$tmp"
+}
+
+test_setup_headless_dry_run_plans_arm64_optional_accelerators() {
+  local tmp out rc
+  tmp="$(mktemp -d)" || return 1
+  out="$tmp/out"
+  mkdir -p "$tmp/bin"
+  make_stub "$tmp/bin" git 'git version 2.43.0'
+  make_stub "$tmp/bin" rg 'ripgrep 14.1.0'
+  make_stub "$tmp/bin" jq 'jq-1.7'
+  make_stub "$tmp/bin" node 'v24.19.0'
+  make_stub "$tmp/bin" tmux 'tmux 3.4'
+  HOME="$tmp/home" PERSONAL_TOOLBOX_ARCH=aarch64 PERSONAL_TOOLBOX_PATH="$tmp/bin" \
+    capture "$out" bash "$SETUP" --headless --dry-run
+  rc=$?
+  if [ "$rc" -ne 0 ] ||
+     ! contains "$out" 'PLAN optional pueue | https://github.com/Nukesor/pueue/releases/download/v4.0.5/pueue-aarch64-unknown-linux-musl' ||
+     ! contains "$out" 'PLAN optional difft | https://github.com/Wilfred/difftastic/releases/download/0.72.0/difft-0.72.0-aarch64-unknown-linux-gnu.tar.gz' ||
+     ! contains "$out" 'PLAN optional scc | https://github.com/boyter/scc/releases/download/v4.1.0/scc_Linux_arm64.tar.gz' ||
+     ! contains "$out" 'PLAN optional yq | https://github.com/mikefarah/yq/releases/download/v4.54.3/yq_linux_arm64' ||
+     ! contains "$out" 'PLAN optional just | https://github.com/casey/just/releases/download/1.59.0/just-1.59.0-aarch64-unknown-linux-musl.tar.gz' ||
+     ! contains "$out" 'PLAN optional mcp-inspector | npm install --global'; then
+    cat "$out"
+    rm -rf "$tmp"
+    return 1
+  fi
+  rm -rf "$tmp"
+}
+
+test_invalid_optional_accelerator_warns_without_failing() {
+  local tmp out rc
+  tmp="$(mktemp -d)" || return 1
+  out="$tmp/out"
+  make_complete_toolbox "$tmp/bin"
+  cat > "$tmp/bin/pueue" <<'EOF'
+#!/usr/bin/env sh
+exit 1
+EOF
+  chmod +x "$tmp/bin/pueue"
+  HOME="$tmp/home" PERSONAL_TOOLBOX_PATH="$tmp/bin" capture "$out" bash "$SETUP" --dry-run
+  rc=$?
+  if [ "$rc" -ne 0 ] ||
+     ! contains "$out" 'INVALID optional pueue' ||
+     ! contains "$out" 'WARN optional pueue exists but its version probe failed'; then
+    cat "$out"
+    rm -rf "$tmp"
+    return 1
+  fi
+  rm -rf "$tmp"
+}
+
 run_test 'checker reports required/optional tools with versions' test_checker_reports_complete_matrix
 run_test 'checker fails for a missing required tool' test_checker_fails_for_missing_required_tool
 run_test 'checker reports optional gaps without failing' test_checker_reports_optional_gaps_without_failing
@@ -248,6 +329,9 @@ run_test 'setup dry-run pins user-level installers and scopes ast-grep install s
 run_test 'setup leaves present unqualified non-ast tools untouched' test_setup_leaves_present_unqualified_non_ast_tools_untouched
 run_test 'setup refuses to bypass Python packaging policy for missing uv' test_setup_refuses_python_override_for_missing_uv
 run_test 'setup is an idempotent no-op when the toolbox is complete' test_setup_is_noop_when_toolbox_is_complete
+run_test 'headless checker requires minimal core and marks accelerators optional' test_headless_checker_requires_minimal_core_and_marks_accelerators_optional
+run_test 'headless setup dry-run plans arm64 optional accelerators' test_setup_headless_dry_run_plans_arm64_optional_accelerators
+run_test 'invalid optional accelerator warns without blocking setup' test_invalid_optional_accelerator_warns_without_failing
 
 printf '\n%d tests, %d failures\n' "$TESTS" "$FAILURES"
 [ "$FAILURES" -eq 0 ]

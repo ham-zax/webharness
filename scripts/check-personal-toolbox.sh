@@ -2,9 +2,23 @@
 set -uo pipefail
 
 SEARCH_PATH="${PERSONAL_TOOLBOX_PATH:-$PATH}"
+HEADLESS=0
 NODE_MIN_VERSION="24.0.0"
 TMUX_MIN_VERSION="3.4.0"
 AST_GREP_VERSION="0.45.0"
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --headless)
+      HEADLESS=1
+      shift
+      ;;
+    *)
+      echo "unknown argument: $1" >&2
+      exit 2
+      ;;
+  esac
+done
 
 required_missing=0
 required_invalid=0
@@ -122,29 +136,59 @@ check_tool() {
   printf 'OK %s %s | %s\n' "$tier" "$name" "$line"
 }
 
-printf 'Personal Linux CLI toolbox\n'
-printf 'Search path: %s\n' "$SEARCH_PATH"
+if [ "$HEADLESS" -eq 1 ]; then
+  printf 'Headless server Linux CLI toolbox\n'
+  printf 'Search path: %s\n' "$SEARCH_PATH"
 
-check_tool required git
-check_tool required rg
-check_tool required jq
-check_tool required sed
-check_tool required awk
-check_tool required grep
-check_tool required find
-check_tool required node node-min
-check_tool required npm
-check_tool required pnpm
-check_tool required corepack
-check_tool required python3
-check_tool required uv
-check_tool required systemctl
-check_tool required journalctl
-check_tool required tmux tmux-min
-check_tool required ast-grep ast-grep-exact
+  check_tool required git
+  check_tool required rg
+  check_tool required jq
+  check_tool required node node-min
+  check_tool required tmux tmux-min
 
-check_tool optional fd
-check_tool optional bat
+  check_tool optional ast-grep ast-grep-exact
+  check_tool optional fd
+  check_tool optional yq
+  check_tool optional pueue
+  check_tool optional pueued
+  check_tool optional difft
+  check_tool optional just
+  check_tool optional scc
+  check_tool optional hyperfine
+  check_tool optional mcp-inspector
+else
+  printf 'Personal Linux CLI toolbox\n'
+  printf 'Search path: %s\n' "$SEARCH_PATH"
+
+  check_tool required git
+  check_tool required rg
+  check_tool required jq
+  check_tool required sed
+  check_tool required awk
+  check_tool required grep
+  check_tool required find
+  check_tool required node node-min
+  check_tool required npm
+  check_tool required pnpm
+  check_tool required corepack
+  check_tool required python3
+  check_tool required uv
+  check_tool required systemctl
+  check_tool required journalctl
+  check_tool required tmux tmux-min
+  check_tool required ast-grep ast-grep-exact
+
+  check_tool optional fd
+  check_tool optional bat
+  check_tool optional yq
+  check_tool optional pueue
+  check_tool optional pueued
+  check_tool optional difft
+  check_tool optional just
+  check_tool optional scc
+  check_tool optional hyperfine
+  check_tool optional mcp-inspector
+fi
 
 printf 'SUMMARY required_missing=%d required_invalid=%d optional_missing=%d optional_invalid=%d\n' \
   "$required_missing" "$required_invalid" "$optional_missing" "$optional_invalid"

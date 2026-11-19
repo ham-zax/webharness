@@ -60,6 +60,9 @@ RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 SYSTEMD_TARGET_DIR="${SERVER_SYSTEMD_TARGET_DIR:-${BRIDGE_SYSTEMD_TARGET_DIR:-${TERMINAL_SYSTEMD_TARGET_DIR:-$USER_HOME/.config/systemd/user}}}"
 
 if [ "${SERVER_BOOTSTRAP_SKIP_INSTALL:-0}" != "1" ]; then
+  echo "== qualifying headless server CLI toolbox (required + best-effort optional accelerators) =="
+  "$ROOT/scripts/setup-personal-toolbox.sh" --headless
+
   "$ROOT/scripts/install-bridge-runtime.sh" --headless
 
   echo "== installing pinned headless server provider dependencies =="
