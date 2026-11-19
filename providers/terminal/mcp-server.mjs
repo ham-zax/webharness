@@ -178,7 +178,7 @@ export function createTerminalMcpServer({ client, frontend } = {}) {
   });
 
   server.registerTool('terminal_send', {
-    description: 'Send exactly one of literal text or one control/navigation key to a WebHarness Terminal session. text does not append Enter, so executing a command normally requires a text send followed by key=ENTER. Writable human ownership blocks model mutation with HUMAN_HAS_CONTROL; do not bypass it through Dev exec/bash, raw tmux, or operator wsl-term commands.',
+    description: 'Send exactly one of literal text or one control/navigation key to a WebHarness Terminal session. text does not append Enter, so running a command normally sends text followed by key=ENTER. Writable human ownership returns HUMAN_HAS_CONTROL; do not bypass via other tools.',
     inputSchema: sendSchema,
   }, async (args) => invoke(async () => {
     const params = args.key === undefined
@@ -197,7 +197,7 @@ export function createTerminalMcpServer({ client, frontend } = {}) {
   }));
 
   server.registerTool('terminal_list', {
-    description: 'List durable sessions in the WebHarness tmux namespace, including dead exit status, dimensions, and whether writable human control currently blocks model mutation; use this to resolve session identity and state before mutation.',
+    description: 'List durable sessions in the WebHarness tmux namespace, including exit status, dimensions, and current human/model ownership state; use this to resolve session identity and state before acting.',
     inputSchema: z.object({}),
     annotations: {
       readOnlyHint: true,
@@ -226,7 +226,7 @@ export function createTerminalMcpServer({ client, frontend } = {}) {
   }));
 
   server.registerTool('terminal_close', {
-    description: 'Destructively close a WebHarness Terminal session by killing its tmux session, which destroys that session\'s PTY/process lifetime. Ordinary close is blocked while a human owns the session; force=true explicitly overrides human ownership and destroys the session anyway.',
+    description: 'Close a WebHarness Terminal session and end its tmux session and PTY process. Ordinary close requires model ownership; force=true overrides human ownership when closing.',
     inputSchema: z.object({ name, force: z.boolean().optional() }),
   }, async (args) => invoke(async () => {
     const result = await client.request('session.close', compactParams(args));

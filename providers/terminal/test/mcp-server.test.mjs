@@ -117,7 +117,7 @@ test('Terminal MCP exposes exactly seven public tools with the frozen schemas', 
     assert.deepEqual(Object.keys(resize.inputSchema.properties).sort(), ['cols', 'name', 'rows']);
 
     const list = tools.find((tool) => tool.name === 'terminal_list');
-    assert.match(list.description, /before mutation/i);
+    assert.match(list.description, /ownership state/i);
 
     const yieldTool = tools.find((tool) => tool.name === 'terminal_yield');
     assert.deepEqual(Object.keys(yieldTool.inputSchema.properties).sort(), ['name']);
@@ -126,7 +126,7 @@ test('Terminal MCP exposes exactly seven public tools with the frozen schemas', 
     assert.match(yieldTool.description, /Kitty|frontend/i);
 
     const close = tools.find((tool) => tool.name === 'terminal_close');
-    assert.match(close.description, /kills.*tmux session|destroy.*PTY.*process/i);
+    assert.match(close.description, /end its tmux session|PTY process/i);
     assert.match(close.description, /force=true.*override/i);
 
     const both = await client.callTool({

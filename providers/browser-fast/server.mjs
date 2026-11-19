@@ -1358,7 +1358,7 @@ export function createBrowserFastServer({ browser } = {}) {
     },
     {
       name: 'execute',
-      description: 'Execute multiple mechanical browser actions locally in one call, including hover, wheel scroll, drag, and upload by logical approved artifact name rather than arbitrary path. Managed CloakBrowser routes supported input through its humanized Playwright layer while Agent Browser keeps refs and tab identity. After a click, exactly one new tab is followed before later actions only when Chromium verifies its opener is the clicked tab; multiple new tabs or unverifiable ownership stop the sequence without guessing. Defaults to fail-fast, never auto-retries, and reports completed/failed/unknown/not-run steps plus final compact state so partial external side effects are explicit.',
+      description: 'Execute multiple mechanical browser actions locally in one call, including hover, wheel scroll, drag, and upload by logical approved artifact name rather than raw filesystem paths. Managed CloakBrowser routes supported input through its humanized Playwright layer while Agent Browser keeps refs and tab identity. After a click, exactly one new tab is followed before later actions only when Chromium verifies its opener is the clicked tab; multiple new tabs or unverifiable ownership stop the sequence without guessing. Defaults to fail-fast, never auto-retries, and reports completed/failed/unknown/not-run steps plus final compact state so partial step outcomes are explicit.',
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
       inputSchema: {
         type: 'object',
