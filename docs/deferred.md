@@ -78,6 +78,38 @@ connector incidents still need their client, route, timestamp, and request ID.
 listings cannot meet, or when a gateway rejection must be attributed to a
 specific layer and `bin/status` plus the 1MCP log no longer suffice.
 
+## Code Mode over Local routes (`tools.local`)
+
+**Status:** deferred (decided 2026-11-19).
+
+**Today.** `dev/run_script` runs sandboxed JS over Dev tools (up to 32 calls, 4x parallel reads), while Local servers (`terminal`, `browser-fast`, `browser-daily`, `skill-library`, owner MCPs) only support declarative `calls[]` batches on `local_fallback_dispatch` without passing data between steps.
+
+**Proposal.** Expose a `run_script` (or `code`) route on `providers/local-tools` itself (not inside `pi-dev`, preserving the `tag:dev` vs. `tag:local` authorization boundary) so one script can chain Dev and Local calls with data flow. Unify `SCRIPT_READ_ONLY_TOOLS` in `providers/pi-dev/script-limits.mjs` with `lib/local-route-policy.mjs`, and decide explicitly whether `browser-daily` should be reachable inside scripts.
+
+**Why deferred.** `dev/run_script` adoption is currently ~0.5% of tool calls; driving adoption of Dev-only scripts and heterogeneous `calls[]` sequential batches captures most of the turn-budget win without adding a second sandbox runtime in `local-tools`.
+
+**Do it when** real connector workflows regularly need multi-step data flow between `browser-fast`/`terminal` and `dev` inside a single turn.
+
+## `wh-bridge policy explain` CLI helper
+
+**Status:** deferred (decided 2026-11-19).
+
+**Proposal.** Add a small CLI subcommand (e.g. `wh-bridge policy explain --ua ... --client ... --client-info ...`) that evaluates `connector-policy.yaml` offline and prints the matched rule and effective flags.
+
+**Why deferred.** `wake-proxy` already emits `connector_client_identified` diagnostic records on `initialize` and `tools/list` showing the exact live match.
+
+**Do it when** `connector-policy.yaml` grows beyond a few client rules and operators need offline dry-run debugging.
+
+## Alphabetical `tools/list` pagination ordering in `connector-policy.mjs`
+
+**Status:** deferred / known limitation (noted 2026-11-19).
+
+**Context.** `connector-policy.mjs` gates write-tool stripping on observing `local_fallback_dispatch` in `tools/list` (and propagates that flag to page 2+ on cursor-paginated requests). If an upstream server ever paginates `tools/list` alphabetically so `dev_*` lands on page 1 and `local_fallback_dispatch` lands on page 2, page 1 would not yet know `hasFallback` is true.
+
+**Why deferred.** 1MCP returns the current ~17-tool catalog in a single page.
+
+**Do it when** outer catalog pagination shrinks below the full outer tool count.
+
 ## Report WebSession adapter health in `bin/status`
 
 **Status:** proposal after the 2026-11-11 `/v1/*` 502 incident. The adapter now has its own unit, but nothing reports it.
