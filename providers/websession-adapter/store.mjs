@@ -152,6 +152,10 @@ export class AdapterStore {
         redeemed_ms INTEGER
       );
     `);
+    for (const suffix of ['-wal', '-shm']) {
+      try { chmodSync(`${this._dbPath}${suffix}`, 0o600); }
+      catch (error) { if (error?.code !== 'ENOENT') throw error; }
+    }
     const capabilityColumns = this.db.prepare('PRAGMA table_info(capabilities)').all();
     if (!capabilityColumns.some(column => column.name === 'revoked_ms')) {
       this.db.exec('ALTER TABLE capabilities ADD COLUMN revoked_ms INTEGER');
