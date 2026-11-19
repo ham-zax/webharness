@@ -4,10 +4,15 @@ import { posix } from 'node:path';
 import { requestHash, AdapterStore } from './store.mjs';
 import { callMcpTool, closeMcpPools, findMcpTool, listMcpTools } from './mcp-client.mjs';
 import { explainSchemaViolation, looksLikeSchemaValidationError } from '../../lib/schema-hint.mjs';
-import { isKnownReadOnlyRoute } from '../../lib/local-route-policy.mjs';
+import {
+  ROUTED_LOCAL_TOOLS,
+  hasUnsuccessfulDevCommandFooter,
+  isKnownReadOnlyRoute,
+  resolveBatchEntryRoute,
+  unwrapLocalRoute,
+} from '../../lib/local-route-policy.mjs';
 
 const MAX_RESULT_BYTES = 1024 * 1024;
-const DEV_COMMAND_FAILURE_FOOTER = /^\[(?:exit (?!0(?:\]| · ))-?\d+|timed out after [0-9.]+s|cancelled|terminated)(?: · [0-9.]+s)?\]$/;
 // dev_run_script takes the same base directory as the shell and file tools: Dev applies
 // it to the script's nested calls, which never pass through this rewrite themselves.
 const DEFAULT_CWD_TOOLS = new Set(['dev_bash', 'dev_exec', 'dev_review_changes', 'dev_file_ops', 'dev_run_script']);
@@ -15,7 +20,6 @@ const DEFAULT_CWD_TOOLS = new Set(['dev_bash', 'dev_exec', 'dev_review_changes',
 // selected downstream operation can still mutate, so it must never join _readOnlyTools
 // unconditionally; _isConcurrentOperation inspects its routed {server, tool} instead.
 const SERIALIZED_TOOLS = new Set(['local_fallback_dispatch']);
-const ROUTED_LOCAL_TOOLS = new Set(['local_fallback_dispatch', 'local_tool_call', 'local_tool_batch']);
 const OPTIONAL_PATH_CWD_TOOLS = new Set(['dev_list_directory', 'dev_search']);
 const RELATIVE_PATH_TOOLS = new Set(['dev_read', 'dev_write', 'dev_list_directory', 'dev_search']);
 const TARGET_PATH_TOOLS = new Set(['dev_read', 'dev_edit']);
@@ -26,43 +30,6 @@ function normalizeDevInnerTool(tool) {
 }
 
 const FILE_SCOPED_DEV_TOOLS = new Set(['write', 'edit']);
-
-function unwrapLocalRoute(tool, rawArguments) {
-  if (!ROUTED_LOCAL_TOOLS.has(tool)) return null;
-  if (!rawArguments || typeof rawArguments !== 'object' || Array.isArray(rawArguments)) return null;
-  const server = typeof rawArguments.server === 'string' && rawArguments.server ? rawArguments.server : undefined;
-  const toolName = typeof rawArguments.tool === 'string' && rawArguments.tool ? rawArguments.tool : undefined;
-  const args = rawArguments.arguments;
-  const calls = Array.isArray(rawArguments.calls) ? rawArguments.calls : undefined;
-  const allowHeterogeneous = tool === 'local_fallback_dispatch';
-  if (!(allowHeterogeneous && calls !== undefined) && (!server || !toolName)) return null;
-  return {
-    server,
-    tool: toolName,
-    arguments: args && typeof args === 'object' && !Array.isArray(args) ? args : undefined,
-    hadArguments: args !== undefined,
-    calls,
-    allowHeterogeneous,
-  };
-}
-
-function resolveBatchEntryRoute(route, entry) {
-  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return null;
-  const server = (route.allowHeterogeneous && typeof entry.server === 'string' && entry.server)
-    ? entry.server
-    : route.server;
-  const tool = (route.allowHeterogeneous && typeof entry.tool === 'string' && entry.tool)
-    ? entry.tool
-    : route.tool;
-  if (!server || !tool) return null;
-  const rawArgs = entry.arguments;
-  return {
-    server,
-    tool,
-    arguments: rawArgs && typeof rawArgs === 'object' && !Array.isArray(rawArgs) ? rawArgs : undefined,
-    hadArguments: rawArgs !== undefined,
-  };
-}
 
 function isDevCommandRoute(server, tool) {
   if (server !== 'dev') return false;
@@ -250,23 +217,7 @@ function hasUnsuccessfulDevCommandInBatchText(text, route) {
 }
 
 export function hasUnsuccessfulCommandFooter(text) {
-  if (typeof text !== 'string' || text.length === 0) return false;
-  let body = text;
-  if (body.startsWith('{')) {
-    try {
-      const parsed = JSON.parse(body);
-      if (Array.isArray(parsed?.content)) {
-        const joined = parsed.content.filter(b => b?.type === 'text' && typeof b.text === 'string').map(b => b.text).join('\n');
-        if (joined) body = joined;
-      }
-    } catch {
-      // Plain command output that happens to start with '{'.
-    }
-  }
-  const withoutLf = body.endsWith('\n') ? body.slice(0, -1) : body;
-  const clean = withoutLf.endsWith('\r') ? withoutLf.slice(0, -1) : withoutLf;
-  const lastLine = clean.slice(clean.lastIndexOf('\n') + 1);
-  return DEV_COMMAND_FAILURE_FOOTER.test(lastLine);
+  return typeof text === 'string' && hasUnsuccessfulDevCommandFooter(text);
 }
 
 export class OperationCore {
@@ -971,7 +922,7 @@ export class OperationCore {
   // a round trip on GET /v1/tools/<name>. Any other failure keeps its own message.
   async _describeToolFailure(error, tool, args) {
     const message = boundedError(error);
-    if (!looksLikeSchemaValidationError(message) || /invalid arguments for tool/i.test(message)) return message;
+    if (!looksLikeSchemaValidationError(message) || /invalid arguments for tool|schema mismatch for /i.test(message)) return message;
     try {
       const lookup = targetTool => findMcpTool({
         mcpUrl: this.mcpUrl,
