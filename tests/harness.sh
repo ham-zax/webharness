@@ -831,17 +831,20 @@ const render = async (settings, suffix = 'test') => {
   await fs.writeFile(envFile, base + settings);
   return renderConfig({ profile: 'personal', repoRoot: root, stateDir: path.join(temp, suffix), envFile });
 };
-const result = await render('BRIDGE_BACKEND_PORT=43070\nBRIDGE_WAKE_IDLE_MS=1234\nMCP_LOCAL_INNER_IDLE_MS=2345\nMCP_DEV_WORKER_IDLE_MS=3456\n');
+const result = await render('BRIDGE_BACKEND_PORT=43070\nBRIDGE_WAKE_IDLE_MS=1234\nBRIDGE_CONNECTOR_POLICY_FILE=/tmp/custom-policy.yaml\nMCP_LOCAL_INNER_IDLE_MS=2345\nMCP_DEV_WORKER_IDLE_MS=3456\nMCP_DEV_PREWARM_WORKER=1\n');
 const outer = JSON.parse(await fs.readFile(result.configPath));
 const inner = JSON.parse(await fs.readFile(result.localInnerConfigPath));
 assert.equal(outer.mcpServers.local.env.MCP_LOCAL_INNER_IDLE_MS, '2345');
 assert.equal(outer.mcpServers.dev.env.MCP_DEV_WORKER_IDLE_MS, '3456');
 assert.equal(inner.mcpServers.dev.env.MCP_DEV_WORKER_IDLE_MS, '3456');
+assert.equal(outer.mcpServers.dev.env.MCP_DEV_PREWARM_WORKER, '1');
+assert.equal(inner.mcpServers.dev.env.MCP_DEV_PREWARM_WORKER, undefined);
 assert.match(await fs.readFile(result.appConfigPath, 'utf8'), /^port = 43070/m);
 assert.match(await fs.readFile(result.bridgeEnvPath, 'utf8'), /BRIDGE_WAKE_IDLE_MS='1234'/);
+assert.match(await fs.readFile(result.bridgeEnvPath, 'utf8'), /BRIDGE_CONNECTOR_POLICY_FILE='\/tmp\/custom-policy\.yaml'/);
 const direct = await render('BRIDGE_COLD_START=0\n', 'direct');
 assert.match(await fs.readFile(direct.appConfigPath, 'utf8'), /^port = 43050/m);
-for (const [key, value] of [['BRIDGE_COLD_START', 'yes'], ['BRIDGE_BACKEND_PORT', '43050'], ['BRIDGE_BACKEND_PORT', '65536'], ['BRIDGE_WAKE_IDLE_MS', '-1'], ['MCP_LOCAL_INNER_IDLE_MS', 'bad'], ['MCP_DEV_WORKER_IDLE_MS', '2147483648'], ['MCP_LIFECYCLE_LEASE_DIR', 'relative']]) {
+for (const [key, value] of [['BRIDGE_COLD_START', 'yes'], ['BRIDGE_BACKEND_PORT', '43050'], ['BRIDGE_BACKEND_PORT', '65536'], ['BRIDGE_WAKE_IDLE_MS', '-1'], ['BRIDGE_CONNECTOR_POLICY_FILE', 'relative.yaml'], ['MCP_LOCAL_INNER_IDLE_MS', 'bad'], ['MCP_DEV_WORKER_IDLE_MS', '2147483648'], ['MCP_DEV_PREWARM_WORKER', 'yes'], ['MCP_LIFECYCLE_LEASE_DIR', 'relative']]) {
   await assert.rejects(render(`${key}=${value}\n`), new RegExp(key));
 }
 for (const name of ['code', 'codedb']) {

@@ -231,7 +231,7 @@ export async function renderConfig(options) {
   const deployment = {
     ...(await readEnvFile(envFile, { optional: true })),
     ...Object.fromEntries(
-      ['MCP_WORKSPACE_ROOT', 'MCP_PUBLIC_URL', 'MCP_TUNNEL_NAME', 'MCP_DEV_MAX_OUTPUT_BYTES', 'MCP_DEV_READ_DEFAULT_LINES', 'MCP_DEV_IMPORT_MAX_BYTES', 'MCP_DEV_MAX_SPOOL_BYTES', 'MCP_DEV_SPOOL_TTL_SECONDS', 'MCP_DEV_SPOOL_MAX_TOTAL_BYTES', 'MCP_ONE_MCP_PORT', 'MCP_ONE_MCP_LOG_MAX_SIZE_BYTES', 'MCP_ONE_MCP_LOG_MAX_FILES', 'MCP_PERSONAL_DEFAULT_CWD', 'MCP_TERMINAL_FRONTEND', 'MCP_OWNER_CONTEXT_FILE', 'MCP_OWNER_ENV_FILE', 'MCP_SKILL_POLICY_FILE', 'MCP_SKILL_JEV_ENABLED', 'MCP_SKILL_JEV_ENV_FILE', 'MCP_LOCAL_SERVERS_FILE', 'BRIDGE_COLD_START', 'BRIDGE_BACKEND_PORT', 'BRIDGE_WAKE_IDLE_MS', 'MCP_LOCAL_INNER_IDLE_MS', 'MCP_DEV_WORKER_IDLE_MS', 'MCP_LIFECYCLE_LEASE_DIR'].filter((key) => process.env[key] !== undefined).map((key) => [key, process.env[key]]),
+      ['MCP_WORKSPACE_ROOT', 'MCP_PUBLIC_URL', 'MCP_TUNNEL_NAME', 'MCP_DEV_MAX_OUTPUT_BYTES', 'MCP_DEV_READ_DEFAULT_LINES', 'MCP_DEV_IMPORT_MAX_BYTES', 'MCP_DEV_MAX_SPOOL_BYTES', 'MCP_DEV_SPOOL_TTL_SECONDS', 'MCP_DEV_SPOOL_MAX_TOTAL_BYTES', 'MCP_ONE_MCP_PORT', 'MCP_ONE_MCP_LOG_MAX_SIZE_BYTES', 'MCP_ONE_MCP_LOG_MAX_FILES', 'MCP_PERSONAL_DEFAULT_CWD', 'MCP_TERMINAL_FRONTEND', 'MCP_OWNER_CONTEXT_FILE', 'MCP_OWNER_ENV_FILE', 'MCP_SKILL_POLICY_FILE', 'MCP_SKILL_JEV_ENABLED', 'MCP_SKILL_JEV_ENV_FILE', 'MCP_LOCAL_SERVERS_FILE', 'BRIDGE_COLD_START', 'BRIDGE_BACKEND_PORT', 'BRIDGE_WAKE_IDLE_MS', 'BRIDGE_CONNECTOR_POLICY_FILE', 'MCP_LOCAL_INNER_IDLE_MS', 'MCP_DEV_WORKER_IDLE_MS', 'MCP_DEV_PREWARM_WORKER', 'MCP_LIFECYCLE_LEASE_DIR'].filter((key) => process.env[key] !== undefined).map((key) => [key, process.env[key]]),
     ),
   };
   const profileValues = await readEnvFile(path.join(repoRoot, 'config', 'profiles', `${profile}.env`));
@@ -367,6 +367,14 @@ export async function renderConfig(options) {
   const wakeIdleMs = integerSetting('BRIDGE_WAKE_IDLE_MS', 1800000, 1, 2147483647);
   const localIdleMs = integerSetting('MCP_LOCAL_INNER_IDLE_MS', 1800000, 0, 2147483647);
   const devIdleMs = integerSetting('MCP_DEV_WORKER_IDLE_MS', 1800000, 0, 2147483647);
+  const devPrewarmWorker = String(deployment.MCP_DEV_PREWARM_WORKER === '' ? '0' : (deployment.MCP_DEV_PREWARM_WORKER ?? '0'));
+  if (!['0', '1'].includes(devPrewarmWorker)) {
+    throw new Error('MCP_DEV_PREWARM_WORKER must be 0 or 1');
+  }
+  const connectorPolicyFile = String(deployment.BRIDGE_CONNECTOR_POLICY_FILE ?? '').trim();
+  if (connectorPolicyFile && !path.isAbsolute(connectorPolicyFile)) {
+    throw new Error('BRIDGE_CONNECTOR_POLICY_FILE must be an absolute path when set');
+  }
   const oneMcpLogMaxSizeRaw = deployment.MCP_ONE_MCP_LOG_MAX_SIZE_BYTES ?? String(10 * 1024 * 1024);
   const oneMcpLogMaxSize = Number(oneMcpLogMaxSizeRaw);
   if (!Number.isInteger(oneMcpLogMaxSize) || oneMcpLogMaxSize < 1024 * 1024 || oneMcpLogMaxSize > 64 * 1024 * 1024) {
@@ -424,6 +432,7 @@ export async function renderConfig(options) {
 
   rendered.mcpServers.dev.env.MCP_LIFECYCLE_LEASE_DIR = lifecycleLeaseDir;
   rendered.mcpServers.dev.env.MCP_DEV_WORKER_IDLE_MS = String(devIdleMs);
+  if (devPrewarmWorker === '1') rendered.mcpServers.dev.env.MCP_DEV_PREWARM_WORKER = '1';
   rendered.mcpServers.dev.env.MCP_DEV_READ_DEFAULT_LINES = devReadDefaultLinesRaw;
   if (isLocal) {
     rendered.mcpServers.local.env.MCP_LIFECYCLE_LEASE_DIR = lifecycleLeaseDir;
@@ -442,6 +451,9 @@ export async function renderConfig(options) {
     const mirrorFallbackServer = (server) => {
       const mirrored = structuredClone(server);
       delete mirrored.tags;
+      // Do not pre-warm a second Pi Dev execution worker when Local only wakes
+      // the fallback mirror for read-only inspection (tool_list/tool_schema).
+      if (mirrored.env) delete mirrored.env.MCP_DEV_PREWARM_WORKER;
       return mirrored;
     };
     localRendered.mcpServers.dev = mirrorFallbackServer(rendered.mcpServers.dev);
@@ -529,6 +541,7 @@ export async function renderConfig(options) {
     `BRIDGE_COLD_START=${shellSingleQuote(coldStart)}`,
     `BRIDGE_BACKEND_PORT=${shellSingleQuote(String(backendPort))}`,
     `BRIDGE_WAKE_IDLE_MS=${shellSingleQuote(String(wakeIdleMs))}`,
+    ...(connectorPolicyFile ? [`BRIDGE_CONNECTOR_POLICY_FILE=${shellSingleQuote(connectorPolicyFile)}`] : []),
     `MCP_BRIDGE_ROOT=${shellSingleQuote(repoRoot)}`,
     `BRIDGE_STATE_DIR=${shellSingleQuote(stateDir)}`,
     // Single-owner server deployments approve one full-access decision and keep
