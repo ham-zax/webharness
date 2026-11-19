@@ -178,7 +178,7 @@ After=wsl-agent-terminal-broker.service
 EOF
 ) "$dropin" || return 1
   grep -Fq "Environment=MCP_TERMINAL_DEFAULT_CWD=$home" "$systemd_dir/wsl-agent-terminal-broker.service" || return 1
-  grep -Fq "$ROOT/bin/start" "$systemd_dir/mcp-dev-bridge.service" || return 1
+  grep -Fq "ExecStart=$ROOT/bin/run" "$systemd_dir/mcp-dev-bridge.service" || return 1
   grep -Fxq -- '--user daemon-reload' "$home/systemctl.log" || return 1
   grep -Fxq -- '--user enable --now wsl-agent-tmux.service wsl-agent-terminal-broker.service mcp-dev-bridge.service' "$home/systemctl.log" || return 1
   grep -Fxq -- "enable-linger $(id -un)" "$home/loginctl.log" || return 1
