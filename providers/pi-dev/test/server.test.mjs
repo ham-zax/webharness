@@ -244,6 +244,35 @@ test('built-in instructions ship token-efficiency rules ahead of the owner conte
   });
 });
 
+test('startup CLI accelerator detection advertises only present executable tools and omits the line on bare hosts', async t => {
+  const { env } = await fixture('unrestricted');
+  const binDir = await fs.mkdtemp(path.join(os.tmpdir(), 'pi-dev-accel-bin-'));
+  const bareDir = await fs.mkdtemp(path.join(os.tmpdir(), 'pi-dev-bare-bin-'));
+  t.after(async () => {
+    await fs.rm(binDir, { recursive: true, force: true });
+    await fs.rm(bareDir, { recursive: true, force: true });
+  });
+
+  for (const name of ['ast-grep', 'jq', 'pueue', 'difft', 'just', 'mcp-inspector']) {
+    const file = path.join(binDir, name);
+    await fs.writeFile(file, '#!/usr/bin/env sh\nexit 0\n', { mode: 0o755 });
+  }
+  // Non-executable file and shadow `sg` must never be advertised.
+  await fs.writeFile(path.join(binDir, 'yq'), '#!/usr/bin/env sh\nexit 0\n', { mode: 0o644 });
+  await fs.writeFile(path.join(bareDir, 'sg'), '#!/usr/bin/env sh\nexit 0\n', { mode: 0o755 });
+
+  await withClient({ ...env, PATH: binDir }, async client => {
+    const published = client.getInstructions();
+    assert.match(published, /Host CLI accelerators available: ast-grep, jq, pueue, difft, just, mcp-inspector \(/);
+    assert.doesNotMatch(published, /Host CLI accelerators available:.*\byq\b/);
+  });
+
+  await withClient({ ...env, PATH: bareDir }, async client => {
+    const published = client.getInstructions();
+    assert.doesNotMatch(published, /Host CLI accelerators available:/);
+  });
+});
+
 test('list_directory exposes a bounded read-only listing through MCP', async () => {
   const { workspaceRoot, env } = await fixture();
   await fs.mkdir(path.join(workspaceRoot, 'ahmed-hamza-workout'));

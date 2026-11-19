@@ -8,6 +8,7 @@ import { StdioServerTransport, serveStdio } from '@modelcontextprotocol/server/s
 import { createStdioErrorReporter } from './stdio-diagnostics.mjs';
 import { z } from 'zod';
 import { canonicalDefaultCwd, canonicalWorkspaceRoot, resolveUserCwd, resolveWorkspaceCwd } from './boundary.mjs';
+import { detectHostCliAccelerators, formatCliAcceleratorsInstruction } from './cli-accelerators.mjs';
 import { fileURLToPath } from 'node:url';
 import { IdleExecutionWorker, serveExecutionWorker } from './idle-worker.mjs';
 import { pruneBashSpools } from './spool-gc.mjs';
@@ -80,9 +81,13 @@ const EXECUTION_EFFICIENCY_INSTRUCTIONS = [
   '- Long sessions: around 80k-100k tokens of context, write a short non-secret handoff (state, decisions, remaining work, last commits) and continue in a fresh session when practical.',
 ].join('\n');
 
+const DETECTED_CLI_ACCELERATORS_LINE = formatCliAcceleratorsInstruction(detectHostCliAccelerators());
+
 function serverInstructions(ownerContext) {
-  const builtIn = `${FILE_ACCESS_INSTRUCTIONS}\n\n${EXECUTION_EFFICIENCY_INSTRUCTIONS}`;
-  return ownerContext ? `${builtIn}\n\n${ownerContext}` : builtIn;
+  const parts = [FILE_ACCESS_INSTRUCTIONS, EXECUTION_EFFICIENCY_INSTRUCTIONS];
+  if (DETECTED_CLI_ACCELERATORS_LINE) parts.push(DETECTED_CLI_ACCELERATORS_LINE);
+  if (ownerContext) parts.push(ownerContext);
+  return parts.join('\n\n');
 }
 
 async function loadOwnerContext(file) {
