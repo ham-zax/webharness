@@ -72,9 +72,9 @@ wake proxy returns an HTTP request ID and logs forwarding attempts and outcomes.
 New diagnostic records exclude invocation arguments and contents. See
 [reliability guidance](reliability.md) for coverage and mutation-state semantics.
 
-External client/1MCP correlation and the legacy inner-1MCP path remain unresolved.
-HTTP request IDs do not automatically correlate with MCP call IDs. Production
-connector incidents still need their client, route, timestamp, and request ID.
+External client/1MCP correlation remains unresolved. HTTP request IDs do not
+automatically correlate with MCP call IDs. Production connector incidents still
+need their client, route, timestamp, and request ID.
 
 **Do it when** a future incident shows a name-search need that repeated bounded
 listings cannot meet, or when a gateway rejection must be attributed to a

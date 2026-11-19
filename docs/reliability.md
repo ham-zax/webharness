@@ -79,9 +79,9 @@ storage failures do not fail requests.
 
 HTTP request IDs and MCP call IDs are separate. External 1MCP and connector
 layers must preserve metadata or supply the bridge between them. This change
-does not claim complete tracing through those external layers, or through the
-legacy inner-1MCP path. Local recovery still never automatically replays a failed
-mutation and retains the inspect-before-retry error.
+does not claim complete tracing through those external layers. Local recovery
+still never automatically replays a failed mutation and retains the
+inspect-before-retry error.
 
 ## Controlled reliability check
 

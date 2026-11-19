@@ -10,7 +10,7 @@ providers/websession-adapter/ optional HTTP transport, pairing, Python client, o
 providers/terminal/  Terminal MCP, broker, tmux/transcript logic
 providers/browser/   Chrome DevTools facade + resource-local child routing
 providers/browser-fast/ compact observe/execute facade over Agent Browser on Windows + Linux
-providers/local-tools/ stable Local tool broker over inner 1MCP
+providers/local-tools/ stable Local tool broker over DirectLocalServerPool
 providers/skill-library/ native read-only policy/catalog/search/reader
 skill-library/       reviewed distributable packs and explicit readable-file policy
 extensions/          engineering-checkout domain packs; the public reference ships generic extension machinery but excludes these machine/domain-specific packs
