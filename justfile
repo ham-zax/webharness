@@ -8,11 +8,10 @@ set shell := ["bash", "-euo", "pipefail", "-c"]
 default:
     @just --list
 
-# Fast core verification: bridge, local-tools, skill-library, websession-adapter, lib.
+# Fast core verification: bridge, local-tools, skill-library, lib, plus websession-adapter when present.
 test-fast:
     @tmp="$(mktemp /tmp/wh-test-fast.XXXXXX.log)"; trap 'rm -f "$tmp"' EXIT; \
-      set +e; \
-      node --test \
+      files=( \
         lib/bridge/test/connector-policy.test.mjs \
         lib/bridge/test/wake-proxy.test.mjs \
         lib/bridge/test/http-diagnostics.test.mjs \
@@ -20,28 +19,26 @@ test-fast:
         providers/local-tools/test/server.test.mjs \
         providers/local-tools/test/shutdown.test.mjs \
         providers/skill-library/test/server.test.mjs \
-        providers/websession-adapter/test/schema-hint.test.mjs \
-        providers/websession-adapter/test/protocol-store.test.mjs \
-        providers/websession-adapter/test/instructions.test.mjs >"$tmp" 2>&1; \
+      ); \
+      if [ -d providers/websession-adapter/test ]; then \
+        files+=( \
+          providers/websession-adapter/test/schema-hint.test.mjs \
+          providers/websession-adapter/test/protocol-store.test.mjs \
+          providers/websession-adapter/test/instructions.test.mjs \
+        ); \
+      fi; \
+      set +e; \
+      node --test "${files[@]}" >"$tmp" 2>&1; \
       rc=$?; set -e; \
       grep -E '^(ℹ (tests|pass|fail|cancelled|skipped)|✖ )' "$tmp" || true; \
       if [ "$rc" -ne 0 ]; then grep -n -A10 '✖ ' "$tmp" | head -n 40 || true; fi; \
       exit "$rc"
 
-# Run pi-dev unit tests + server integration suite.
+# Run all pi-dev unit tests + server integration suites.
 test-pidev:
     @tmp="$(mktemp /tmp/wh-test-pidev.XXXXXX.log)"; trap 'rm -f "$tmp"' EXIT; \
       set +e; \
-      node --test \
-        providers/pi-dev/test/call-diagnostics.test.mjs \
-        providers/pi-dev/test/idle-worker.test.mjs \
-        providers/pi-dev/test/list-directory.test.mjs \
-        providers/pi-dev/test/run-script.test.mjs \
-        providers/pi-dev/test/search.test.mjs \
-        providers/pi-dev/test/render.test.mjs \
-        providers/pi-dev/test/boundary.test.mjs \
-        providers/pi-dev/test/files.test.mjs \
-        providers/pi-dev/test/server.test.mjs >"$tmp" 2>&1; \
+      node --test providers/pi-dev/test/*.test.mjs >"$tmp" 2>&1; \
       rc=$?; set -e; \
       grep -E '^(ℹ (tests|pass|fail|cancelled|skipped)|✖ )' "$tmp" || true; \
       if [ "$rc" -ne 0 ]; then grep -n -A10 '✖ ' "$tmp" | head -n 40 || true; fi; \
@@ -55,7 +52,7 @@ test-shell:
       echo "=== lifecycle.sh ===" >>"$tmp"; bash tests/lifecycle.sh >>"$tmp" 2>&1; rc2=$?; \
       set -e; \
       grep -E '^(===|not ok |[0-9]+ tests,)' "$tmp" || true; \
-      exit $((rc1 + rc2))
+      exit $((rc1 != 0 || rc2 != 0))
 
 # Run full verification sequentially (fast + pi-dev + shell).
 test-all: test-fast test-pidev test-shell
@@ -104,9 +101,14 @@ inspect-dev METHOD="tools/list" *ARGS="":
       -e "MCP_DEV_TERMINAL_SOCKET=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/wsl-agent-terminal.sock" \
       --method {{METHOD}} {{ARGS}} node providers/pi-dev/server.mjs
 
-# Probe live local WebHarness HTTP MCP endpoint (pass extra --header args if auth required).
+# Probe live local WebHarness HTTP MCP endpoint (resolves MCP_ONE_MCP_PORT from env/.env, default 3050).
 inspect-mcp METHOD="tools/list" *ARGS="":
-    mcp-inspector --cli --transport http --method {{METHOD}} {{ARGS}} http://127.0.0.1:43050/mcp
+    @port="${MCP_ONE_MCP_PORT:-}"; \
+      if [ -z "$port" ] && [ -f .env ]; then \
+        port="$(grep -E '^MCP_ONE_MCP_PORT=' .env | tail -n 1 | cut -d= -f2- | tr -d "\"' \r" || true)"; \
+      fi; \
+      port="${port:-3050}"; \
+      mcp-inspector --cli --transport http --method {{METHOD}} {{ARGS}} "http://127.0.0.1:${port}/mcp"
 
 # Check personal CLI toolbox qualification.
 toolbox-check:
@@ -119,6 +121,35 @@ render PROFILE="personal":
 # Check live WebHarness status.
 status:
     ./bin/status
+
+# Compact host audit: pueued + CLI toolbox summary + WebHarness status overview.
+host-audit:
+    @echo "=== pueued ==="
+    @if command -v systemctl >/dev/null 2>&1; then \
+      echo "service: $(systemctl --user is-active pueued.service 2>/dev/null || echo inactive)"; \
+    fi
+    @if command -v pueue >/dev/null 2>&1; then \
+      pueue status; \
+    else \
+      echo "pueue: not installed"; \
+    fi
+    @echo "=== toolbox ==="
+    @mode=""; \
+      if [ -f "${HOME}/.local/state/mcp-dev-bridge/bridge.env" ] && grep -Eq "MCP_BRIDGE_PROFILE=['\"]?server" "${HOME}/.local/state/mcp-dev-bridge/bridge.env"; then \
+        mode="--headless"; \
+      fi; \
+      out="$(bash scripts/check-personal-toolbox.sh $mode 2>&1 || true)"; \
+      printf '%s\n' "$out" | grep -E '^(Personal|Headless|MISSING|INVALID|SUMMARY)' || true
+    @echo "=== status ==="
+    @./bin/status | grep -E '^(desired state:|public URL:|local health:|public health:|cloudflared:|watchdog:|user-systemd:|  MCP endpoint:|  issues:|WARN:)' || true
+
+# Verify staged whitespace/conflicts, commit staged changes, and push main.
+ship $MSG:
+    @test -n "$MSG" || { echo "ship requires a non-empty commit message" >&2; exit 2; }
+    @if git diff --cached --quiet; then echo "nothing staged to commit" >&2; exit 2; fi
+    git diff --cached --check
+    git commit -m "$MSG"
+    git push origin main
 
 # Render personal config, reload websession-adapter, and trigger detached bridge restart.
 deploy PROFILE="personal":
