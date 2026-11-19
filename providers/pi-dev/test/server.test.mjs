@@ -231,7 +231,9 @@ test('built-in instructions ship token-efficiency rules ahead of the owner conte
   await withClient({ ...env, MCP_OWNER_CONTEXT_FILE: contextFile }, async client => {
     const published = client.getInstructions();
     assert.match(published, /read call with targets \(up to 20\)/);
+    assert.match(published, /Never use run_script for parallel reads, searches, or git history/);
     assert.match(published, /CodeMode: prefer one run_script for short workflows/);
+    assert.match(published, /Replace inline tools\.bash pipelines inside run_script with justfile recipes called via exec\(argv=\["just", \.\.\.\]\)/);
     assert.match(published, /Promise\.all for independent reads/);
     assert.match(published, /Await dependent edits and checks in order/);
     assert.match(published, /tool_batch for independent calls to one downstream server\/tool/);
@@ -268,6 +270,13 @@ test('startup CLI accelerator detection advertises only present executable tools
   });
 
   await withClient({ ...env, PATH: bareDir }, async client => {
+    const published = client.getInstructions();
+    assert.doesNotMatch(published, /Host CLI accelerators available:/);
+  });
+
+  // Restricted (allowlist) mode has no exec/bash tool, so host CLI accelerators must never be advertised.
+  const restricted = await fixture('allowlist');
+  await withClient({ ...restricted.env, PATH: binDir }, async client => {
     const published = client.getInstructions();
     assert.doesNotMatch(published, /Host CLI accelerators available:/);
   });

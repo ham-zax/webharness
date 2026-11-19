@@ -1,3 +1,5 @@
+import { detectHostCliAccelerators, formatCliAcceleratorsInstruction } from '../pi-dev/cli-accelerators.mjs';
+
 const BASE64URL_RE = /^[A-Za-z0-9_-]+$/;
 const TOKEN_RE = /^[A-Za-z0-9_-]{43}$/;
 // Principal credentials are either a 43-character capability or the configured
@@ -48,6 +50,8 @@ export const BATCH_CONTRACT = 'POST /v1/batch?wait=30 uses the same headers and 
 
 export const CWD_CONTRACT = 'GET /v1/cwd reads project context; POST /v1/cwd with the bearer and JSON {"cwd":"/project"} selects it once ({"cwd":null} clears it). Supported Dev calls inherit it; use relative paths. Local Terminal has its own cwd.';
 
+const HOST_CLI_ACCELERATORS_LINE = formatCliAcceleratorsInstruction(detectHostCliAccelerators());
+
 export const HTTP_INSTRUCTIONS = [
   'WebSession HTTP contract:',
   'Use only documented routes; do not probe endpoint names. Send User-Agent: websession-client/1.0. GET /v1/client.py serves a ready-to-use Python client (and GET /v1/about returns client_python_url); you may download it into your own local sandbox /tmp and freely modify, import, or extend it for your workflow—just never write the bearer token into repo files or logs.',
@@ -55,18 +59,27 @@ export const HTTP_INSTRUCTIONS = [
   RESULT_CONTRACT,
   BATCH_CONTRACT,
   CWD_CONTRACT,
-  'Execution efficiency: cache pairing signatures locally instead of re-fetching schemas; group related independent reads/searches into one /v1/batch (or dev_read targets); use a sequential batch/pipe (wait=30+) for ordered edit -> targeted tests -> final review, and run long suites detached (dev_exec detach:true, using argv:["bash","-lc","..."] when shell syntax is needed, + dev_wait) inside one local call. Avoid a separate model round-trip for every inspection, poll, or Git check.',
+  'Execution efficiency: cache pairing signatures locally instead of re-fetching schemas; group related independent reads/searches into one /v1/batch (or dev_read targets); never use dev_run_script for parallel reads, searches, or git history that native dev_read(targets=[...]), dev_search, and dev_review_changes already do natively; replace inline tools.bash pipelines inside dev_run_script with justfile recipes called via dev_exec(argv=["just", ...]); use a sequential batch/pipe (wait=30+) for ordered edit -> targeted tests -> final review, and run long suites detached (dev_exec detach:true, using argv:["bash","-lc","..."] when shell syntax is needed, + dev_wait) inside one local call. Avoid a separate model round-trip for every inspection, poll, or Git check.',
   'Quiet output: keep builds and test logs in /tmp files, and print a short status plus failures (normally <=25 lines), not raw schemas, full diffs, or all passing-test output. Use the client output cap and --save when full output is necessary.',
   'Localized bugs: when the report includes a concrete file, line, and reproduction, inspect that scope and verify the fix with targeted tests before expanding investigation. Do not skip validation.',
   'Deployment: when changing a running adapter or daemon, determine whether its process must restart or reload, then perform a harmless live readiness check before claiming deployment success.',
   'Long sessions: around 80k-100k accumulated context, summarize state, decisions, remaining work and last commits in a short non-secret handoff, then continue in a fresh session when practical.',
+  ...(HOST_CLI_ACCELERATORS_LINE ? [HOST_CLI_ACCELERATORS_LINE] : []),
 ].join('\n');
+
+const HTTP_INSTRUCTIONS_WITHOUT_ACCELERATORS = HOST_CLI_ACCELERATORS_LINE
+  ? HTTP_INSTRUCTIONS.slice(0, -(HOST_CLI_ACCELERATORS_LINE.length + 1))
+  : HTTP_INSTRUCTIONS;
 
 export function webSessionInstructions(instructions) {
   const compacted = compactInstructions(instructions);
-  return typeof compacted === 'string' && compacted
-    ? `${compacted}\n\n${HTTP_INSTRUCTIONS}`
-    : HTTP_INSTRUCTIONS;
+  if (typeof compacted === 'string' && compacted) {
+    const httpPart = HOST_CLI_ACCELERATORS_LINE && compacted.includes('Host CLI accelerators available:')
+      ? HTTP_INSTRUCTIONS_WITHOUT_ACCELERATORS
+      : HTTP_INSTRUCTIONS;
+    return `${compacted}\n\n${httpPart}`;
+  }
+  return HTTP_INSTRUCTIONS;
 }
 
 export function toolListSnapshot(tools, instructions = undefined, defaultCwd = undefined) {

@@ -149,6 +149,12 @@ test('authenticated discovery compacts 1MCP guidance and exposes the capability 
   assert.match(httpGuidance, /POST \/v1\/calls\?wait=15/);
   assert.match(httpGuidance, /Idempotency-Key/);
   assert.match(httpGuidance, /do not probe endpoint names/);
+  assert.match(httpGuidance, /never use dev_run_script for parallel reads, searches, or git history/);
+  assert.match(httpGuidance, /replace inline tools\.bash pipelines inside dev_run_script with justfile recipes called via dev_exec\(argv=\["just", \.\.\.\]\)/);
+
+  // When upstream <dev> instructions already report host CLI accelerators, avoid duplicating the line.
+  const withUpstreamAccel = webSessionInstructions('<dev>\nHost CLI accelerators available: jq (prefer for JSON queries).\n</dev>');
+  assert.equal((withUpstreamAccel.match(/Host CLI accelerators available:/g) || []).length, 1);
 
   const snapshot = await (await fetch(`${base}/v1/tools`, { headers: auth })).json();
   assert.equal(snapshot.default_cwd, '/tmp/web-session-work');

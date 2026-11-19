@@ -71,8 +71,8 @@ const FILE_ACCESS_INSTRUCTIONS = [
 // Token-cost rules for every client: each tool result stays in context and is re-billed on every later turn.
 const EXECUTION_EFFICIENCY_INSTRUCTIONS = [
   'Execution efficiency (each result stays in context and is re-billed on every later turn):',
-  '- Batch inspection: read several known files in one read call with targets (up to 20) and locate code with search first; avoid one call per file or per Git check.',
-  '- CodeMode: prefer one run_script for short workflows with related Dev calls. Use Promise.all for independent reads. Await dependent edits and checks in order. Print only the useful summary; intermediate results stay out of context.',
+  '- Batch inspection: read several known files in one read call with targets (up to 20) and locate code with search first; avoid one call per file or per Git check. Never use run_script for parallel reads, searches, or git history that native read(targets=[...]), search, and review_changes already do natively.',
+  '- CodeMode: prefer one run_script for short workflows with related Dev calls when steps compute arguments dynamically. Use Promise.all for independent reads inside a dynamic script. Await dependent edits and checks in order. Replace inline tools.bash pipelines inside run_script with justfile recipes called via exec(argv=["just", ...]). Print only the useful summary; intermediate results stay out of context.',
   '- Use a direct tool for a single operation. Check command exit results before dependent steps; exec and bash can return failure text without throwing.',
   '- When Local is available, use tool_batch for independent calls to one downstream server/tool. run_script calls Dev tools only and cannot call wait. Start long work detached or in Terminal, then observe it with wait.',
   '- Quiet output: send builds and test runs to a /tmp log and print only the exit status plus the tail or failing lines (normally 25 lines or fewer); never dump schemas, full diffs, or passing-test output. Truncated outputs print a saved remote log path; inspect it with read(path=...). Call review_changes once after the final related edit instead of repeating Git status or diff (pass rev="HEAD~3..HEAD" or a commit SHA to inspect history read-only).',
@@ -81,11 +81,9 @@ const EXECUTION_EFFICIENCY_INSTRUCTIONS = [
   '- Long sessions: around 80k-100k tokens of context, write a short non-secret handoff (state, decisions, remaining work, last commits) and continue in a fresh session when practical.',
 ].join('\n');
 
-const DETECTED_CLI_ACCELERATORS_LINE = formatCliAcceleratorsInstruction(detectHostCliAccelerators());
-
-function serverInstructions(ownerContext) {
+function serverInstructions(ownerContext, cliAcceleratorsLine = null) {
   const parts = [FILE_ACCESS_INSTRUCTIONS, EXECUTION_EFFICIENCY_INSTRUCTIONS];
-  if (DETECTED_CLI_ACCELERATORS_LINE) parts.push(DETECTED_CLI_ACCELERATORS_LINE);
+  if (cliAcceleratorsLine) parts.push(cliAcceleratorsLine);
   if (ownerContext) parts.push(ownerContext);
   return parts.join('\n\n');
 }
@@ -111,6 +109,10 @@ if (!['allowlist', 'unrestricted'].includes(mode)) {
   console.error('MCP_DEV_SHELL_MODE must be allowlist or unrestricted');
   process.exit(2);
 }
+
+const DETECTED_CLI_ACCELERATORS_LINE = mode === 'unrestricted'
+  ? formatCliAcceleratorsInstruction(detectHostCliAccelerators())
+  : null;
 
 const pathMode = process.env.MCP_DEV_PATH_MODE ?? 'workspace';
 if (!['workspace', 'user'].includes(pathMode)) {
@@ -263,7 +265,7 @@ function registerTool(name, config, handler) {
 function createPiDevServer() {
   const server = new McpServer(
     { name: 'pi-dev', version: '0.1.0' },
-    { instructions: serverInstructions(ownerContext) },
+    { instructions: serverInstructions(ownerContext, DETECTED_CLI_ACCELERATORS_LINE) },
   );
   for (const [name, config, handler] of toolRegistrations) {
     server.registerTool(name, config, handler);
@@ -448,7 +450,7 @@ registerTool('write', {
     encoding: z.enum(['utf8', 'base64']).optional().describe('Content encoding: utf8 (default) or base64 for binary'),
     mode: z.string().regex(/^0?[0-7]{3}$/).optional().describe('Octal permissions such as "755"; default keeps the replaced file mode or uses the umask'),
     mkdir_parents: z.boolean().optional().describe('Create missing parent directories'),
-    expected_bytes: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional().describe('Expected decoded content size in bytes; checked before mutation'),
+    expected_bytes: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional().describe('Expected decoded content size in bytes; checked before saving'),
     expected_sha256: z.string().regex(/^(?:sha256:)?[a-f0-9]{64}$/i).optional().describe('Expected decoded content SHA-256; optional sha256: prefix')
   })
 }, async (args, extra) => invoke(async () => {
@@ -523,7 +525,7 @@ if (pathMode === 'user') {
 
   registerTool('file_ops', {
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
-    description: 'Move or delete existing regular files without following final-component symlinks. Batches are preflighted together but are not transactional; a later failure may leave earlier operations applied and is reported as partial or uncertain. Moves are same-filesystem hard-link plus guarded source unlink, never overwrite an existing destination, and do not fall back to copying across filesystems.',
+    description: 'Move or delete existing regular files without following final-component symlinks. Batches are preflighted together but are not transactional; a later failure may leave earlier operations applied and is reported as partial or uncertain. Moves use same-filesystem hard-link plus guarded source unlink, never overwrite an existing destination, and do not fall back to copying across filesystems.',
     inputSchema: z.object({
       operations: z.array(z.discriminatedUnion('kind', [
         z.object({
@@ -607,7 +609,7 @@ const scriptToolNames = toolRegistrations
   .filter(name => !SCRIPT_EXCLUDED_TOOLS.has(name));
 
 registerTool('run_script', {
-  description: `Run one JavaScript program that calls Dev tools directly, so loops, filters and conditional edit/test cycles stay inside one call instead of one model round trip per step. The script runs as an async function body: top-level await and return work. Call tools.<name>({...}) with exactly the arguments of the same-named Dev tool (${scriptToolNames.join(', ')}). text(value) adds output; the returned value is reported too. Nested calls are real and are not rolled back if the script later fails. The script has no filesystem, network, timers, imports or process access; its only capability is the listed tools. store() and load() do not persist across calls. timeout_ms does not extend the connector window. cwd is the base directory for nested calls that omit cwd or path, so relative paths inside the script resolve from it. Return types: write, review_changes, and exec({ detach: true }) resolve to structured objects; other tools resolve to strings. exec and bash resolve on non-zero exits with "[exit N ...]" rather than throwing, so check for "[exit 0" when verifying commands.`,
+  description: `Run one JavaScript program that calls Dev tools directly, so loops, filters and conditional edit/test cycles stay inside one call instead of one model round trip per step. The script runs as an async function body: top-level await and return work. Call tools.<name>({...}) with exactly the arguments of the same-named Dev tool (${scriptToolNames.join(', ')}). text(value) adds output; the returned value is reported too. Nested calls apply directly and are not rolled back if a later step fails. The script has no filesystem, network, timers, imports or process access; its only capability is the listed tools. store() and load() do not persist across calls. timeout_ms does not extend the connector window. cwd is the base directory for nested calls that omit cwd or path, so relative paths inside the script resolve from it. Return types: write, review_changes, and exec({ detach: true }) resolve to structured objects; other tools resolve to strings. exec and bash resolve on non-zero exits with "[exit N ...]" rather than throwing, so check for "[exit 0" when verifying commands.`,
   inputSchema: z.object({
     script: z.string().min(1).max(65536).describe('Raw JavaScript as a JSON string, no code fence. Runs as an async function body.'),
     cwd: cwdPath.optional().describe('Base directory for nested calls that omit cwd or path; relative paths inside the script resolve from it'),
