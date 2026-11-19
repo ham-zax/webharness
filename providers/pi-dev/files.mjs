@@ -632,6 +632,7 @@ async function mutatePlannedTarget(plan, signal, operations) {
   let mutationStarted = false;
   let mutationCompleted = false;
   let primaryError = null;
+  let closeErrorToThrow = null;
   try {
     handle = await operations.openFile(
       plan.canonicalPath,
@@ -660,7 +661,6 @@ async function mutatePlannedTarget(plan, signal, operations) {
       await handle.truncate(proposed.length);
     }
     mutationCompleted = true;
-    return { state: 'APPLIED' };
   } catch (error) {
     primaryError = error;
     if (error && typeof error === 'object' && !('mutationStarted' in error)) {
@@ -672,12 +672,14 @@ async function mutatePlannedTarget(plan, signal, operations) {
       try {
         await handle.close();
       } catch (closeError) {
-        if (!primaryError && !mutationCompleted) throw closeError;
+        if (!primaryError && !mutationCompleted) closeErrorToThrow = closeError;
         // A close failure must not overwrite the real mutation error, and once the
         // complete write/truncate sequence succeeded the target is already APPLIED.
       }
     }
   }
+  if (closeErrorToThrow) throw closeErrorToThrow;
+  return { state: 'APPLIED' };
 }
 
 export async function runEdit({ pathMode = 'workspace', defaultCwd, workspaceRoot, targets }, signal, operationOverrides = {}) {

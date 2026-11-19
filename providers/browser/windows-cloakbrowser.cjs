@@ -14,7 +14,7 @@ function readEndpoint() {
   try {
     const [rawPort, websocketPath] = fs.readFileSync(activePortFile, 'utf8').trim().split(/\r?\n/);
     const port = Number(rawPort);
-    if (!Number.isInteger(port) || port < 1 || port > 65535 || !/^\/devtools\/browser\//.test(websocketPath || '')) return null;
+    if (!Number.isInteger(port) || port < 1 || port > 65535 || !(websocketPath || '').startsWith('/devtools/browser/')) return null;
     return {
       port,
       browserUrl: `http://127.0.0.1:${port}`,

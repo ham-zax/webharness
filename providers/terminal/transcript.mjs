@@ -7,7 +7,6 @@ import {
   rename,
   stat,
   unlink,
-  writeFile,
 } from 'node:fs/promises';
 import path from 'node:path';
 

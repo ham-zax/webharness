@@ -341,7 +341,7 @@ export class LocalWaitSources {
         return matched
           ? { status: 'matched', baseline, evidence: `http=${normalizedUrl} status=${response.status}` }
           : { status: 'pending', baseline };
-      } catch (error) {
+      } catch {
         if (signal?.aborted) throw waitError('WAIT_ABORTED', 'wait request was aborted');
         return { status: 'pending', baseline };
       } finally {

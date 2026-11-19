@@ -90,7 +90,7 @@ export class SkillLibrary {
         const card = cards.find(card => card.id === judgment.id);
         return { ...discoveryCard(card), judgment: { fit: judgment.fit, score: judgment.score, confidence: judgment.confidence } };
       });
-      const { selected, status, ...details } = selection;
+      const { selected: _selected, status, ...details } = selection;
       const result = { mode: 'jev', status, ...(!collection ? { collections } : {}),
         candidates, total: candidates.length, hasMore: false, selection: details };
       if (Buffer.byteLength(JSON.stringify(result)) > RESPONSE_BYTES) throw failure('RESPONSE_TOO_LARGE', 'selected candidate metadata exceeds response budget; use a smaller limit');

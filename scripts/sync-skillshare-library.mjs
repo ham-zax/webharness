@@ -16,7 +16,6 @@ import { SkillLibrary } from '../providers/skill-library/library.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const DEFAULT_OUT_DIR = path.join(REPO_ROOT, 'skill-library');
-const DEFAULT_STARTER_POLICY = path.join(DEFAULT_OUT_DIR, 'policy.example.json');
 const DEFAULT_SKILLSHARE_DIR = process.env.SKILLSHARE_SKILLS_DIR
   || path.join(os.homedir(), '.config', 'skillshare', 'skills');
 const DEFAULT_EXTRA_PACKS_DIR = process.env.WEBHARNESS_EXTRA_SKILL_PACKS_DIR

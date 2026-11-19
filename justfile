@@ -57,6 +57,13 @@ test-shell:
 # Run full verification sequentially (fast + pi-dev + shell).
 test-all: test-fast test-pidev test-shell
 
+# Run Oxlint + landmines correctness and anti-flake checks.
+lint:
+    @if [ ! -x node_modules/.bin/oxlint ]; then \
+      echo "oxlint not installed; run 'npm ci' in repo root first" >&2; exit 2; \
+    fi
+    ./node_modules/.bin/oxlint
+
 # Queue any long command in pueued (parallel=1, survives bridge restarts).
 queue *CMD:
     pueue add --print-task-id -- {{CMD}}

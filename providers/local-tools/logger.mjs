@@ -62,7 +62,7 @@ export class LocalDiagnosticLogger {
   }
 
   async _appendBounded(payload) {
-    const { file, maxSize, maxFiles } = this.policy;
+    const { file, maxSize } = this.policy;
     const bytes = Buffer.byteLength(payload, 'utf8');
     if (bytes > maxSize) return;
     await fs.mkdir(path.dirname(file), { recursive: true, mode: 0o700 });

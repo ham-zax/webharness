@@ -752,7 +752,7 @@ export class LocalToolBroker {
     const homogeneous = prepared.every(
       item => item.route.server === prepared[0].route.server && item.route.tool === prepared[0].route.tool
     );
-    const results = new Array(prepared.length);
+    const results = Array.from({ length: prepared.length });
 
     if (sequential) {
       let failedPrior = false;

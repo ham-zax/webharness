@@ -5,7 +5,6 @@ import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import test from 'node:test';
-import { fileURLToPath } from 'node:url';
 import { runCli } from '../cli.mjs';
 import { SkillLibrary } from '../library.mjs';
 import { createSampleLibrary } from './fixtures/sample-library.mjs';

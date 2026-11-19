@@ -155,7 +155,7 @@ test('ensure migrates a pre-existing borrowed token and leaves the connector ses
   writeState(stateDir, { tokens: { access_token: borrowed.token, token_type: 'Bearer' } });
   const service = fakeService({ sessionsDir });
 
-  const { log, sink: write } = sink();
+  const { sink: write } = sink();
   const result = await ensureIdentity({ stateDir, base: 'http://127.0.0.1:3050', sessionsDir, fetchImpl: service.fetchImpl, log: write });
 
   assert.equal(result.provisioned, true);

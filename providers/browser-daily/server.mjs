@@ -21,7 +21,7 @@ import path from "node:path";
 function isExecutableFile(candidate) {
   try {
     const real = fs.realpathSync(candidate);
-    if (/xdg-open$/.test(real)) return false;
+    if (real.endsWith('xdg-open')) return false;
     if (!fs.statSync(real).isFile()) return false;
     fs.accessSync(real, fs.constants.X_OK);
     return true;

@@ -1,0 +1,46 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "ignorePatterns": [
+    "node_modules/**",
+    "providers/*/node_modules/**",
+    "third_party/**",
+    "skill-library/**",
+    "skills/**",
+    "agents/**",
+    "examples/**",
+    ".worktrees/**",
+    "scripts/gemini-auto-continue.user.js"
+  ],
+  "jsPlugins": [
+    {
+      "name": "landmines-testing",
+      "specifier": "@interfere/landmines/testing"
+    }
+  ],
+  "categories": {
+    "correctness": "error"
+  },
+  "rules": {
+    "eslint/no-control-regex": "off",
+    "landmines-testing/no-fixed-sleep": [
+      "error",
+      {
+        "allow": {
+          "lib/test/stdio-diagnostics.test.mjs": 1,
+          "providers/local-tools/test/server.test.mjs": 5,
+          "providers/pi-dev/test/cross-process-edit.test.mjs": 2,
+          "providers/pi-dev/test/file-ops.test.mjs": 3,
+          "providers/pi-dev/test/files.test.mjs": 1,
+          "providers/pi-dev/test/wait-engine.test.mjs": 4,
+          "providers/pi-dev/test/wait-local.test.mjs": 2,
+          "providers/pi-dev/test/wait-state.test.mjs": 5,
+          "providers/terminal/test/broker-client.test.mjs": 4,
+          "providers/terminal/test/broker.test.mjs": 3,
+          "providers/terminal/test/human-lease.test.mjs": 2,
+          "providers/terminal/test/transcript-writer.test.mjs": 3,
+          "providers/websession-adapter/test/protocol-store.test.mjs": 1
+        }
+      }
+    ]
+  }
+}

@@ -300,7 +300,7 @@ test('browser router lists tools through the child that serves the first Linux c
 
 test('browser router rejects a path form the selected target cannot use before starting a child', async () => {
   const created = [];
-  const childFactory = async (target, config) => {
+  const childFactory = async () => {
     const child = {
       alive: true,
       async listTools() { return { tools: [] }; },

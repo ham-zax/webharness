@@ -53,7 +53,8 @@ export async function closeExternalOwnedPage(websocket, targetId, {
       ended = true;
       clearTimeout(timeout);
       socket.close();
-      error ? reject(error) : resolve();
+      if (error) reject(error);
+      else resolve();
     };
     socket.addEventListener('open', () => {
       try { socket.send(JSON.stringify({ id: 1, method: 'Target.closeTarget', params: { targetId } })); }

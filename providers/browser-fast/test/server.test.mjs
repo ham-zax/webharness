@@ -1201,7 +1201,7 @@ test('execute fails closed after a click opens multiple targets without relabeli
   assert.deepEqual(result.steps.map(step => step.status), ['completed', 'not_run']);
   assert.match(result.transition_error, /multiple new tabs/i);
   assert.equal(calls.some(call => call.commands[0]?.[0] === 'wait'), false);
-  assert.equal(calls.some(call => call.commands[0]?.[0] === 'tab' && /^POPUP-/.test(call.commands[0][1])), false);
+  assert.equal(calls.some(call => call.commands[0]?.[0] === 'tab' && String(call.commands[0][1] ?? '').startsWith('POPUP-')), false);
 });
 
 test('uncertain mutating failures are never reported as safe failures', async () => {
@@ -1405,10 +1405,10 @@ test('browser-fast inspect runs compact diagnostics on the pinned tab', async t 
   assert.equal(con.kind, 'console');
   assert.deepEqual(dispatched.at(-1).commands, [['console', '--clear']]);
 
-  const netRes = await browser.inspect({ tab: 'TAB-1', kind: 'network', filter: 'api' });
+  await browser.inspect({ tab: 'TAB-1', kind: 'network', filter: 'api' });
   assert.deepEqual(dispatched.at(-1).commands, [['network', 'requests', '--filter', 'api']]);
 
-  const evalRes = await browser.inspect({ tab: 'TAB-1', kind: 'eval', expression: 'document.title' });
+  await browser.inspect({ tab: 'TAB-1', kind: 'eval', expression: 'document.title' });
   assert.deepEqual(dispatched.at(-1).commands, [['eval', 'document.title']]);
 
   const shotRes = await browser.inspect({ tab: 'TAB-1', kind: 'screenshot', full_page: true, annotate: true, path: '/tmp/test-shot.png' });

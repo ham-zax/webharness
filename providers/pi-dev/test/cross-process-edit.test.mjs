@@ -5,7 +5,6 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { fileURLToPath } from 'node:url';
 import { runEdit } from '../files.mjs';
 import { withMutationPath, withMutationPaths } from '../mutation-coordinator.mjs';
 
