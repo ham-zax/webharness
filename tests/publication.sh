@@ -89,8 +89,11 @@ test_public_classifier_matches_reference_boundary() {
     providers/browser-fast/example \
     providers/local-tools/example \
     providers/skill-library/example \
-    skill-library/policy.json \
-    skill-library/packs/thinking/LICENSE \
+    skill-library/README.md \
+    skill-library/policy.example.json \
+    skill-library/packs/critical-thinking/LICENSE \
+    skill-library/packs/lateral-thinking/PROVENANCE.md \
+    skill-library/packs/anthropic/LICENSE \
     scripts/bootstrap-personal.sh \
     scripts/manage-extension.mjs \
     bin/extension \
@@ -106,6 +109,8 @@ test_public_classifier_matches_reference_boundary() {
     experiments/example \
     extensions/job-application/extension.json \
     skills/example/SKILL.md \
+    skill-library/policy.json \
+    skill-library/packs/active/example/SKILL.md \
     providers/websession-adapter/server.mjs \
     scripts/install-websession-adapter-user.sh \
     systemd/websession-adapter.service.in \

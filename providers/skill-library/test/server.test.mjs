@@ -6,15 +6,17 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
-import { createSkillServer, DEFAULT_POLICY } from '../server.mjs';
+import { createSkillServer } from '../server.mjs';
 import { SkillLibrary } from '../library.mjs';
 import { LocalToolBroker, createLocalBrokerServer } from '../../local-tools/server.mjs';
+import { createSampleLibrary } from './fixtures/sample-library.mjs';
 
 const serverPath = fileURLToPath(new URL('../server.mjs', import.meta.url));
 
 test('real standalone stdio server exposes only two read-only tools and completes find/read', async t => {
+  const { policyPath } = await createSampleLibrary(t);
   const transport = new StdioClientTransport({ command: process.execPath, args: [serverPath],
-    env: { PATH: process.env.PATH }, stderr: 'pipe' });
+    env: { PATH: process.env.PATH, MCP_SKILL_POLICY_FILE: policyPath }, stderr: 'pipe' });
   const client = new Client({ name: 'skill-library-test', version: '1.0.0' });
   t.after(() => client.close());
   await client.connect(transport);
@@ -38,10 +40,11 @@ test('real standalone stdio server exposes only two read-only tools and complete
 });
 
 test('standalone stdio server negotiates modern 2026-07-28 and serves concurrent calls', async t => {
+  const { policyPath } = await createSampleLibrary(t);
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [serverPath],
-    env: { PATH: process.env.PATH },
+    env: { PATH: process.env.PATH, MCP_SKILL_POLICY_FILE: policyPath },
     stderr: 'pipe',
   });
   const client = new Client(
@@ -61,11 +64,12 @@ test('standalone stdio server negotiates modern 2026-07-28 and serves concurrent
 });
 
 test('Local maintains its five-tool ABI and routes skill discovery, schema and reads', async t => {
+  const { policyPath } = await createSampleLibrary(t);
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'skills-local-'));
   t.after(() => fs.rm(directory, { recursive: true, force: true }));
   const configPath = path.join(directory, 'mcp.json');
   await fs.writeFile(configPath, JSON.stringify({ mcpServers: { 'skill-library': { command: 'fixture' } } }));
-  const skillServer = createSkillServer(await SkillLibrary.open(DEFAULT_POLICY));
+  const skillServer = createSkillServer(await SkillLibrary.open(policyPath));
   const [innerClientTransport, innerServerTransport] = InMemoryTransport.createLinkedPair();
   const innerClient = new Client({ name: 'skill-inner-test', version: '1.0.0' });
   await skillServer.connect(innerServerTransport);

@@ -128,6 +128,10 @@ init-connector-policy:
       echo "Kept existing ~/.config/mcp-dev-bridge/connector-policy.yaml."; \
     fi
 
+# Sync local Skillshare skills (+ optional extra packs) into gitignored skill-library/packs/ and skill-library/policy.json.
+sync-skills *ARGS="":
+    node scripts/sync-skillshare-library.mjs {{ARGS}}
+
 # Check live WebHarness status.
 status:
     ./bin/status

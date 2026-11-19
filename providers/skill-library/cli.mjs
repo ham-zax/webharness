@@ -1,11 +1,14 @@
 #!/usr/bin/env node
+import fsSync from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { SkillLibrary } from './library.mjs';
 import { readApprovedEntry } from './files.mjs';
 
-const DEFAULT_POLICY = fileURLToPath(new URL('../../skill-library/policy.json', import.meta.url));
+const LOCAL_POLICY = fileURLToPath(new URL('../../skill-library/policy.json', import.meta.url));
+const EXAMPLE_POLICY = fileURLToPath(new URL('../../skill-library/policy.example.json', import.meta.url));
+const DEFAULT_POLICY = fsSync.existsSync(LOCAL_POLICY) ? LOCAL_POLICY : EXAMPLE_POLICY;
 
 export async function runCli(argv) {
   const [command = 'help', ...rest] = argv;

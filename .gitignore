@@ -11,3 +11,8 @@ __pycache__/
 .worktrees/
 node_modules/
 .pi/
+skill-library/packs/*
+!skill-library/packs/anthropic/
+!skill-library/packs/critical-thinking/
+!skill-library/packs/lateral-thinking/
+skill-library/policy.json

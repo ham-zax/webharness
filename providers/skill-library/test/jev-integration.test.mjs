@@ -6,20 +6,22 @@ import test from 'node:test';
 import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
 import { SkillLibrary } from '../library.mjs';
 import { JevSelector } from '../jev-selection.mjs';
-import { createSkillServer, DEFAULT_POLICY } from '../server.mjs';
+import { createSkillServer } from '../server.mjs';
 import { runCli } from '../cli.mjs';
 import { renderConfig } from '../../../scripts/render-config.mjs';
 import { reply } from './fixtures/typesafe.mjs';
+import { createSampleLibrary } from './fixtures/sample-library.mjs';
 
 function selector(fetchImpl) {
   return new JevSelector({ loadConfig: async () => ({ apiKey: 'fixture-key', model: 'jev-latest' }), fetchImpl });
 }
 
-test('ordinary discovery stays offline even when optional configuration is available or invalid', async () => {
+test('ordinary discovery stays offline even when optional configuration is available or invalid', async t => {
+  const { policyPath } = await createSampleLibrary(t);
   let calls = 0;
   const jevSelector = new JevSelector({ loadConfig: async () => { calls += 1; throw new Error('invalid optional configuration'); },
     fetchImpl: async () => { calls += 1; throw new Error('must not contact network'); } });
-  const library = await SkillLibrary.open(DEFAULT_POLICY, { jevSelector });
+  const library = await SkillLibrary.open(policyPath, { jevSelector });
   const found = await library.find({ query: 'thinking-first-principles' });
   assert.equal(found.mode, 'lexical');
   assert.equal(found.candidates.length, 1);
@@ -33,12 +35,13 @@ test('ordinary discovery stays offline even when optional configuration is avail
 });
 
 test('MCP find/read uses optional Jev without a lexical prefilter or additional tools', async t => {
+  const { policyPath } = await createSampleLibrary(t);
   let calls = 0;
   const jevSelector = selector(async (_, request) => {
     calls += 1;
     return new Response(JSON.stringify(reply(JSON.parse(request.body).questions)));
   });
-  const library = await SkillLibrary.open(DEFAULT_POLICY, { jevSelector });
+  const library = await SkillLibrary.open(policyPath, { jevSelector });
   assert.equal((await library.find({ query: 'zzzzunmatched' })).total, 0);
   const server = createSkillServer(library);
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -54,7 +57,7 @@ test('MCP find/read uses optional Jev without a lexical prefilter or additional 
   } });
   assert.equal(found.isError, undefined);
   assert.equal(found.structuredContent.status, 'selected');
-  assert.equal(found.structuredContent.selection.considered, 28);
+  assert.equal(found.structuredContent.selection.considered, 3);
   assert.equal(found.structuredContent.candidates.length, 1);
   assert.equal(calls, 2);
   const card = found.structuredContent.candidates[0];
@@ -65,8 +68,9 @@ test('MCP find/read uses optional Jev without a lexical prefilter or additional 
   assert.ok(read.structuredContent.readableFiles.every(item => item.digest === undefined));
 });
 
-test('policy-approved router adaptation is surfaced alongside original instructions', async () => {
-  const library = await SkillLibrary.open(DEFAULT_POLICY);
+test('policy-approved router adaptation is surfaced alongside original instructions', async t => {
+  const { policyPath } = await createSampleLibrary(t);
+  const library = await SkillLibrary.open(policyPath);
   const card = (await library.find({ query: 'thinking-model-router' })).candidates[0];
   const read = await library.read({ id: card.id, revision: card.revision });
   assert.match(read.content, /thinking-skills:thinking-/);
@@ -76,10 +80,11 @@ test('policy-approved router adaptation is surfaced alongside original instructi
 });
 
 test('source changes during model evaluation invalidate the result before returning candidates', async t => {
+  const { policyPath } = await createSampleLibrary(t);
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'jev-stale-'));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
   const exported = path.join(root, 'library');
-  await runCli(['export', '--destination', exported]);
+  await runCli(['export', '--policy', policyPath, '--destination', exported]);
   let calls = 0;
   const jevSelector = selector(async (_, request) => {
     calls += 1;
@@ -109,10 +114,11 @@ test('Local rendering forwards credential paths and enablement, never secret val
 });
 
 test('cancellation covers catalog inspection before and after model selection', async t => {
+  const { policyPath } = await createSampleLibrary(t, { extraSkills: 62 });
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'jev-cancel-'));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
   const exported = path.join(root, 'library');
-  await runCli(['export', '--destination', exported]);
+  await runCli(['export', '--policy', policyPath, '--destination', exported]);
   const controller = new AbortController();
   let calls = 0;
   const jevSelector = selector(async (_, request) => {

@@ -5,7 +5,10 @@ import path from 'node:path';
 import test from 'node:test';
 import { SkillLibrary } from '../library.mjs';
 import { runCli } from '../cli.mjs';
-import { DEFAULT_POLICY } from '../server.mjs';
+import { createSampleLibrary } from './fixtures/sample-library.mjs';
+import { fileURLToPath } from 'node:url';
+
+const EXAMPLE_POLICY = fileURLToPath(new URL('../../../skill-library/policy.example.json', import.meta.url));
 
 async function fixture(t) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-library-'));
@@ -33,23 +36,22 @@ async function fixture(t) {
   return { root, pack, policy, policyPath, main, library: await SkillLibrary.open(policyPath) };
 }
 
-test('bundled corpus works without external installations and preserves source invocation flags', async () => {
-  const library = await SkillLibrary.open(DEFAULT_POLICY);
+test('starter policy opens cleanly with default starter packs and sample corpus preserves invocation flags', async t => {
+  const starterLib = await SkillLibrary.open(EXAMPLE_POLICY);
+  const starterCatalog = await starterLib.catalog();
+  assert.ok(starterCatalog.skills.length >= 40);
+  const starterBrowse = await starterLib.find({ limit: 1 });
+  assert.deepEqual(
+    starterBrowse.collections.map(item => item.id).sort(),
+    ['anthropic', 'critical-thinking', 'lateral-thinking'],
+  );
+
+  const { policyPath } = await createSampleLibrary(t);
+  const library = await SkillLibrary.open(policyPath);
   const catalog = await library.catalog();
-  assert.equal(catalog.skills.length, 150);
-  assert.ok(catalog.skills.every(card => card.collection !== 'decision-reflection'));
-  assert.deepEqual(catalog.skills.filter(card => card.collection === 'writing').map(card => card.id), ['writing/asd-ste100']);
-  assert.equal(catalog.skills.filter(card => card.collection === 'sentry').length, 6);
-  for (const id of ['decision-reflection/grilling', 'writing/writing-for-agents',
-    'sentry/improve-codebase-architecture', 'sentry/constraint-driven-development']) {
-    assert.ok(!catalog.skills.some(card => card.id === id));
-    await assert.rejects(library.read({ id, revision: catalog.skills[0].revision }), { code: 'UNKNOWN_SKILL' });
-  }
+  assert.equal(catalog.skills.length, 5);
   const browse = await library.find({ limit: 1 });
-  assert.deepEqual(browse.collections.map(item => item.id).sort(),
-    ['academic', 'active', 'anthropic', 'emil', 'lateral-thinking',
-      'marketing', 'sentry', 'thinking', 'writing']);
-  // Jev evaluates one collection at a time; every collection must stay scannable.
+  assert.deepEqual(browse.collections.map(item => item.id).sort(), ['academic', 'active', 'thinking']);
   for (const { count } of browse.collections) assert.ok(count <= 64, `collection of ${count} exceeds the Jev scope`);
   const result = await library.find({ query: 'thinking-pre-mortem', collection: 'thinking' });
   assert.equal(result.mode, 'lexical');
@@ -62,8 +64,9 @@ test('bundled corpus works without external installations and preserves source i
   assert.equal(read.readableFiles.length, 3);
 });
 
-test('every collection is discoverable and its bundled Aegis instructions read', async () => {
-  const library = await SkillLibrary.open(DEFAULT_POLICY);
+test('every collection is discoverable and Aegis instructions read cleanly', async t => {
+  const { policyPath } = await createSampleLibrary(t);
+  const library = await SkillLibrary.open(policyPath);
   for (const { id } of (await library.find({ limit: 1 })).collections) {
     const browse = await library.find({ collection: id, limit: 20 });
     assert.ok(browse.candidates.length > 0, `collection ${id} has no discoverable skills`);

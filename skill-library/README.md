@@ -1,20 +1,24 @@
-# Bundled skill library
+# Skill Library
 
-This distributable library is separate from the retained ChatGPT snapshot in
-`skills/` and machine-local `agents/skills/`.
+Read-only local skill packs served by `providers/skill-library/`.
 
-- `policy.json`: approved readable files and compatibility declarations for every
-  collection.
-- `packs/`: source snapshots; the policy enables 150 skills across nine
-  collections. Matt Pocock and Addy Osmani entries are disabled and cannot be
-  discovered, selected, read or exported through the provider.
+## Default starter packs (tracked & ready out of the box)
 
+WebHarness ships **3 starter packs (40 skills)** in `skill-library/packs/` via `policy.example.json` so fresh installs work immediately and show how custom packs are structured:
 
-`packs/active/` carries the bundled Aegis method pack so its instructions are
-readable through the same native reader. Each collection keeps its own `LICENSE`
-and `PROVENANCE.md`; those notices and per-skill third-party files are preserved.
+- `packs/critical-thinking/` — 28 MIT-licensed mental-model and decision-analysis skills (including `thinking-model-router`)
+- `packs/lateral-thinking/` — 9 lateral-thinking skills (`analogy`, `concept-fan`, `inversion`, `lateral`, `provocation`, `random-stimulus`, `scamper`, `six-hats`, `worst-idea`)
+- `packs/anthropic/` — 3 Apache-2.0 Anthropic design skills (`frontend-design`, `canvas-design`, `theme-factory`)
 
-Metadata and revision hashes are calculated in memory; there is no generated
-catalog file to maintain. Upstream license and provenance files stay with packs.
-Use `./bin/webharness skills check` after reviewed changes.
-See [the guide](../docs/skill-library.md) for deployment, MCP, updates and exports.
+## Adding your own private skills (gitignored)
+
+Every other folder added under `skill-library/packs/` and `skill-library/policy.json` are **gitignored** and excluded from public staging so personal or Skillshare skills are never pushed publicly.
+
+Sync your local Skillshare library (or any `--source DIR` folder) into gitignored packs + `policy.json`:
+
+```bash
+just sync-skills
+./bin/webharness skills check
+```
+
+See [docs/skill-library.md](../docs/skill-library.md) for setup, Skillshare sync, Jev mode, and CLI commands.

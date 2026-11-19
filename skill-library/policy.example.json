@@ -1,0 +1,620 @@
+{
+  "version": 1,
+  "packs": [
+    {
+      "id": "critical-thinking",
+      "root": "packs/critical-thinking",
+      "license": "MIT",
+      "source": "https://github.com/tjboudreaux/cc-thinking-skills",
+      "skills": [
+        {
+          "id": "thinking-bounded-rationality",
+          "directory": "thinking-bounded-rationality",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "thinking-bounded-rationality/SKILL.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "reviewed"
+          }
+        },
+        {
+          "id": "thinking-circle-of-competence",
+          "directory": "thinking-circle-of-competence",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "thinking-circle-of-competence/SKILL.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "reviewed"
+          }
+        },
+        {
+          "id": "thinking-cynefin",
+          "directory": "thinking-cynefin",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "thinking-cynefin/SKILL.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "reviewed"
+          }
+        },
+        {
+          "id": "thinking-effectuation",
+          "directory": "thinking-effectuation",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "thinking-effectuation/SKILL.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "reviewed"
+          }
+        },
+        {
+          "id": "thinking-first-principles",
+          "directory": "thinking-first-principles",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "thinking-first-principles/SKILL.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "reviewed"
+          }
+        },
+        {
+          "id": "thinking-five-whys-plus",
+          "directory": "thinking-five-whys-plus",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "thinking-five-whys-plus/SKILL.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "reviewed"
+          }
+        },
+        {
+          "id": "thinking-jobs-to-be-done",
+          "directory": "thinking-jobs-to-be-done",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "thinking-jobs-to-be-done/SKILL.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "reviewed"
+          }
+        },
+        {
+          "id": "thinking-kepner-tregoe",
+          "directory": "thinking-kepner-tregoe",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "thinking-kepner-tregoe/SKILL.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "reviewed"
+          }
+        },
+        {
+          "id": "thinking-lindy-effect",
+          "directory": "thinking-lindy-effect",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "thinking-lindy-effect/SKILL.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "reviewed"
+          }
+        },
+        {
+          "id": "thinking-map-territory",
+          "directory": "thinking-map-territory",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "thinking-map-territory/SKILL.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "reviewed"
+          }
+        },
+        {
+          "id": "thinking-margin-of-safety",
+          "directory": "thinking-margin-of-safety",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "thinking-margin-of-safety/SKILL.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "reviewed"
+          }
+        },
+        {
+          "id": "thinking-model-combination",
+          "directory": "thinking-model-combination",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "thinking-model-combination/SKILL.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "reviewed"
+          }
+        },
+        {
+          "id": "thinking-model-router",
+          "directory": "thinking-model-router",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "thinking-model-router/SKILL.md",
+            "thinking-model-router/WEBHARNESS.md"
+          ],
+          "compatibility": {
+            "kind": "requires-tools",
+            "requires": [
+              "skill-library.find_skills",
+              "skill-library.read_skill"
+            ],
+            "verification": "reviewed"
+          },
+          "adaptation": "thinking-model-router/WEBHARNESS.md"
+        },
+        {
+          "id": "thinking-ooda",
+          "directory": "thinking-ooda",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "thinking-ooda/SKILL.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "reviewed"
+          }
+        },
+        {
+          "id": "thinking-opportunity-cost",
+          "directory": "thinking-opportunity-cost",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "thinking-opportunity-cost/SKILL.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "reviewed"
+          }
+        },
+        {
+          "id": "thinking-pre-mortem",
+          "directory": "thinking-pre-mortem",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "thinking-pre-mortem/SKILL.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "reviewed"
+          }
+        },
+        {
+          "id": "thinking-probabilistic",
+          "directory": "thinking-probabilistic",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "thinking-probabilistic/SKILL.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "reviewed"
+          }
+        },
+        {
+          "id": "thinking-red-team",
+          "directory": "thinking-red-team",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "thinking-red-team/SKILL.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "reviewed"
+          }
+        },
+        {
+          "id": "thinking-reversibility",
+          "directory": "thinking-reversibility",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "thinking-reversibility/SKILL.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "reviewed"
+          }
+        },
+        {
+          "id": "thinking-scientific-method",
+          "directory": "thinking-scientific-method",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "thinking-scientific-method/SKILL.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "reviewed"
+          }
+        },
+        {
+          "id": "thinking-second-order",
+          "directory": "thinking-second-order",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "thinking-second-order/SKILL.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "reviewed"
+          }
+        },
+        {
+          "id": "thinking-socratic",
+          "directory": "thinking-socratic",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "thinking-socratic/SKILL.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "reviewed"
+          }
+        },
+        {
+          "id": "thinking-steel-manning",
+          "directory": "thinking-steel-manning",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "thinking-steel-manning/SKILL.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "reviewed"
+          }
+        },
+        {
+          "id": "thinking-systems",
+          "directory": "thinking-systems",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "thinking-systems/SKILL.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "reviewed"
+          }
+        },
+        {
+          "id": "thinking-theory-of-constraints",
+          "directory": "thinking-theory-of-constraints",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "thinking-theory-of-constraints/SKILL.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "reviewed"
+          }
+        },
+        {
+          "id": "thinking-thought-experiment",
+          "directory": "thinking-thought-experiment",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "thinking-thought-experiment/SKILL.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "reviewed"
+          }
+        },
+        {
+          "id": "thinking-triz",
+          "directory": "thinking-triz",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "thinking-triz/SKILL.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "reviewed"
+          }
+        },
+        {
+          "id": "thinking-via-negativa",
+          "directory": "thinking-via-negativa",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "thinking-via-negativa/SKILL.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "reviewed"
+          }
+        }
+      ]
+    },
+    {
+      "id": "lateral-thinking",
+      "root": "packs/lateral-thinking",
+      "license": "Upstream terms retained (https://github.com/danium/lateral-thinking)",
+      "source": "https://github.com/danium/lateral-thinking",
+      "skills": [
+        {
+          "id": "analogy",
+          "directory": "analogy",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "analogy/SKILL.md",
+            "analogy/references/domain-pool.md",
+            "analogy/references/worked-example.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "reviewed"
+          }
+        },
+        {
+          "id": "concept-fan",
+          "directory": "concept-fan",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "concept-fan/SKILL.md",
+            "concept-fan/references/worked-example.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "reviewed"
+          }
+        },
+        {
+          "id": "inversion",
+          "directory": "inversion",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "inversion/SKILL.md",
+            "inversion/references/worked-example.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "reviewed"
+          }
+        },
+        {
+          "id": "lateral",
+          "directory": "lateral",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "lateral/SKILL.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "reviewed"
+          }
+        },
+        {
+          "id": "provocation",
+          "directory": "provocation",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "provocation/SKILL.md",
+            "provocation/references/provocation-templates.md",
+            "provocation/references/worked-example.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "reviewed"
+          }
+        },
+        {
+          "id": "random-stimulus",
+          "directory": "random-stimulus",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "random-stimulus/SKILL.md",
+            "random-stimulus/references/stimulus-pools.md",
+            "random-stimulus/references/worked-example.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "reviewed"
+          }
+        },
+        {
+          "id": "scamper",
+          "directory": "scamper",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "scamper/SKILL.md",
+            "scamper/references/question-bank.md",
+            "scamper/references/worked-example.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "reviewed"
+          }
+        },
+        {
+          "id": "six-hats",
+          "directory": "six-hats",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "six-hats/SKILL.md",
+            "six-hats/references/hats-guide.md",
+            "six-hats/references/worked-example.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "reviewed"
+          }
+        },
+        {
+          "id": "worst-idea",
+          "directory": "worst-idea",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "worst-idea/SKILL.md",
+            "worst-idea/references/worked-example.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "reviewed"
+          }
+        }
+      ]
+    },
+    {
+      "id": "anthropic",
+      "root": "packs/anthropic",
+      "license": "Apache License 2.0",
+      "source": "https://github.com/anthropics/skills",
+      "skills": [
+        {
+          "id": "canvas-design",
+          "directory": "canvas-design",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "canvas-design/LICENSE.txt",
+            "canvas-design/SKILL.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "reviewed"
+          }
+        },
+        {
+          "id": "frontend-design",
+          "directory": "frontend-design",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "frontend-design/LICENSE.txt",
+            "frontend-design/SKILL.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "reviewed"
+          }
+        },
+        {
+          "id": "theme-factory",
+          "directory": "theme-factory",
+          "readable": [
+            "LICENSE",
+            "PROVENANCE.md",
+            "theme-factory/LICENSE.txt",
+            "theme-factory/SKILL.md",
+            "theme-factory/themes/arctic-frost.md",
+            "theme-factory/themes/botanical-garden.md",
+            "theme-factory/themes/desert-rose.md",
+            "theme-factory/themes/forest-canopy.md",
+            "theme-factory/themes/golden-hour.md",
+            "theme-factory/themes/midnight-galaxy.md",
+            "theme-factory/themes/modern-minimalist.md",
+            "theme-factory/themes/ocean-depths.md",
+            "theme-factory/themes/sunset-boulevard.md",
+            "theme-factory/themes/tech-innovation.md"
+          ],
+          "compatibility": {
+            "kind": "instruction-only",
+            "requires": [],
+            "verification": "reviewed"
+          }
+        }
+      ]
+    }
+  ]
+}

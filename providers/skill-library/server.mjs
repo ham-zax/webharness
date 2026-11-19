@@ -1,11 +1,14 @@
 #!/usr/bin/env node
+import fsSync from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { Server } from '@modelcontextprotocol/server';
 import { serveStdio } from '@modelcontextprotocol/server/stdio';
 import { createStdioErrorReporter } from '../../lib/stdio-diagnostics.mjs';
 import { SkillLibrary } from './library.mjs';
 
-export const DEFAULT_POLICY = fileURLToPath(new URL('../../skill-library/policy.json', import.meta.url));
+const LOCAL_POLICY = fileURLToPath(new URL('../../skill-library/policy.json', import.meta.url));
+const EXAMPLE_POLICY = fileURLToPath(new URL('../../skill-library/policy.example.json', import.meta.url));
+export const DEFAULT_POLICY = fsSync.existsSync(LOCAL_POLICY) ? LOCAL_POLICY : EXAMPLE_POLICY;
 const bounded = (maxLength = 512) => ({ type: 'string', minLength: 1, maxLength });
 const annotations = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
 export const TOOLS = [

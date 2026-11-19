@@ -4,8 +4,21 @@
 # scripts/stage-public.sh must consume this exact decision.
 is_public_path() {
   case "$1" in
+    skill-library/README.md | \
+    skill-library/policy.example.json | \
+    skill-library/packs/anthropic/* | \
+    skill-library/packs/critical-thinking/* | \
+    skill-library/packs/lateral-thinking/*)
+      # Default public starter packs. All other local packs and policy.json stay private.
+      return 0
+      ;;
+    skill-library/packs/* | \
+    skill-library/policy.json | \
+    skill-library/local/*)
+      # Local operator skill packs stay private and gitignored.
+      return 1
+      ;;
     skill-library/*)
-      # Reviewed portable packs. skills/* stays private.
       return 0
       ;;
     docs/aegis/work/* | \

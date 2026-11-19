@@ -8,10 +8,9 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { runCli } from '../cli.mjs';
 import { SkillLibrary } from '../library.mjs';
+import { createSampleLibrary } from './fixtures/sample-library.mjs';
 
 const execFile = promisify(execFileCallback);
-const repositoryRoot = path.resolve(fileURLToPath(new URL('../../../', import.meta.url)));
-const defaultPolicy = path.join(repositoryRoot, 'skill-library/policy.json');
 
 async function fixture(t, definitions) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-library-fixes-'));
@@ -64,7 +63,8 @@ async function fixture(t, definitions) {
 }
 
 test('router exposes and versions its WebHarness tool mapping', async t => {
-  const bundled = await SkillLibrary.open(defaultPolicy);
+  const { root: sampleRoot, policyPath: samplePolicy, policy } = await createSampleLibrary(t);
+  const bundled = await SkillLibrary.open(samplePolicy);
   const card = (await bundled.find({ query: 'thinking-model-router' })).candidates[0];
   assert.equal(card.id, 'thinking/thinking-model-router');
   const router = await bundled.read({ id: card.id, revision: card.revision });
@@ -84,14 +84,13 @@ test('router exposes and versions its WebHarness tool mapping', async t => {
   assert.match(adaptation.content, /provides no execution authority/);
   assert.doesNotMatch(adaptation.content, /thinking-skills:thinking-/);
 
-  const policy = JSON.parse(await fs.readFile(defaultPolicy, 'utf8'));
   const thinking = policy.packs.find(pack => pack.id === 'thinking');
   const routerPolicy = thinking.skills.find(skill => skill.id === 'thinking-model-router');
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-router-revision-'));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
   const packRoot = path.join(root, thinking.root);
   for (const file of routerPolicy.readable) {
-    const source = path.join(repositoryRoot, 'skill-library', thinking.root, file);
+    const source = path.join(sampleRoot, thinking.root, file);
     const target = path.join(packRoot, file);
     await fs.mkdir(path.dirname(target), { recursive: true });
     await fs.copyFile(source, target);
@@ -187,16 +186,17 @@ test('large dependency sets remain readable, revision-bound and executable after
   await assert.rejects(library.read({ id: card.id, revision: card.revision }), { code: 'STALE_REVISION' });
 });
 
-test('complete bundled exports preserve shared academic references and large assets', async t => {
+test('complete exports preserve shared academic references and large assets', async t => {
+  const { policyPath: samplePolicy } = await createSampleLibrary(t, { includeLargeAsset: true });
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-library-complete-'));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
   const destination = path.join(root, 'exported');
-  const exported = await runCli(['export', '--destination', destination]);
-  assert.equal(exported.skills, 150);
+  const exported = await runCli(['export', '--policy', samplePolicy, '--destination', destination]);
+  assert.equal(exported.skills, 6);
   const library = await SkillLibrary.open(path.join(destination, 'policy.json'));
   const academic = (await library.find({ collection: 'academic', query: 'academic-paper' })).candidates[0];
   const reference = await library.read({ id: academic.id, revision: academic.revision, file: 'shared/output_language_pair.md' });
   assert.ok(reference.content.length > 0);
   assert.ok(Buffer.byteLength(JSON.stringify(reference)) <= 24 * 1024);
-  assert.ok((await fs.stat(path.join(destination, 'packs/active/impeccable/scripts/data/font-index.json'))).size > 1024 * 1024);
+  assert.ok((await fs.stat(path.join(destination, 'packs/active/asset-demo/data/large.json'))).size > 1024 * 1024);
 });
