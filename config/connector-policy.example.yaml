@@ -6,20 +6,44 @@
 # Simple global toggle (still supported):
 #   connector_write_tools: false
 #
+# Optional: set log_client_identifiers: true to emit connector_client_identified
+# diagnostic records on initialize and tools/list even when clients: is empty and
+# default is permissive. (Whenever clients: is non-empty or a policy override is active,
+# connector_client_identified is already logged automatically.)
+# log_client_identifiers: true
+#
 # Per-client policy (recommended): keep honest annotations & direct write tools for
 # ordinary clients while enabling the read-only transport shim only for specific connectors.
+# Matching notes:
+#   - Client rules are evaluated top-to-bottom (first match wins); multiple keys inside
+#     match: use AND semantics; unknown/misspelled match keys disable the rule (fail closed).
+#   - query_client is exact case-insensitive (?client=<value>).
+#   - user_agent and client_info are case-insensitive unanchored regexes (invalid regex
+#     falls back to substring match). Escape regex metacharacters like ( ) . or match a
+#     distinctive token (e.g. "ChatGPT-User"). Use block YAML or quotes for patterns with commas.
+#   - Connector policy is client-asserted ergonomics, not an authorization boundary.
 default:
   connector_write_tools: true
   compat_annotations: false
   banner: default
 
 clients:
-  # Example: register https://<host>/mcp?client=chatgpt or match User-Agent / clientInfo.name.
+  # Example: disable outer write tools & apply compat_annotations only for Gemini
+  # (which sends User-Agent: Google, or register https://<host>/mcp?client=gemini),
+  # while ChatGPT, Claude, and other connectors inherit default (direct write tools enabled).
   # Inspect wake-proxy diagnostics ("event":"connector_client_identified") after one connection
   # to see the exact User-Agent and clientInfo values your client sends.
-  chatgpt:
+  # Use banner: batch-writes instead of default if you want aggressive single-call batching.
+  gemini:
     match:
-      query_client: chatgpt
+      user_agent: "^Google$"
     connector_write_tools: false
     compat_annotations: true
-    banner: batch-writes
+    banner: default
+
+  gemini_query:
+    match:
+      query_client: gemini
+    connector_write_tools: false
+    compat_annotations: true
+    banner: default
