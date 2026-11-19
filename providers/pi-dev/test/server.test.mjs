@@ -218,6 +218,8 @@ test('built-in instructions ship without an owner context file', async () => {
   await withClient(env, async client => {
     const published = client.getInstructions();
     assert.match(published, /Discover names with list_directory/i);
+    assert.match(published, /AGENTS\.md.*CLAUDE\.md.*GEMINI\.md/);
+    assert.match(published, /~\/\.gemini\/GEMINI\.md/);
     assert.match(published, /do not conclude that filesystem access is unavailable/i);
   });
 });

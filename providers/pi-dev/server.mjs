@@ -65,6 +65,7 @@ const FILE_ACCESS_INSTRUCTIONS = [
   '- If exec or bash fails, do not conclude that filesystem access is unavailable. Retry with read or list_directory.',
   '- Messages start with a code. ENOENT: correct or discover the path. ENOTDIR or EISDIR: call list_directory. EACCES: report the restriction.',
   '- A folder the user names may differ from the directory name. List the parent, then use the exact name.',
+  '- Repository and host guidance: before editing a repository, check for and read its AGENTS.md (or CLAUDE.md / GEMINI.md if present). When host-level global guidance is relevant (for example ~/.gemini/GEMINI.md, ~/.codex/AGENTS.md, or ~/.claude/CLAUDE.md), read only the relevant sections.',
   '- Read only, unless the user asks for a change.',
 ].join('\n');
 
