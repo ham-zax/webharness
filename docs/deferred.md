@@ -43,7 +43,7 @@ Keep existing MCP guidance until separate-task evidence supports a replacement.
 
 **Do it when** restarts become frequent (for example automated deploys or cutovers), when an agent needs detached jobs to survive restarts, or when a tunnel-only crash needs restarting without bouncing the bridge.
 
-**Verify on ARM first** (`ssh -F ssh_config ARM` from the private `myservers` repo), then WSL.
+**Verify on a secondary headless Linux/ARM server first**, then WSL.
 
 ## Fuzzy repository-name resolution and per-call gateway diagnostics
 
@@ -51,8 +51,8 @@ Keep existing MCP guidance until separate-task evidence supports a replacement.
 read-only directory listing from the same report shipped; these two parts did
 not.
 
-**Context.** An assistant read `repo/ahmed-hamza-workout` as `repo/Ahmed
-Hamza/workout`, reported `ENOENT`, then reported that repository access was
+**Context.** An assistant read `repo/my-notes-todo` as `repo/My
+Notes/todo`, reported `ENOENT`, then reported that repository access was
 lost because `exec` and `bash` failed. The listing tool and the built-in
 file-access instructions settle both failures: one listing resolves the slug,
 and the policy forbids the "access is gone" conclusion.

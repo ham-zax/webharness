@@ -3,7 +3,7 @@
 
 Usage:
   export WS_TOKEN="<capability-token>"
-  export WS_BASE_URL="https://mcp.hamza.my.id"  # optional
+  export WS_BASE_URL="https://mcp.example.com"  # optional
 
   python3 examples/websession_client.py instructions
   python3 examples/websession_client.py signatures
@@ -25,7 +25,7 @@ import urllib.request
 import uuid
 from typing import Any
 
-DEFAULT_BASE_URL = "https://mcp.hamza.my.id"
+DEFAULT_BASE_URL = "https://mcp.example.com"
 
 
 class SubmissionUnknown(RuntimeError):

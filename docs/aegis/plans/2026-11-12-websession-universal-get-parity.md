@@ -30,7 +30,7 @@ Read-set:
 The October plan deliberately leaves universal GET unchanged.
 The compatibility note describes that earlier change accurately, but needs a new current-behavior entry.
 
-Live checks use `https://mcp.hamza.my.id` and a fresh `bin/adapter issue-cap --here` capability.
+Live checks use `https://mcp.example.com` and a fresh `bin/adapter issue-cap --here` capability.
 The probe revokes that capability after use. No bearer belongs in this document.
 
 | Check | Observed result |
