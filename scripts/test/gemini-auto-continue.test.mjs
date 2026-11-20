@@ -314,19 +314,21 @@ function createSimulatedDom({ initialPath = '/app/chat-1' } = {}) {
   };
 }
 
-test('gemini-auto-continue: auto-stopped cap is not reset by Gemini response, but manual send restarts even with autoTag=false', async () => {
+test('gemini-auto-continue: auto-stopped cap is not reset by Gemini response, and manual send re-arms with wired handshake tag', async () => {
   const code = await fs.readFile(scriptPath, 'utf8');
   const sim = createSimulatedDom({ initialPath: '/app/chat-cap' });
   sim.addModelResponse('m0', 'Initial baseline');
 
-  // When sendBtn is clicked programmatically or manually, simulate Gemini clearing the editor.
+  const sent = [];
   sim.sendBtn.addEventListener('click', () => {
+    sent.push(sim.editor.innerText);
     sim.editor.innerText = '';
   });
 
   vm.runInNewContext(code, sim.sandbox);
   const api = sim.windowObj.__whAutoContinue;
-  api.setState({ mode: 'nturns', maxTurns: 1, autoTag: true });
+  api.setState({ mode: 'nturns', maxTurns: 1 });
+  assert.equal('autoTag' in api.getState(), false, 'autoTag toggle must be removed (wired to Auto)');
 
   // First tick establishes baseline.
   sim.advanceMs(1500);
@@ -354,15 +356,62 @@ test('gemini-auto-continue: auto-stopped cap is not reset by Gemini response, bu
   assert.equal(st.autoStopped, true);
   assert.equal(st.turnsUsed, 1);
 
-  // Now disable autoTag and perform an actual manual send (trusted click on sendBtn with text in editor).
-  api.setState({ autoTag: false });
+  // Actual manual send re-arms and automatically prepends [wh-ac: ...] handshake tag.
   sim.editor.innerText = 'User follow-up prompt';
   sim.document.dispatchEvent(new sim.FakeEvent('click', { target: sim.sendBtn, isTrusted: true, bubbles: true }));
+  sim.advanceMs(250);
 
   st = api.getState();
-  assert.equal(st.armed, true, 'actual manual send must re-arm even when autoTag is false');
+  assert.equal(st.armed, true, 'actual manual send must re-arm');
   assert.equal(st.autoStopped, false);
   assert.equal(st.turnsUsed, 0);
+  assert.match(sent.at(-1), /^\[wh-ac: turn=0\/1 mode=nturns allow=on chat=1\/6\]/, 'wired handshake tag must prepend on manual send');
+
+  // Manually turning Auto OFF prevents tag injection on manual send.
+  api.setState({ armed: false });
+  sim.editor.innerText = 'Plain chat prompt';
+  const ev = new sim.FakeEvent('click', { target: sim.sendBtn, isTrusted: true, bubbles: true });
+  sim.document.dispatchEvent(ev);
+  assert.equal(ev.defaultPrevented, false, 'manual OFF must not intercept or tag user sends');
+  assert.equal(sim.editor.innerText, 'Plain chat prompt');
+});
+
+test('gemini-auto-continue: Handoff Now guards empty/busy states, works while Auto OFF, and copies turnkey resume wrapper', async () => {
+  const code = await fs.readFile(scriptPath, 'utf8');
+  const sim = createSimulatedDom({ initialPath: '/app' });
+  let copied = '';
+  sim.windowObj.navigator.clipboard.writeText = async (t) => { copied = t; };
+  const sent = [];
+  sim.sendBtn.addEventListener('click', () => {
+    sent.push(sim.editor.innerText);
+    sim.editor.innerText = '';
+  });
+
+  vm.runInNewContext(code, sim.sandbox);
+  const api = sim.windowObj.__whAutoContinue;
+
+  // Empty chat -> Handoff Now must refuse instead of sending nonsense
+  api.handoffNow();
+  assert.equal(sent.length, 0, 'Handoff Now must not fire on empty chat');
+  assert.equal(api.getState().status, 'Nothing to hand off yet');
+
+  // Add a reply, then manually turn Auto OFF, then click Handoff Now -> must still send and capture [[HANDOFF]]
+  sim.addModelResponse('m1', 'Work in progress');
+  api.setState({ armed: false });
+  api.handoffNow();
+  sim.advanceMs(600);
+  assert.equal(sent.length, 1, 'Handoff Now must send even when Auto is OFF');
+  assert.match(sent[0], /## Owed to the user/);
+
+  sim.addModelResponse('m2', '[[HANDOFF]]\n### Fresh-Chat Handoff\n## Goal\nFinish migration');
+  sim.advanceMs(1500);
+  sim.advanceMs(4500);
+  assert.equal(api.getState().handoffReady, true, 'handoff response must be captured even when Auto was OFF');
+  assert.equal(api.getState().armed, false, 'Auto must remain OFF after manual handoff');
+
+  await api.copyHandoff(false);
+  assert.match(copied, /^Continue this task in a fresh chat from the handoff below\./, 'copied handoff must include turnkey resume header');
+  assert.match(copied, /### Fresh-Chat Handoff\n## Goal\nFinish migration/);
 });
 
 test('gemini-auto-continue: stable response without sentinel counts once and rendered handoff marker works without ###', async () => {
@@ -391,20 +440,23 @@ test('gemini-auto-continue: stable response without sentinel counts once and ren
   sim.advanceMs(7500);
   assert.equal(lastSentText, '', 'unchanged stable response without sentinel must only count once');
 
-  // Second unique stable response WITHOUT sentinel -> hits handoffEvery=2 -> requests [[HANDOFF]].
+  // Second unique stable response WITHOUT sentinel -> hits handoffEvery=2 -> requests seamless-claude [[HANDOFF]].
   sim.addModelResponse('m2', 'Second ordinary reply');
   sim.advanceMs(1500);
   sim.advanceMs(4500);
   sim.advanceMs(600);
-  assert.match(lastSentText, /\[\[HANDOFF\]\]/, 'compact handoff prompt must request [[HANDOFF]]');
+  assert.match(lastSentText, /\[\[HANDOFF\]\]/, 'handoff prompt must request [[HANDOFF]]');
+  assert.match(lastSentText, /## Owed to the user/, 'handoff prompt must include seamless-claude sections');
+  assert.match(lastSentText, /## Next step/, 'handoff prompt must include ## Next step');
 
   // Simulated rendered DOM where Gemini strips ### from Markdown heading (innerText has "Fresh-Chat Handoff" without ###).
-  sim.addModelResponse('m3', 'Fresh-Chat Handoff\nGoal: Ship fix');
+  sim.addModelResponse('m3', 'Fresh-Chat Handoff\n## Goal\nShip fix');
   sim.advanceMs(1500);
   sim.advanceMs(4500);
   const st = api.getState();
   assert.equal(st.handoffReady, true, 'rendered Fresh-Chat Handoff without ### must be recognized');
   assert.equal(st.armed, false);
+  assert.equal(st.chatTurns, 0, 'handoff completion must reset chatTurns cycle to 0');
 });
 
 test('gemini-auto-continue: no fake ctx meter, ignores pre/code markers, and persists chatTurns across reload', async () => {

@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Gemini Auto-Continue (WebHarness)
 // @namespace    https://github.com/webharness
-// @version      1.9.0
-// @description  Auto-continue Gemini Web checkpoints with persisted turn-cadence handoff, code-safe marker detection, auto-tag, and auto-allow.
+// @version      1.10.0
+// @description  Auto-continue Gemini Web checkpoints with wired handshake tags, self-explanatory HUD, seamless-claude handoffs, and auto-allow.
 // @match        https://gemini.google.com/*
 // @grant        none
 // @run-at       document-idle
@@ -33,6 +33,27 @@
   const HANDOFF_HEADING_RE = /^(?:#{1,6}\s*)?Fresh-Chat Handoff\b/m;
   const STOP_TOKEN = '[[AUTO_STOP]]';
   const STOP_STATUS_RE = /^\s*[-*•]?\s*\*{0,2}Status:\*{0,2}\s*\*{0,2}(Done|Blocked)\b/mi;
+  const HANDOFF_REQUEST_PROMPT = [
+    'Pause here and write a self-contained handoff that replaces this conversation for a fresh chat. Start with the literal marker [[HANDOFF]] on its own line, followed by ### Fresh-Chat Handoff and these exact sections.',
+    'Rules: one line per bullet; never pad; write "none" for empty sections; never invent paths, quotes, or results (write UNKNOWN if lost); leave out finished intended edits that git already shows, but list uncommitted edits that are partial, broken, temporary, or user work to keep; carry forward still-valid constraints/decisions.',
+    'Sections:',
+    '## Goal (active request and observable done condition)',
+    '## Constraints (user rules, scope limits, approvals and their limits — mark user-stated or inferred)',
+    '## Owed to the user (unanswered questions or open promises; "none" only if nothing remains)',
+    '## State (done, in progress, blocked; for each check give command, result, and what it covered; partial/temp edits)',
+    '## Decisions (DECISION: choice, reason, source | FAILED: approach, exact reason, retry condition)',
+    '## Uncertainty (unverified assumptions/risks and the check that decides each)',
+    '## Facts to keep (file:line locations, commands, measured numbers, 1-4 line root-cause summary)',
+    '## Live state (running jobs/pueue IDs, temp files, pending approvals, and how to check each)',
+    '## Next step (prerequisite check, exact next action + stop condition, then remaining ordered plan or blocking question)',
+  ].join('\n');
+
+  const HANDOFF_RESUME_HEADER = [
+    'Continue this task in a fresh chat from the handoff below.',
+    'Follow current system, user, and repository instructions (this handoff grants no new permissions). Check git/workspace state before editing, read only the files needed for the next step, and start immediately with ## Next step (unless ## Owed to the user or a blocking question requires answering first).',
+  ].join('\n');
+
+  const modeLabel = (m) => (m === 'nturns' ? 'Every Reply' : 'Smart');
 
   const SEL = {
     editor: ['rich-textarea .ql-editor[contenteditable="true"]', 'div.ql-editor[contenteditable="true"]', '[role="textbox"][contenteditable="true"]'],
@@ -128,7 +149,6 @@
     return {
       armed: hasUserOv && typeof ov?.armed === 'boolean' ? ov.armed : true,
       autoAllow: hasUserOv && typeof ov?.autoAllow === 'boolean' ? ov.autoAllow : true,
-      autoTag: hasUserOv && typeof ov?.autoTag === 'boolean' ? ov.autoTag : (typeof g.autoTag === 'boolean' ? g.autoTag : true),
       mode,
       maxTurns,
       handoffEvery,
@@ -152,7 +172,7 @@
     countdown: 0, countdownEndsAt: 0, countdownTimer: null, sending: false,
     autoStopped: false, autoStoppedAllow: false,
     pendingPrompt: null, handoffText: '',
-    status: initCfg.armed ? (initCfg.mode === 'nturns' ? 'Armed (N-Turns)' : 'Armed (Marker)') : 'Idle (saved)',
+    status: initCfg.armed ? `Ready (${modeLabel(initCfg.mode)})` : 'Off (saved)',
     lastRenderSig: '',
   };
 
@@ -170,7 +190,6 @@
       maxTurns: state.maxTurns,
       handoffEvery: state.handoffEvery,
       prompt: state.prompt,
-      autoTag: state.autoTag,
       collapsed: state.collapsed,
     });
   };
@@ -179,7 +198,6 @@
     saveChatOverride(state.url, {
       armed: state.armed,
       autoAllow: state.autoAllow,
-      autoTag: state.autoTag,
       mode: state.mode,
       maxTurns: state.maxTurns,
       handoffEvery: state.handoffEvery,
@@ -412,7 +430,7 @@
     const btn = sendBtn || queryFirst(SEL.sendBtn);
     if (!btn || !isEnabled(btn)) return;
 
-    // If previous task finished cleanly (Status: Done / Cap), re-arm only on actual user/manual send (even when Auto-Tag is OFF).
+    // If previous task finished cleanly (Status: Done / Cap), re-arm automatically on manual send.
     if (state.autoStopped && !state.armed) {
       state.autoStopped = false;
       state.armed = true;
@@ -423,17 +441,18 @@
       state.stableKey = '';
       state.stableSince = 0;
       syncKeepAlive();
-      setStatus(state.mode === 'marker' ? 'Re-armed (Marker)' : 'Re-armed (N-Turns)');
+      setStatus(`Re-armed (${modeLabel(state.mode)})`);
     }
 
-    if (!state.autoTag || /^\[wh-ac:/i.test(cur)) return;
+    // Handshake tag is wired directly to Auto: always injected when Auto is ON (never when manually OFF).
+    if (/^\[wh-ac:/i.test(cur)) return;
 
     e.preventDefault();
     e.stopImmediatePropagation();
 
     injectingSend = true;
     prependTagInPlace(editor, buildTelemetryTag(state.turnsUsed));
-    setStatus('Tagged -> sending...');
+    setStatus('Sending...');
 
     setTimeout(() => {
       const liveBtn = queryFirst(SEL.sendBtn);
@@ -537,14 +556,20 @@
   };
 
   const triggerCompactHandoff = () => {
+    if (state.sending || isBusy()) return setStatus('Wait: reply in progress');
+    if (getResponses().length === 0) return setStatus('Nothing to hand off yet');
+    clearCountdown();
     state.compactRequested = true;
     setStatus('Requesting handoff...');
-    sendPrompt('Pause here and output a concise, self-contained handoff block starting with the literal marker [[HANDOFF]] followed by Fresh-Chat Handoff (Goal, Changed, Verified, Remaining Steps, and exact Next Prompt) so we can continue cleanly in a new chat and save usage.');
+    sendPrompt(HANDOFF_REQUEST_PROMPT);
   };
 
   const copyHandoff = async (openNewTab = false) => {
-    const text = state.handoffText || getLatestResponse().text;
-    if (!text) return false;
+    const body = (state.handoffText || getLatestResponse().text || '').trim();
+    if (!body) return false;
+    const text = body.startsWith('Continue this task in a fresh chat')
+      ? body
+      : `${HANDOFF_RESUME_HEADER}\n\n${body}`;
     try { await navigator.clipboard.writeText(text); } catch {}
     setStatus(openNewTab ? 'Handoff copied -> new tab' : 'Handoff copied');
     if (openNewTab) window.open('https://gemini.google.com/app', '_blank', 'noopener');
@@ -568,7 +593,7 @@
           autoStopped: false, autoStoppedAllow: false,
           lastHandledKey: '', lastSentCount: 0, stableKey: '', stableSince: 0,
           needsBaseline: !isNewChatPath(location.pathname),
-          status: cfg.armed ? (cfg.mode === 'nturns' ? 'Armed (N-Turns)' : 'Armed (Marker)') : (cfg.userTouched ? 'Idle (saved)' : 'Idle'),
+          status: cfg.armed ? `Ready (${modeLabel(cfg.mode)})` : (cfg.userTouched ? 'Off (saved)' : 'Off'),
         });
         syncKeepAlive();
         render(true);
@@ -576,11 +601,11 @@
       }
       return;
     }
-    if (!state.armed && !state.autoAllow) return;
+    if (!state.armed && !state.autoAllow && !state.compactRequested) return;
     if (hasErrorBanner()) return disarm('Stopped: error banner', true, true);
     if (handlePendingApprovals()) { state.needsBaseline = false; render(); return; }
-    if (!state.armed || state.countdownTimer || state.sending) return;
-    if (state.turnsUsed >= state.maxTurns) return disarm(`Cap reached (${state.turnsUsed}/${state.maxTurns})`, false, true);
+    if ((!state.armed && !state.compactRequested) || state.countdownTimer || state.sending) return;
+    if (state.armed && !state.compactRequested && state.turnsUsed >= state.maxTurns) return disarm(`Cap reached (${state.turnsUsed}/${state.maxTurns})`, false, true);
     if (isBusy()) { state.needsBaseline = false; state.stableKey = ''; state.stableSince = 0; return setStatus('Streaming / running...'); }
 
     const snap = getLatestResponse();
@@ -589,7 +614,7 @@
       state.needsBaseline = false;
       state.lastHandledKey = snap.key;
       state.lastSentCount = snap.count;
-      return setStatus(state.mode === 'marker' ? 'Armed (Marker)' : 'Armed (N-Turns)');
+      return setStatus(`Ready (${modeLabel(state.mode)})`);
     }
     if (!(snap.count > state.lastSentCount || snap.key !== state.lastHandledKey)) return;
 
@@ -600,12 +625,20 @@
     if (hasHandoffMarker(sigText)) {
       state.lastHandledKey = snap.key; state.lastSentCount = snap.count;
       state.compactRequested = false;
+      state.assistantTurnsObserved = 0;
+      state.lastObservedKey = snap.key;
+      saveChatProgress(state.url, 0, snap.key);
       state.handoffText = extractHandoff(snap.text);
       return disarm('Handoff ready (new chat)', false, true);
     }
-    if (sigText.includes(STOP_TOKEN)) { state.lastHandledKey = snap.key; state.lastSentCount = snap.count; return disarm(`Stopped: ${STOP_TOKEN}`, false, true); }
+    if (sigText.includes(STOP_TOKEN)) { state.lastHandledKey = snap.key; state.lastSentCount = snap.count; state.compactRequested = false; return disarm(`Stopped: ${STOP_TOKEN}`, false, true); }
     const statusMatch = sigText.match(STOP_STATUS_RE);
-    if (statusMatch) { state.lastHandledKey = snap.key; state.lastSentCount = snap.count; return disarm(`Stopped: Status ${statusMatch[1]}`, false, true); }
+    if (statusMatch) { state.lastHandledKey = snap.key; state.lastSentCount = snap.count; state.compactRequested = false; return disarm(`Stopped: Status ${statusMatch[1]}`, false, true); }
+    if (!state.armed) {
+      state.lastHandledKey = snap.key; state.lastSentCount = snap.count;
+      state.compactRequested = false;
+      return setStatus('Off (saved)');
+    }
 
     if (state.lastObservedKey !== snap.key) {
       state.lastObservedKey = snap.key;
@@ -625,7 +658,7 @@
     if (state.mode === 'marker' && !hasMarker) {
       state.lastHandledKey = snap.key;
       state.lastSentCount = snap.count;
-      return setStatus('Armed (no sentinel)');
+      return setStatus('Waiting for checkpoint');
     }
 
     const customPrompt = dirContinue ? dirContinue[1].trim() : null;
@@ -646,27 +679,28 @@
 
   const render = (force = false) => {
     if (!force && document.activeElement?.closest('#wh-auto-continue-hud input')) return;
-    const sig = `${state.armed}|${state.autoAllow}|${state.autoTag}|${state.allowsClicked}|${state.userTouched}|${Boolean(state.handoffText)}|${state.assistantTurnsObserved}|${state.handoffEvery}|${state.mode}|${state.turnsUsed}/${state.maxTurns}|${state.collapsed}|${state.countdown}|${state.status}`;
+    const canHandoffNow = !state.sending && !isBusy() && getResponses().length > 0;
+    const sig = `${state.armed}|${state.autoAllow}|${state.allowsClicked}|${state.userTouched}|${Boolean(state.handoffText)}|${canHandoffNow}|${state.assistantTurnsObserved}|${state.handoffEvery}|${state.mode}|${state.turnsUsed}/${state.maxTurns}|${state.collapsed}|${state.countdown}|${state.status}`;
     if (!force && sig === state.lastRenderSig) return;
     state.lastRenderSig = sig;
 
     const cyclePos = state.handoffEvery > 0 ? (state.assistantTurnsObserved % state.handoffEvery) : state.assistantTurnsObserved;
     const cadenceNear = state.handoffEvery > 0 && (state.handoffEvery - cyclePos <= 1) && state.assistantTurnsObserved > 0;
-    const turnBadge = state.handoffEvery > 0 ? `T${state.assistantTurnsObserved}/${state.handoffEvery}` : `T${state.assistantTurnsObserved}`;
+    const handoffBadge = state.handoffEvery > 0 ? `Handoff ${state.assistantTurnsObserved}/${state.handoffEvery}` : `Turns ${state.assistantTurnsObserved}`;
 
     const row = (mt = '0') => ({ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', marginTop: mt });
     const dot = (color, sz = '8px') => h('span', { style: { width: sz, height: sz, borderRadius: '50%', background: color, display: 'inline-block' } });
     const topRow = h('div', { style: row() },
-      h('button', { dataset: { act: 'toggle' }, title: 'Toggle Auto-Continue (Alt+Shift+A)', style: { all: 'unset', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', fontWeight: '600' } },
+      h('button', { dataset: { act: 'toggle' }, title: 'Toggle Auto-Continue (Alt+Shift+A). Automatically attaches [wh-ac: ...] handshake tag while ON.', style: { all: 'unset', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', fontWeight: '600' } },
         dot(state.armed ? '#34d399' : '#9aa0a6'), `Auto: ${state.armed ? 'ON' : 'OFF'}`),
-      h('span', { style: { opacity: '.85', display: 'flex', alignItems: 'center', gap: '5px', fontSize: '11px' } },
+      h('span', { style: { opacity: '.85', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px' } },
         state.userTouched ? h('span', { title: 'Saved override for this chat', style: { fontSize: '10px', opacity: '.85' } }, '📌') : null,
-        h('span', { title: state.handoffEvery > 0 ? `Persisted chat turns (${state.assistantTurnsObserved}); auto-handoff every ${state.handoffEvery}` : `Persisted chat turns (${state.assistantTurnsObserved})`, style: { color: cadenceNear ? '#fbbf24' : '#93c5fd', fontWeight: '600' } }, turnBadge),
-        `${state.turnsUsed}/${state.maxTurns}`),
+        h('span', { title: state.handoffEvery > 0 ? `Replies in this chat (${state.assistantTurnsObserved}) before auto-handoff at ${state.handoffEvery}` : `Replies observed in this chat (${state.assistantTurnsObserved})`, style: { color: cadenceNear ? '#fbbf24' : '#93c5fd', fontWeight: '600' } }, handoffBadge),
+        h('span', { title: `Auto-sent continuations in this run (${state.turnsUsed} of ${state.maxTurns} max)` }, `Auto ${state.turnsUsed}/${state.maxTurns}`)),
       h('button', { dataset: { act: 'collapse' }, style: { all: 'unset', cursor: 'pointer', opacity: '.75', padding: '0 3px' } }, state.collapsed ? '+' : '−')
     );
     const allowRow = h('div', { style: row('5px') },
-      h('button', { dataset: { act: 'allow' }, title: 'Toggle Auto-Allow (Alt+Shift+L)', style: { all: 'unset', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', fontWeight: '600' } },
+      h('button', { dataset: { act: 'allow' }, title: 'Toggle Auto-Allow for MCP confirmation cards (Alt+Shift+L)', style: { all: 'unset', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', fontWeight: '600' } },
         dot(state.autoAllow ? '#f59e0b' : '#9aa0a6', '7px'), `Allow: ${state.autoAllow ? 'ON (All)' : 'OFF'}`),
       state.allowsClicked ? h('span', { style: { opacity: '.7', fontSize: '11px' } }, `✓${state.allowsClicked}`) : null
     );
@@ -686,19 +720,18 @@
       nodes.push(
         h('div', { style: { marginTop: '7px', paddingTop: '7px', borderTop: '1px solid rgba(255,255,255,0.1)', display: 'flex', flexDirection: 'column', gap: '6px' } },
           h('div', { style: row() },
-            h('button', { dataset: { act: 'mode' }, style: { background: 'rgba(255,255,255,0.1)', color: '#fff', border: '0', borderRadius: '5px', padding: '3px 7px', cursor: 'pointer', fontSize: '11px' } }, `Mode: ${state.mode === 'marker' ? 'Marker' : 'N-Turns'}`),
-            h('label', { style: { fontSize: '11px', opacity: '.85' } }, 'Cap ',
+            h('button', { dataset: { act: 'mode' }, title: state.mode === 'marker' ? 'Smart: only auto-continues when Gemini emits a checkpoint' : 'Every Reply: auto-continues after every reply until Max auto or Status: Done', style: { background: 'rgba(255,255,255,0.1)', color: '#fff', border: '0', borderRadius: '5px', padding: '3px 7px', cursor: 'pointer', fontSize: '11px' } }, `Mode: ${modeLabel(state.mode)}`),
+            h('label', { title: 'Maximum automatic continuations per run before stopping', style: { fontSize: '11px', opacity: '.85' } }, 'Max auto ',
               h('input', { dataset: { act: 'cap' }, type: 'number', min: '1', max: '50', value: String(state.maxTurns), style: { width: '36px', background: '#111', color: '#fff', border: '1px solid #444', borderRadius: '4px', padding: '1px 4px', fontSize: '11px' } })),
-            h('button', { dataset: { act: 'tag' }, title: 'Auto-inject [wh-ac: ...] on your Enter/Send while Auto is ON', style: { background: state.autoTag ? 'rgba(59,130,246,0.28)' : 'rgba(255,255,255,0.1)', color: state.autoTag ? '#93c5fd' : '#9aa0a6', border: '0', borderRadius: '5px', padding: '3px 6px', cursor: 'pointer', fontSize: '10px' } }, `Tag: ${state.autoTag ? 'ON' : 'OFF'}`),
             state.userTouched ? h('button', { dataset: { act: 'reset' }, title: 'Clear saved override for this chat', style: { background: 'rgba(255,255,255,0.1)', color: '#cbd5e1', border: '0', borderRadius: '5px', padding: '3px 6px', cursor: 'pointer', fontSize: '10px' } }, 'Reset') : null
           ),
           h('div', { style: row() },
-            h('label', { title: 'Auto-request handoff every N turns (0 = off; persisted per chat)', style: { fontSize: '10px', opacity: '.85' } }, 'Handoff every ',
+            h('label', { title: 'Auto-request a fresh-chat handoff every N replies (0 = off; persisted per chat)', style: { fontSize: '10px', opacity: '.85' } }, 'Handoff every ',
               h('input', { dataset: { act: 'every' }, type: 'number', min: '0', max: '20', value: String(state.handoffEvery), style: { width: '34px', background: '#111', color: '#fff', border: '1px solid #444', borderRadius: '4px', padding: '1px 3px', fontSize: '10px' } }),
               ' turns'),
-            h('button', { dataset: { act: 'compact' }, title: 'Ask Gemini to emit [[HANDOFF]] Fresh-Chat Handoff now', style: { background: 'rgba(245,158,11,0.22)', color: '#fcd34d', border: '0', borderRadius: '5px', padding: '3px 7px', cursor: 'pointer', fontSize: '10px' } }, 'Compact')
+            h('button', { dataset: { act: 'compact' }, disabled: !canHandoffNow, title: canHandoffNow ? 'Ask Gemini to emit a structured Fresh-Chat Handoff now' : 'Available after at least one completed reply', style: { background: 'rgba(245,158,11,0.22)', color: '#fcd34d', border: '0', borderRadius: '5px', padding: '3px 7px', cursor: canHandoffNow ? 'pointer' : 'not-allowed', opacity: canHandoffNow ? '1' : '.45', fontSize: '10px' } }, 'Handoff Now')
           ),
-          h('input', { dataset: { act: 'prompt' }, type: 'text', value: state.prompt, style: { width: '100%', boxSizing: 'border-box', background: '#111', color: '#fff', border: '1px solid #444', borderRadius: '5px', padding: '4px 6px', fontSize: '11px' } })
+          h('input', { dataset: { act: 'prompt' }, type: 'text', placeholder: 'Auto-continue prompt...', title: 'Default message sent on auto-continue turns', value: state.prompt, style: { width: '100%', boxSizing: 'border-box', background: '#111', color: '#fff', border: '1px solid #444', borderRadius: '5px', padding: '4px 6px', fontSize: '11px' } })
         )
       );
     }
@@ -713,8 +746,8 @@
       const snap = getLatestResponse();
       state.lastHandledKey = snap.key; state.lastSentCount = snap.count; state.stableKey = '';
       state.needsBaseline = false;
-      state.status = state.mode === 'marker' ? 'Armed (Marker)' : 'Armed (N-Turns)';
-    } else clearCountdown('Idle (saved)');
+      state.status = `Ready (${modeLabel(state.mode)})`;
+    } else clearCountdown('Off (saved)');
     persistChat();
     syncKeepAlive();
     render(true);
@@ -737,7 +770,7 @@
     const cfg = buildChatConfig(state.url);
     Object.assign(state, cfg, {
       autoStopped: false, autoStoppedAllow: false,
-      status: cfg.armed ? (cfg.mode === 'nturns' ? 'Reset -> Armed (N-Turns)' : 'Reset -> Armed (Marker)') : 'Reset -> Idle',
+      status: cfg.armed ? `Reset -> Ready (${modeLabel(cfg.mode)})` : 'Reset -> Off',
     });
     syncKeepAlive();
     render(true);
@@ -748,12 +781,11 @@
     const act = e.target.closest('[data-act]')?.dataset.act;
     if (act === 'toggle') toggleArmed();
     else if (act === 'allow') toggleAllow();
-    else if (act === 'mode') { state.mode = state.mode === 'marker' ? 'nturns' : 'marker'; persistGlobal(); persistChat(); render(true); emitState(); }
+    else if (act === 'mode') { state.mode = state.mode === 'marker' ? 'nturns' : 'marker'; persistGlobal(); persistChat(); if (state.armed) state.status = `Ready (${modeLabel(state.mode)})`; render(true); emitState(); }
     else if (act === 'collapse') { state.collapsed = !state.collapsed; persistGlobal(); render(true); }
     else if (act === 'cancel') { const s = getLatestResponse(); state.lastHandledKey = s.key; state.lastSentCount = s.count; clearCountdown('Canceled (waiting next)'); }
     else if (act === 'handoff') copyHandoff(true);
     else if (act === 'compact') triggerCompactHandoff();
-    else if (act === 'tag') { state.autoTag = !state.autoTag; persistGlobal(); persistChat(); state.status = state.autoTag ? 'Auto-Tag ON' : 'Auto-Tag OFF (saved)'; render(true); emitState(); }
     else if (act === 'reset') resetCurrentChat();
   });
 
@@ -786,13 +818,13 @@
 
   // --- Programmatic bridge for browser-daily / agent / DevTools ---
   const getPublicState = () => ({
-    version: '1.9.0',
+    version: '1.10.0',
     url: state.url,
     armed: state.armed,
     autoAllow: state.autoAllow,
-    autoTag: state.autoTag,
     autoStopped: state.autoStopped,
     mode: state.mode,
+    modeLabel: modeLabel(state.mode),
     turnsUsed: state.turnsUsed,
     maxTurns: state.maxTurns,
     handoffEvery: state.handoffEvery,
@@ -810,8 +842,8 @@
     setState: (patch = {}, { persist = true } = {}) => {
       if (typeof patch.armed === 'boolean') { state.armed = patch.armed; state.autoStopped = false; }
       if (typeof patch.autoAllow === 'boolean') { state.autoAllow = patch.autoAllow; state.autoStoppedAllow = false; }
-      if (typeof patch.autoTag === 'boolean') state.autoTag = patch.autoTag;
-      if (patch.mode === 'marker' || patch.mode === 'nturns') state.mode = patch.mode;
+      if (patch.mode === 'marker' || patch.mode === 'smart') state.mode = 'marker';
+      else if (patch.mode === 'nturns' || patch.mode === 'every') state.mode = 'nturns';
       if (Number(patch.maxTurns) > 0) state.maxTurns = Math.min(50, Number(patch.maxTurns));
       if (Number.isFinite(Number(patch.handoffEvery))) {
         const n = Number(patch.handoffEvery);
@@ -825,6 +857,7 @@
       return getPublicState();
     },
     insertTag: insertTagIntoComposer,
+    handoffNow: triggerCompactHandoff,
     compactNow: triggerCompactHandoff,
     resetChat: () => { resetCurrentChat(); return getPublicState(); },
     clearStore: () => { writeChatStore({}); state.userTouched = false; render(true); return getPublicState(); },
@@ -836,7 +869,7 @@
   let obsTimer = null;
   let lastObsRun = 0;
   new MutationObserver((muts) => {
-    if (!state.armed && !state.autoAllow && !state.autoStopped) return;
+    if (!state.armed && !state.autoAllow && !state.autoStopped && !state.compactRequested) return;
     if (muts.every((m) => hud.contains(m.target))) return;
     const now = Date.now();
     if (now - lastObsRun >= 250) {
