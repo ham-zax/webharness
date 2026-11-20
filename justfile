@@ -145,6 +145,19 @@ sync-skills *ARGS="":
 status:
     ./bin/status
 
+# Compact factual snapshot (git + pueue + tmux) for zero-hallucination session handoffs.
+handoff-state:
+    @echo "=== git ==="
+    @git rev-parse --is-inside-work-tree >/dev/null 2>&1 && { \
+      echo "branch: $(git rev-parse --abbrev-ref HEAD) ($(git rev-parse --short HEAD))"; \
+      status="$(git status --short | head -n 30)"; \
+      if [ -n "$status" ]; then printf '%s\n' "$status"; else echo "clean working tree"; fi; \
+    } || echo "not a git repo"
+    @echo "=== pueue ==="
+    @if command -v pueue >/dev/null 2>&1; then pueue status 2>&1 || true; else echo "pueue: not installed"; fi
+    @echo "=== tmux ==="
+    @if command -v tmux >/dev/null 2>&1; then tmux list-sessions 2>/dev/null || echo "no active tmux sessions"; else echo "tmux: not installed"; fi
+
 # Compact host audit: pueued + CLI toolbox summary + WebHarness status overview.
 host-audit:
     @echo "=== pueued ==="

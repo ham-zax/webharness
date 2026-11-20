@@ -50,7 +50,14 @@ function createSimulatedDom({ initialPath = '/app/chat-1' } = {}) {
     get firstElementChild() { return this.children.find(c => c instanceof FakeElement) ?? null; }
     getClientRects() { return this.isConnected ? [{ width: 100, height: 20 }] : []; }
     setAttribute(k, v) { this.attributes.set(k, String(v)); if (k === 'id') this.id = String(v); }
-    getAttribute(k) { return this.attributes.get(k) ?? null; }
+    getAttribute(k) {
+      if (this.attributes.has(k)) return this.attributes.get(k);
+      if (k.startsWith('data-')) {
+        const camel = k.slice(5).replace(/-([a-z])/g, (_, c) => c.toUpperCase());
+        if (camel in this.dataset) return String(this.dataset[camel]);
+      }
+      return null;
+    }
     append(...nodes) {
       for (const n of nodes) {
         if (typeof n === 'string') this._text += n;
@@ -95,7 +102,15 @@ function createSimulatedDom({ initialPath = '/app/chat-1' } = {}) {
     }
     dispatchEvent(event) {
       event.target = event.target ?? this;
-      for (const fn of (this._listeners?.get(event.type) ?? [])) fn(event);
+      let cur = this;
+      while (cur) {
+        for (const fn of (cur._listeners?.get(event.type) ?? [])) {
+          if (event.stoppedImmediate) break;
+          fn(event);
+        }
+        if (!event.bubbles || event.stoppedImmediate) break;
+        cur = cur.parentNode;
+      }
       return !event.defaultPrevented;
     }
     focus() {}
@@ -238,6 +253,7 @@ function createSimulatedDom({ initialPath = '/app/chat-1' } = {}) {
     open: () => {},
   };
 
+  const observers = [];
   const sandbox = {
     window: windowObj,
     document,
@@ -249,7 +265,11 @@ function createSimulatedDom({ initialPath = '/app/chat-1' } = {}) {
     InputEvent: FakeEvent,
     KeyboardEvent: FakeEvent,
     Event: FakeEvent,
-    MutationObserver: class { observe() {} disconnect() {} },
+    MutationObserver: class {
+      constructor(cb) { this.cb = cb; }
+      observe() { observers.push(this.cb); }
+      disconnect() {}
+    },
     setInterval: (fn, ms) => { const id = nextTimerId++; intervals.set(id, { fn, ms, nextAt: nowMs + ms }); return id; },
     clearInterval: id => intervals.delete(id),
     setTimeout: (fn, ms) => { const id = nextTimerId++; timeouts.set(id, { fn, at: nowMs + ms }); return id; },
@@ -258,7 +278,11 @@ function createSimulatedDom({ initialPath = '/app/chat-1' } = {}) {
   };
   windowObj.window = windowObj;
 
-  function advanceMs(ms) {
+  function triggerMutation(target = body) {
+    for (const cb of observers) cb([{ target }]);
+  }
+
+  function advanceMs(ms, { clampIntervalMs = 0 } = {}) {
     const target = nowMs + ms;
     while (true) {
       let nextTime = target + 1;
@@ -279,7 +303,7 @@ function createSimulatedDom({ initialPath = '/app/chat-1' } = {}) {
       } else {
         const iv = intervals.get(nextId);
         if (iv) {
-          iv.nextAt = nowMs + iv.ms;
+          iv.nextAt = nowMs + (clampIntervalMs > 0 ? Math.max(iv.ms, clampIntervalMs) : iv.ms);
           iv.fn();
         }
       }
@@ -310,7 +334,7 @@ function createSimulatedDom({ initialPath = '/app/chat-1' } = {}) {
 
   return {
     sandbox, windowObj, document, body, editor, sendBtn, FakeEvent,
-    advanceMs, addModelResponse, setBusy,
+    advanceMs, addModelResponse, setBusy, triggerMutation,
   };
 }
 
@@ -376,7 +400,7 @@ test('gemini-auto-continue: auto-stopped cap is not reset by Gemini response, an
   assert.equal(sim.editor.innerText, 'Plain chat prompt');
 });
 
-test('gemini-auto-continue: Handoff Now guards empty/busy states, works while Auto OFF, and copies turnkey resume wrapper', async () => {
+test('gemini-auto-continue: Wrap Up guards empty/busy states, works while Auto OFF, and copies turnkey resume wrapper', async () => {
   const code = await fs.readFile(scriptPath, 'utf8');
   const sim = createSimulatedDom({ initialPath: '/app' });
   let copied = '';
@@ -390,20 +414,21 @@ test('gemini-auto-continue: Handoff Now guards empty/busy states, works while Au
   vm.runInNewContext(code, sim.sandbox);
   const api = sim.windowObj.__whAutoContinue;
 
-  // Empty chat -> Handoff Now must refuse instead of sending nonsense
-  api.handoffNow();
-  assert.equal(sent.length, 0, 'Handoff Now must not fire on empty chat');
-  assert.equal(api.getState().status, 'Nothing to hand off yet');
+  // Empty chat -> Wrap Up must refuse instead of sending nonsense
+  api.wrapUp();
+  assert.equal(sent.length, 0, 'Wrap Up must not fire on empty chat');
+  assert.equal(api.getState().status, 'Nothing to wrap up yet');
 
-  // Add a reply, then manually turn Auto OFF, then click Handoff Now -> must still send and capture [[HANDOFF]]
+  // Add a reply, then manually turn Auto OFF, then click Wrap Up -> must still send and capture [[HANDOFF]]
   sim.addModelResponse('m1', 'Work in progress');
   api.setState({ armed: false });
-  api.handoffNow();
+  api.wrapUp();
   sim.advanceMs(600);
-  assert.equal(sent.length, 1, 'Handoff Now must send even when Auto is OFF');
+  assert.equal(sent.length, 1, 'Wrap Up must send even when Auto is OFF');
   assert.match(sent[0], /## Owed to the user/);
+  assert.match(sent[0], /just handoff-state/);
 
-  sim.addModelResponse('m2', '[[HANDOFF]]\n### Fresh-Chat Handoff\n## Goal\nFinish migration');
+  sim.addModelResponse('m2', '[[HANDOFF]]\n### Fresh-Chat Handoff\nhandoff_action: continue\n## Goal\nFinish migration');
   sim.advanceMs(1500);
   sim.advanceMs(4500);
   assert.equal(api.getState().handoffReady, true, 'handoff response must be captured even when Auto was OFF');
@@ -411,7 +436,7 @@ test('gemini-auto-continue: Handoff Now guards empty/busy states, works while Au
 
   await api.copyHandoff(false);
   assert.match(copied, /^Continue this task in a fresh chat from the handoff below\./, 'copied handoff must include turnkey resume header');
-  assert.match(copied, /### Fresh-Chat Handoff\n## Goal\nFinish migration/);
+  assert.match(copied, /### Fresh-Chat Handoff\nhandoff_action: continue\n## Goal\nFinish migration/);
 });
 
 test('gemini-auto-continue: stable response without sentinel counts once and rendered handoff marker works without ###', async () => {
@@ -456,7 +481,7 @@ test('gemini-auto-continue: stable response without sentinel counts once and ren
   const st = api.getState();
   assert.equal(st.handoffReady, true, 'rendered Fresh-Chat Handoff without ### must be recognized');
   assert.equal(st.armed, false);
-  assert.equal(st.chatTurns, 0, 'handoff completion must reset chatTurns cycle to 0');
+  assert.equal(st.chatTurns, 3, 'truthful chatTurns count stays intact on old chat until you move to a new chat');
 });
 
 test('gemini-auto-continue: no fake ctx meter, ignores pre/code markers, and persists chatTurns across reload', async () => {
@@ -547,4 +572,227 @@ test('gemini-auto-continue: no fake ctx meter, ignores pre/code markers, and per
   assert.match(sentPrompts2[0], /^\[wh-ac: turn=1\/5 mode=marker allow=on chat=2\/6\]/, 'telemetry tag must show honest persisted chat turn count without fake ctx=~...');
   assert.doesNotMatch(sentPrompts2[0], /ctx=/, 'telemetry tag must not include fake ctx= estimate');
   assert.ok(initialMsg.id === 'm0');
+});
+
+test('gemini-auto-continue: Status: Done and Auto: OFF still increment chatTurns, show Standby, and Reset preserves turn count', async () => {
+  const code = await fs.readFile(scriptPath, 'utf8');
+  const sim = createSimulatedDom({ initialPath: '/app/chat-turns-fix' });
+  sim.addModelResponse('m0', 'Baseline');
+
+  vm.runInNewContext(code, sim.sandbox);
+  const api = sim.windowObj.__whAutoContinue;
+  const hud = sim.document.querySelector('#wh-auto-continue-hud');
+
+  // Baseline
+  sim.advanceMs(1500);
+
+  // Reply 1 ends with Status: Done -> must STILL increment chatTurns to 1 and show Auto: Standby
+  sim.addModelResponse('m1', 'Task complete.\nStatus: Done');
+  sim.advanceMs(1500);
+  sim.advanceMs(4500);
+  let st = api.getState();
+  assert.equal(st.chatTurns, 1, 'Status: Done reply must increment chatTurns');
+  assert.equal(st.armed, false);
+  assert.equal(st.autoStopped, true);
+  assert.match(hud.innerText, /Auto: Standby/, 'auto-stopped state must display Auto: Standby instead of Auto: OFF');
+  assert.match(hud.innerText, /Handoff 1\/6/);
+
+  // Reply 2 arrives while manually turned Auto: OFF -> passive tracker must STILL count it (chatTurns = 2)
+  api.setState({ armed: false });
+  assert.match(hud.innerText, /Auto: OFF/, 'manual OFF must display Auto: OFF');
+  sim.addModelResponse('m2', 'Second reply while Auto OFF');
+  sim.advanceMs(1500);
+  sim.advanceMs(4500);
+  st = api.getState();
+  assert.equal(st.chatTurns, 2, 'replies while Auto OFF must still increment chatTurns');
+
+  // Resetting per-chat overrides must keep chatTurns intact
+  api.resetChat();
+  st = api.getState();
+  assert.equal(st.chatTurns, 2, 'resetChat must preserve honest chatTurns count');
+  assert.equal(st.userTouched, false);
+});
+
+test('gemini-auto-continue: dynamic 2-turn Wrap Up, durable handoff across reload, Settings timers, and same-tab model restore', async () => {
+  const code = await fs.readFile(scriptPath, 'utf8');
+  const sharedStorage = new Map();
+  const sim = createSimulatedDom({ initialPath: '/app/chat-wrapup' });
+  sim.windowObj.localStorage.getItem = k => (sharedStorage.has(k) ? sharedStorage.get(k) : null);
+  sim.windowObj.localStorage.setItem = (k, v) => { sharedStorage.set(k, String(v)); };
+
+  // Add Gemini model switcher button + New chat link to DOM
+  const modeBtn = sim.document.createElement('button');
+  modeBtn.setAttribute('data-test-id', 'bard-mode-menu-button');
+  modeBtn.setAttribute('aria-label', 'Open mode picker, currently Neon');
+  modeBtn.innerText = 'Neon High';
+  let activeModelLabel = 'Neon High';
+
+  // When modeBtn is clicked, open a simulated .cdk-overlay-pane with menuitemradio options
+  modeBtn.addEventListener('click', () => {
+    const old = sim.body.querySelector('.cdk-overlay-pane');
+    if (old) sim.body.children = sim.body.children.filter(c => c !== old);
+    const pane = sim.document.createElement('div');
+    pane.className = 'cdk-overlay-pane';
+    const mkRadio = (testId, label, checked, onPick) => {
+      const el = sim.document.createElement('gem-menu-item');
+      el.setAttribute('role', 'menuitemradio');
+      if (testId) el.setAttribute('data-test-id', testId);
+      el.setAttribute('aria-checked', String(checked));
+      el.innerText = label;
+      el.addEventListener('click', onPick);
+      return el;
+    };
+    pane.append(
+      mkRadio('bard-mode-option-h', 'Everyday help Hydrogen', /Hydrogen/.test(activeModelLabel), () => {
+        activeModelLabel = activeModelLabel.replace(/Neon|Hydrogen/, 'Hydrogen');
+        modeBtn.setAttribute('aria-label', 'Open mode picker, currently Hydrogen');
+        modeBtn.innerText = activeModelLabel;
+      }),
+      mkRadio('bard-mode-option-n', 'Deeper analysis Neon', /Neon/.test(activeModelLabel), () => {
+        activeModelLabel = activeModelLabel.replace(/Neon|Hydrogen/, 'Neon');
+        modeBtn.setAttribute('aria-label', 'Open mode picker, currently Neon');
+        modeBtn.innerText = activeModelLabel;
+      }),
+      mkRadio(null, 'Low Fast and efficient', /Low/.test(activeModelLabel), () => {
+        activeModelLabel = activeModelLabel.replace(/Low|Medium|High/, 'Low');
+        modeBtn.innerText = activeModelLabel;
+      }),
+      mkRadio(null, 'High Extra thorough', /High/.test(activeModelLabel), () => {
+        activeModelLabel = activeModelLabel.replace(/Low|Medium|High/, 'High');
+        modeBtn.innerText = activeModelLabel;
+      }),
+    );
+    sim.body.append(pane);
+  });
+
+  const newChatLink = sim.document.createElement('a');
+  newChatLink.setAttribute('href', '/app');
+  newChatLink.innerText = 'New chat';
+  newChatLink.addEventListener('click', () => {
+    // Simulate Gemini resetting to /app on Hydrogen Low (so restoreModel must switch it back to Neon High)
+    sim.windowObj.location.pathname = '/app';
+    sim.editor.innerText = '';
+    activeModelLabel = 'Hydrogen Low';
+    modeBtn.setAttribute('aria-label', 'Open mode picker, currently Hydrogen');
+    modeBtn.innerText = 'Hydrogen Low';
+  });
+
+  sim.body.append(modeBtn, newChatLink);
+  sim.addModelResponse('m0', 'Working on feature');
+
+  const sent = [];
+  sim.sendBtn.addEventListener('click', () => {
+    sent.push(sim.editor.innerText);
+    sim.editor.innerText = '';
+  });
+
+  vm.runInNewContext(code, sim.sandbox);
+  const api = sim.windowObj.__whAutoContinue;
+  const hud = sim.document.querySelector('#wh-auto-continue-hud');
+
+  // Open Settings UI via gear button, adjust timers (countdownSec=0, stableSec=2, allowDelayMs=250)
+  const gearBtn = hud.querySelector('[data-act="settings"]');
+  assert.ok(gearBtn, 'HUD must render gear settings button');
+  gearBtn.click();
+  assert.equal(api.getState().settingsOpen, true);
+  assert.match(hud.innerText, /Timers & Delays/);
+  assert.match(hud.innerText, /Send countdown/);
+
+  api.setState({ countdownSec: 0, stableSec: 2, allowDelayMs: 250, wrapUpMaxTurns: 2, settingsOpen: false });
+  assert.equal(api.getState().countdownSec, 0);
+  assert.equal(api.getState().stableSec, 2);
+  assert.equal(api.getState().allowDelayMs, 250);
+
+  // Baseline
+  sim.advanceMs(1500);
+
+  // Trigger Wrap Up -> turn 1 sends WRAP_UP_REQUEST_PROMPT
+  api.wrapUp();
+  sim.advanceMs(600);
+  assert.equal(sent.length, 1);
+  assert.match(sent[0], /Wrap up this session to the nearest clean checkpoint/);
+
+  // Gemini uses Turn 1 to move test to pueue and replies with Mid-Task Checkpoint (no [[HANDOFF]] yet)
+  sim.addModelResponse('m1', 'Moved test suite to pueue job 7.\n### Mid-Task Checkpoint\nReady for final handoff.');
+  sim.advanceMs(1500);
+  sim.advanceMs(2500); // stableSec=2 -> countdownSec=0 -> sends final wrap-up nudge immediately
+  sim.advanceMs(600);
+  assert.equal(sent.length, 2, 'dynamic Wrap Up must automatically send final handoff nudge on turn 2');
+  assert.match(sent[1], /Finish wrapping up now/);
+
+  // Turn 2 emits [[HANDOFF]] -> stages handoff durably and captures Neon High
+  sim.addModelResponse('m2', '[[HANDOFF]]\n### Fresh-Chat Handoff\nhandoff_action: continue\n## Goal\nResume tests\n## Live state\npueue job 7');
+  sim.advanceMs(1500);
+  sim.advanceMs(2500);
+  assert.equal(api.getState().handoffReady, true);
+  assert.equal(api.getState().handoffMeta.model, 'Neon');
+  assert.equal(api.getState().handoffMeta.thinking, 'High');
+  assert.match(hud.innerText, /Copy Prompt/);
+  assert.match(hud.innerText, /Start New Chat/);
+
+  // Verify staged handoff survives full page reload on the same chat URL
+  const simReload = createSimulatedDom({ initialPath: '/app/chat-wrapup' });
+  simReload.windowObj.localStorage.getItem = k => (sharedStorage.has(k) ? sharedStorage.get(k) : null);
+  simReload.windowObj.localStorage.setItem = (k, v) => { sharedStorage.set(k, String(v)); };
+  vm.runInNewContext(code, simReload.sandbox);
+  assert.equal(simReload.windowObj.__whAutoContinue.getState().handoffReady, true, 'staged handoff must survive page reload');
+  assert.equal(simReload.windowObj.__whAutoContinue.getState().handoffMeta.model, 'Neon');
+
+  // Click Start New Chat (same-tab) -> clicks /app, restores Neon High, pastes prompt ready for Enter (autoSendHandoff=false)
+  api.startNewChat(false);
+  sim.advanceMs(1200);
+  // Flush microtasks from async restoreModelSelection
+  await new Promise(r => setImmediate(r));
+  sim.advanceMs(800);
+  await new Promise(r => setImmediate(r));
+  sim.advanceMs(400);
+  await new Promise(r => setImmediate(r));
+
+  assert.equal(sim.windowObj.location.pathname, '/app', 'Start New Chat must navigate same tab to /app');
+  assert.equal(modeBtn.innerText, 'Neon High', 'model + thinking level must be restored to Neon High');
+  assert.match(sim.editor.innerText, /Continue this task in a fresh chat from the handoff below\./);
+  assert.match(sim.editor.innerText, /pueue job 7/);
+  assert.equal(sent.length, 2, 'with autoSendHandoff=false, handoff must paste and wait for user Enter');
+});
+
+test('gemini-auto-continue: Chrome background tab (60s-clamped setInterval) fires stability wake and [[AUTO_WAIT: 80]] on time', async () => {
+  const code = await fs.readFile(scriptPath, 'utf8');
+  const sim = createSimulatedDom({ initialPath: '/app/chat-bg-chrome' });
+  sim.addModelResponse('m0', 'Baseline reply');
+
+  const sent = [];
+  sim.sendBtn.addEventListener('click', () => {
+    sent.push(sim.editor.innerText);
+    sim.editor.innerText = '';
+  });
+
+  vm.runInNewContext(code, sim.sandbox);
+  const api = sim.windowObj.__whAutoContinue;
+  api.setState({ mode: 'marker', maxTurns: 10, stableSec: 4, countdownSec: 5, skipBgCountdown: true });
+
+  // Establish baseline, then background the tab and clamp all setInterval timers to 60s (Chrome Intensive Throttling).
+  sim.advanceMs(1500);
+  sim.document.hidden = true;
+  sim.advanceMs(1500, { clampIntervalMs: 60_000 }); // pushes the 1500ms tick interval out to +60s
+
+  // 1. Standard checkpoint in background tab: must fire in ~5s via one-shot stability wake (NOT wait 60s!)
+  const m1 = sim.addModelResponse('m1', '### Mid-Task Checkpoint\nStep 1 done.');
+  sim.triggerMutation(m1);
+  sim.advanceMs(5000, { clampIntervalMs: 60_000 });
+  assert.equal(sent.length, 1, 'background checkpoint must auto-continue within ~5s even when setInterval is clamped to 60s');
+
+  // 2. [[AUTO_WAIT: 80]] + multiline [[AUTO_CONTINUE: ...]] in background tab: must NOT fire early, must fire at ~85s (not 120s+)
+  const m2 = sim.addModelResponse('m2', [
+    'Launched Phase 1 job.',
+    '[[AUTO_WAIT: 80]]',
+    '[[AUTO_CONTINUE: Inspect the completed Phase 1 report',
+    'and run Phase 2 isolated ablations.]]',
+  ].join('\n'));
+  sim.triggerMutation(m2);
+  sim.advanceMs(75_000, { clampIntervalMs: 60_000 });
+  assert.equal(sent.length, 1, 'AUTO_WAIT: 80 must not fire early at 75s');
+
+  sim.advanceMs(12_000, { clampIntervalMs: 60_000 }); // total 87s since m2 arrived (~4.1s stability + 80s wait + 0.6s send)
+  assert.equal(sent.length, 2, 'AUTO_WAIT: 80 must fire on time in background Chrome tab via one-shot deadline timer');
+  assert.match(sent[1], /Inspect the completed Phase 1 report and run Phase 2 isolated ablations\./, 'multiline AUTO_CONTINUE must normalize cleanly');
 });
