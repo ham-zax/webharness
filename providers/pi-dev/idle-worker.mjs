@@ -11,6 +11,7 @@ export class IdleExecutionWorker {
     this.closed = false;
     this.calls = new Map();
     this.nextId = 0;
+    this.backgroundJobs = 0;
     this.timer = null;
   }
 
@@ -47,6 +48,9 @@ export class IdleExecutionWorker {
           if (!pending) return;
           if (message.error) pending.reject(new Error(message.error));
           else pending.resolve(message.result);
+        } else if (message.type === 'background') {
+          this.backgroundJobs = Math.max(0, this.backgroundJobs + (Number(message.delta) || 0));
+          this.scheduleIdle();
         }
       });
       child.once('error', error => {
@@ -61,7 +65,10 @@ export class IdleExecutionWorker {
         for (const pending of this.calls.values()) {
           if (pending.child === child) pending.reject(error);
         }
-        if (this.child === child) this.child = null;
+        if (this.child === child) {
+          this.child = null;
+          this.backgroundJobs = 0;
+        }
       });
     });
     try { await this.starting; }
@@ -69,7 +76,7 @@ export class IdleExecutionWorker {
     this.scheduleIdle();
   }
 
-  async call(name, args, signal, callId) {
+  async call(name, args, signal, callId, rpcBudgetMs) {
     clearTimeout(this.timer);
     const id = ++this.nextId;
     // Reserve the call before startup so simultaneous calls cannot race eviction.
@@ -92,7 +99,14 @@ export class IdleExecutionWorker {
       }
       this.calls.get(id).child = child;
       signal?.addEventListener('abort', abort, { once: true });
-      child.send({ type: 'call', id, name, args, callId }, error => { if (error) rejectResult(error); });
+      child.send({
+        type: 'call',
+        id,
+        name,
+        args,
+        callId,
+        ...(rpcBudgetMs !== undefined ? { rpcBudgetMs } : {}),
+      }, error => { if (error) rejectResult(error); });
       return await result;
     } finally {
       signal?.removeEventListener('abort', abort);
@@ -103,9 +117,9 @@ export class IdleExecutionWorker {
 
   scheduleIdle() {
     clearTimeout(this.timer);
-    if (this.closed || !this.idleMs || this.calls.size || !this.child) return;
+    if (this.closed || !this.idleMs || this.calls.size || this.backgroundJobs > 0 || !this.child) return;
     this.timer = setTimeout(() => {
-      if (!this.calls.size) void this.stop();
+      if (!this.calls.size && this.backgroundJobs === 0) void this.stop();
     }, this.idleMs);
     this.timer.unref();
   }
@@ -156,14 +170,44 @@ export class IdleExecutionWorker {
   }
 }
 
+let workerBackgroundActive = false;
+const activeBackgroundJobs = new Set();
+
+export function beginBackgroundWork(onShutdown = null) {
+  let ended = false;
+  let resolveDone;
+  const done = new Promise(resolve => { resolveDone = resolve; });
+  const entry = { onShutdown, done };
+  activeBackgroundJobs.add(entry);
+  if (workerBackgroundActive && process.connected && typeof process.send === 'function') {
+    try { process.send({ type: 'background', delta: 1 }); } catch {}
+  }
+  return () => {
+    if (ended) return;
+    ended = true;
+    activeBackgroundJobs.delete(entry);
+    resolveDone();
+    if (workerBackgroundActive && process.connected && typeof process.send === 'function') {
+      try { process.send({ type: 'background', delta: -1 }); } catch {}
+    }
+  };
+}
+
 export function serveExecutionWorker(handlers) {
+  workerBackgroundActive = true;
   const active = new Map();
   let closing = false;
   const shutdown = async () => {
     if (closing) return;
     closing = true;
     for (const item of active.values()) item.controller.abort();
+    const bgWaits = [];
+    for (const job of activeBackgroundJobs) {
+      try { job.onShutdown?.(); } catch {}
+      bgWaits.push(job.done);
+    }
     await Promise.allSettled([...active.values()].map(item => item.promise));
+    await Promise.allSettled(bgWaits);
     process.exit(0);
   };
   process.on('message', message => {
@@ -175,7 +219,11 @@ export function serveExecutionWorker(handlers) {
       try {
         const handler = handlers.get(message.name);
         if (!handler) throw new Error(`Unknown Dev tool: ${message.name}`);
-        const result = await handler(message.args, { signal: controller.signal, callId: message.callId });
+        const result = await handler(message.args, {
+          signal: controller.signal,
+          callId: message.callId,
+          ...(message.rpcBudgetMs !== undefined ? { rpcBudgetMs: message.rpcBudgetMs } : {}),
+        });
         if (process.connected) process.send({ type: 'result', id: message.id, result });
       } catch (error) {
         if (process.connected) process.send({ type: 'result', id: message.id, error: error instanceof Error ? error.message : String(error) });

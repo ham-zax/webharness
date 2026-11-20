@@ -3,9 +3,16 @@ import { randomUUID } from 'node:crypto';
 
 export const CALL_ID_META = 'webharness/call-id';
 export const MUTATION_META = 'webharness/mutation-state';
+export const RPC_BUDGET_META = 'webharness/rpc-budget-ms';
+export const MIN_RPC_BUDGET_MS = 5_000;
 const calls = new AsyncLocalStorage();
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 const UUID_STEP = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}(?:#[1-9]\d{0,3})?$/i;
+
+export function parseRpcBudgetMs(value) {
+  if (!Number.isSafeInteger(value) || value < MIN_RPC_BUDGET_MS || value > 300_000) return undefined;
+  return value;
+}
 
 export function callId(value, { allowStep = false } = {}) {
   return typeof value === 'string' && (allowStep ? UUID_STEP : UUID).test(value) ? value : randomUUID();
@@ -32,10 +39,13 @@ function resultCode(result) {
   return diagnosticErrorCode(result?._meta?.['webharness/error-code'] ?? result?.structuredContent?.error?.code ?? /^([A-Z][A-Z0-9_]+):/.exec(text ?? '')?.[1]);
 }
 
-export async function traceCall({ id, layer, tool, mutating = true, allowStep = false, log }, fn) {
+export async function traceCall({ id, layer, tool, mutating = true, allowStep = false, rpcBudgetMs, log }, fn) {
   const started = performance.now();
+  const parsedBudgetMs = parseRpcBudgetMs(rpcBudgetMs);
   const context = {
-    id: callId(id, { allowStep }), mutationState: mutating ? 'not_started' : 'not_applicable',
+    id: callId(id, { allowStep }),
+    mutationState: mutating ? 'not_started' : 'not_applicable',
+    ...(parsedBudgetMs !== undefined ? { rpcBudgetMs: parsedBudgetMs } : {}),
     emit(event, fields = {}) {
       const record = {
         timestamp: new Date().toISOString(), event: `call_${event}`, call_id: context.id, layer,

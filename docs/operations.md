@@ -100,7 +100,8 @@ External MCP connectors (not `User-Agent: websession-adapter/*`) are shaped per 
 - Changes hot-reload on the next `initialize` or `tools/list`; transient read/parse errors retain the last-good policy and log `connector_policy_parse_warning`.
 - `clients:` rules run top-to-bottom (first match wins); multiple keys inside `match:` use AND semantics; unknown match keys fail closed. `query_client` is exact case-insensitive (`?client=<value>`); `user_agent` and `client_info` are case-insensitive regexes (substring fallback).
 - Default policy keeps direct read + write tools with honest annotations for ChatGPT/Claude. The starter template matches Gemini automatically via `user_agent: "^Google$"` (with `?client=gemini` as backup), hiding outer write tools and applying `compat_annotations: true` to `local_fallback_dispatch` only for Gemini.
-- Set `log_client_identifiers: true` to log exact client headers (`connector_client_identified`) in wake-proxy logs.
+- Optional `rpc_budget_seconds` (`10..300`) sets a per-client RPC budget propagated via `_meta["webharness/rpc-budget-ms"]`: `exec`/`bash` soft-promote to background `jobs/<id>.{log,exit}` after `budget - 3s` (keeping a hard kill cap), `wait` clamps `hold_seconds` to `budget - 5s`, and sequential `fallback_dispatch` batches defer remaining steps before exhausting the budget.
+- Set `log_client_identifiers: true` to log exact client headers (`connector_client_identified`) in wake-proxy logs; `http_completed` records include `matched_rule` and `rpc_budget_seconds`, and `webharness doctor` flags mid-flight client disconnects near the configured budget.
 
 **Optional Gemini Web userscript:** `scripts/gemini-auto-continue.user.js` (Tampermonkey/Violentmonkey) automates checkpoints and confirmation cards. As of `v1.3.0`, both `armed` and `autoAllow` (no allowlist) start ON on page load unless disarmed in the widget—install only where unattended approval is intended.
 

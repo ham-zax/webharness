@@ -1680,3 +1680,206 @@ test('batchResult coalesces consecutive plain text blocks while preserving non-p
   assert.deepEqual(res.structuredContent.results[0].result.content, [{ type: 'text', text: 'res:one' }]);
   assert.deepEqual(res.structuredContent.results[1].result.content, []);
 });
+
+test('sequential batch tracks wall-clock rpcBudgetMs, forwards decremented budget, and defers on low budget or soft promotion', async t => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'local-seq-budget-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const configPath = path.join(dir, 'inner.json');
+  await fs.writeFile(configPath, JSON.stringify({ mcpServers: { dev: { command: process.execPath } } }));
+
+  const seenBudgets = [];
+  let executedCalls = [];
+  const inner = {
+    isServerLive: () => true,
+    listServerTools: async () => ({ tools: [{ name: 'exec' }, { name: 'read' }] }),
+    callServerTool: async (_server, tool, args, _signal, metaOverrides) => {
+      executedCalls.push(tool);
+      seenBudgets.push(metaOverrides?.rpcBudgetMs);
+      if (args.sleepMs) await sleep(args.sleepMs);
+      if (args.promote) {
+        return {
+          content: [{
+            type: 'text',
+            text: [
+              'partial output',
+              '[still running after 5.0s · promoted to job 1700000000000-abcd1234 (pid 1234, hard cap 120s)]',
+              'log: /tmp/jobs/1700000000000-abcd1234.log',
+              'exit: /tmp/jobs/1700000000000-abcd1234.exit',
+              'Next: wait {"name":"job-1700000000000-abcd1234","condition":{"kind":"file_exists","path":"/tmp/jobs/1700000000000-abcd1234.exit"}}, then read the log.',
+            ].join('\n'),
+          }],
+        };
+      }
+      return { content: [{ type: 'text', text: 'ok\n[exit 0 · 0.1s]' }] };
+    },
+    close: async () => {},
+  };
+  const broker = new LocalToolBroker({ inner, configPath });
+  const server = createLocalBrokerServer({ broker });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const client = new Client({ name: 'seq-budget-test', version: '1.0.0' });
+  t.after(async () => {
+    await client.close();
+    await server.close();
+    await broker.shutdown();
+  });
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+
+  // 1. Step 1 takes ~3.5s out of 6s budget (<3s left) -> step 2 & 3 deferred with DEFERRED_RPC_BUDGET
+  const budgetRes = await client.request(
+    {
+      method: 'tools/call',
+      params: {
+        name: 'fallback_dispatch',
+        arguments: {
+          sequential: true,
+          calls: [
+            { id: 's1', server: 'dev', tool: 'exec', arguments: { sleepMs: 3500 } },
+            { id: 's2', server: 'dev', tool: 'exec', arguments: {} },
+            { id: 's3', server: 'dev', tool: 'read', arguments: {} },
+          ],
+        },
+        _meta: { 'webharness/rpc-budget-ms': 6_000 },
+      },
+    },
+    // CallToolResultSchema is default on client.callTool, or use raw request
+    (await import('@modelcontextprotocol/client')).CallToolResultSchema,
+  );
+  assert.equal(budgetRes.structuredContent.results[0].status, 'fulfilled');
+  assert.equal(budgetRes.structuredContent.results[1].status, 'rejected');
+  assert.equal(budgetRes.structuredContent.results[1].error.code, 'DEFERRED_RPC_BUDGET');
+  assert.equal(budgetRes.structuredContent.results[2].status, 'rejected');
+  assert.equal(budgetRes.structuredContent.results[2].error.code, 'DEFERRED_RPC_BUDGET');
+  assert.deepEqual(executedCalls, ['exec']);
+
+  // 2. Step 1 takes 200ms out of 10s budget -> step 2 runs and receives decremented rpcBudgetMs
+  executedCalls = [];
+  seenBudgets.length = 0;
+  const decRes = await client.request(
+    {
+      method: 'tools/call',
+      params: {
+        name: 'fallback_dispatch',
+        arguments: {
+          sequential: true,
+          calls: [
+            { id: 'd1', server: 'dev', tool: 'exec', arguments: { sleepMs: 250 } },
+            { id: 'd2', server: 'dev', tool: 'exec', arguments: {} },
+          ],
+        },
+        _meta: { 'webharness/rpc-budget-ms': 10_000 },
+      },
+    },
+    (await import('@modelcontextprotocol/client')).CallToolResultSchema,
+  );
+  assert.equal(decRes.structuredContent.results[0].status, 'fulfilled');
+  assert.equal(decRes.structuredContent.results[1].status, 'fulfilled');
+  assert.equal(seenBudgets.length, 2);
+  assert.equal(seenBudgets[0], 10_000);
+  assert.ok(seenBudgets[1] < 9_850 && seenBudgets[1] >= 3_000, `expected decremented budget, got ${seenBudgets[1]}`);
+
+  // 3. Step 1 soft-promotes -> step 1 stays fulfilled, step 2 is deferred with DEFERRED_AFTER_PROMOTION
+  executedCalls = [];
+  const promoRes = await client.request(
+    {
+      method: 'tools/call',
+      params: {
+        name: 'fallback_dispatch',
+        arguments: {
+          sequential: true,
+          calls: [
+            { id: 'p1', server: 'dev', tool: 'exec', arguments: { promote: true } },
+            { id: 'p2', server: 'dev', tool: 'read', arguments: {} },
+          ],
+        },
+        _meta: { 'webharness/rpc-budget-ms': 25_000 },
+      },
+    },
+    (await import('@modelcontextprotocol/client')).CallToolResultSchema,
+  );
+  assert.equal(promoRes.structuredContent.results[0].status, 'fulfilled');
+  assert.equal(promoRes.structuredContent.results[1].status, 'rejected');
+  assert.equal(promoRes.structuredContent.results[1].error.code, 'DEFERRED_AFTER_PROMOTION');
+  assert.deepEqual(executedCalls, ['exec']);
+
+  // 4. Boundary case: step 1 leaves ~4.5s (< 5000ms Dev minimum) out of 6s -> step 2 is deferred with DEFERRED_RPC_BUDGET
+  executedCalls = [];
+  seenBudgets.length = 0;
+  const boundaryRes = await client.request(
+    {
+      method: 'tools/call',
+      params: {
+        name: 'fallback_dispatch',
+        arguments: {
+          sequential: true,
+          calls: [
+            { id: 'b1', server: 'dev', tool: 'exec', arguments: { sleepMs: 1500 } },
+            { id: 'b2', server: 'dev', tool: 'exec', arguments: {} },
+          ],
+        },
+        _meta: { 'webharness/rpc-budget-ms': 6_000 },
+      },
+    },
+    (await import('@modelcontextprotocol/client')).CallToolResultSchema,
+  );
+  assert.equal(boundaryRes.structuredContent.results[0].status, 'fulfilled');
+  assert.equal(boundaryRes.structuredContent.results[1].status, 'rejected');
+  assert.equal(boundaryRes.structuredContent.results[1].error.code, 'DEFERRED_RPC_BUDGET');
+  assert.deepEqual(executedCalls, ['exec']);
+});
+
+test('sequential batch treats failed dev command printing prior promoted footer as failure, not promotion', async t => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'local-seq-failed-promo-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const configPath = path.join(dir, 'inner.json');
+  await fs.writeFile(configPath, JSON.stringify({ mcpServers: { dev: { command: process.execPath } } }));
+
+  const inner = {
+    isServerLive: () => true,
+    listServerTools: async () => ({ tools: [{ name: 'bash' }, { name: 'read' }] }),
+    callServerTool: async () => ({
+      content: [{
+        type: 'text',
+        text: [
+          '[still running after 5.0s · promoted to job 1700000000000-abcd1234 (pid 1234, hard cap 120s)]',
+          'log: /tmp/jobs/1700000000000-abcd1234.log',
+          'exit: /tmp/jobs/1700000000000-abcd1234.exit',
+          'Next: wait {"name":"job-1700000000000-abcd1234","condition":{"kind":"file_exists","path":"/tmp/jobs/1700000000000-abcd1234.exit"}}, then read the log.',
+          '[exit 1 · 0.1s]',
+        ].join('\n'),
+      }],
+      _meta: { 'webharness/command-outcome': 'failed' },
+    }),
+    close: async () => {},
+  };
+  const broker = new LocalToolBroker({ inner, configPath });
+  const res = await broker.fallbackDispatch({
+    sequential: true,
+    calls: [
+      { id: 'c1', server: 'dev', tool: 'bash', arguments: {} },
+      { id: 'c2', server: 'dev', tool: 'read', arguments: {} },
+    ],
+  });
+  assert.equal(res.structuredContent.results[0].status, 'fulfilled');
+  assert.equal(res.structuredContent.results[1].status, 'rejected');
+  assert.equal(res.structuredContent.results[1].error.code, 'SKIPPED_AFTER_PRIOR_FAILURE');
+});
+
+test('malformed JSON-bleed in tool or server name fails fast with MALFORMED_TOOL_NAME', async t => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'local-malformed-tool-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const configPath = path.join(dir, 'inner.json');
+  await fs.writeFile(configPath, JSON.stringify({ mcpServers: { dev: { command: process.execPath } } }));
+  const inner = {
+    isServerLive: () => true,
+    listServerTools: async () => ({ tools: [] }),
+    callServerTool: async () => ({ content: [] }),
+    close: async () => {},
+  };
+  const broker = new LocalToolBroker({ inner, configPath, fallbackOnlyServers: ['dev'] });
+  await assert.rejects(
+    () => broker.fallbackDispatch({ server: 'dev', tool: 'bash},{arguments:{command:"ls"}}', arguments: {} }),
+    err => err.code === 'MALFORMED_TOOL_NAME' && /looks like JSON arguments leaked/.test(err.message),
+  );
+});

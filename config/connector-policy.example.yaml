@@ -26,6 +26,9 @@ default:
   connector_write_tools: true
   compat_annotations: false
   banner: default
+  # Optional client RPC budget in seconds (10..300). Commands exceeding (budget - 3s)
+  # auto-promote to durable background jobs, and wait hold_seconds clamps to (budget - 5s).
+  rpc_budget_seconds: 40
 
 clients:
   # Example: disable outer write tools & apply compat_annotations only for Gemini
@@ -40,6 +43,7 @@ clients:
     connector_write_tools: false
     compat_annotations: true
     banner: default
+    rpc_budget_seconds: 25
 
   gemini_query:
     match:
@@ -47,3 +51,4 @@ clients:
     connector_write_tools: false
     compat_annotations: true
     banner: default
+    rpc_budget_seconds: 25

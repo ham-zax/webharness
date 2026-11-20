@@ -66,11 +66,31 @@ test('capped retained output is labeled as partial rather than full', () => {
   );
 });
 
-test('timeout is rendered as a native exceptional annotation', () => {
+test('timeout is rendered as a native exceptional annotation with recovery hint', () => {
   assert.equal(
     renderBashText(record({ timed_out: true, exit_code: null, timeout_seconds: 30 })),
-    '[timed out after 30s · 0.0s]'
+    'Hint: for longer commands use detach:true + dev/wait, just queue <cmd>, or Local terminal_open + dev/wait.\n[timed out after 30s · 0.0s]'
   );
+});
+
+test('soft-promoted command renders partial output, job metadata, and wait next-step', () => {
+  const text = renderBashText(record({
+    promoted: true,
+    soft_timeout_seconds: 22,
+    hard_timeout_seconds: 120,
+    job_id: '1700000000000-abcd1234',
+    pid: 4242,
+    log_path: '/state/dev/jobs/1700000000000-abcd1234.log',
+    exit_path: '/state/dev/jobs/1700000000000-abcd1234.exit',
+    output: 'building...\n',
+  }));
+  assert.equal(text, [
+    'building...',
+    '[still running after 22.0s · promoted to job 1700000000000-abcd1234 (pid 4242, hard cap 120s)]',
+    'log: /state/dev/jobs/1700000000000-abcd1234.log',
+    'exit: /state/dev/jobs/1700000000000-abcd1234.exit',
+    'Next: wait {"name":"job-1700000000000-abcd1234","condition":{"kind":"file_exists","path":"/state/dev/jobs/1700000000000-abcd1234.exit"}}, then read the log.',
+  ].join('\n'));
 });
 
 test('edit renderer returns one path plus diff without Pi success prose', () => {

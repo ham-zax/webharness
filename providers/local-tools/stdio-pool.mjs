@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 import { Client, DEFAULT_REQUEST_TIMEOUT_MSEC, ReadBuffer, STDIO_DEFAULT_MAX_BUFFER_SIZE, SdkError, SdkErrorCode, serializeMessage } from '@modelcontextprotocol/client';
 import { getDefaultEnvironment } from '@modelcontextprotocol/client/stdio';
-import { CALL_ID_META, currentCall } from '../pi-dev/call-diagnostics.mjs';
+import { CALL_ID_META, RPC_BUDGET_META, currentCall } from '../pi-dev/call-diagnostics.mjs';
 
 const MAX_STDERR_LINE_BYTES = 2048;
 const MAX_CAUSE_SUMMARY_LENGTH = 512;
@@ -488,12 +488,18 @@ export class DirectServerClient {
     );
   }
 
-  async callTool(name, args = {}, signal) {
+  async callTool(name, args = {}, signal, metaOverrides = null) {
     if (!this.alive) throw brokerError('INNER_UNAVAILABLE', `local server ${this.serverName} is not running`);
     const startedAt = Date.now();
+    const call = currentCall();
+    const rpcBudgetMs = metaOverrides?.rpcBudgetMs ?? call?.rpcBudgetMs;
+    const meta = {
+      ...(call ? { [CALL_ID_META]: call.id } : {}),
+      ...(rpcBudgetMs !== undefined ? { [RPC_BUDGET_META]: rpcBudgetMs } : {}),
+    };
     try {
       const result = await this.client.callTool(
-        { name, arguments: args, ...(currentCall() ? { _meta: { [CALL_ID_META]: currentCall().id } } : {}) },
+        { name, arguments: args, ...(Object.keys(meta).length > 0 ? { _meta: meta } : {}) },
         this._requestOptions(signal)
       );
       if (result?.isError === true) {
@@ -654,8 +660,8 @@ export class LazyIdleSupervisor {
     return this.run(inner => inner.listTools(cursor, options));
   }
 
-  callTool(name, args = {}, signal) {
-    return this.run(inner => inner.callTool(name, args, signal));
+  callTool(name, args = {}, signal, metaOverrides = null) {
+    return this.run(inner => inner.callTool(name, args, signal, metaOverrides));
   }
 
   async evict() {
@@ -832,10 +838,10 @@ export class DirectLocalServerPool {
     return liveInner.listTools(cursor, options);
   }
 
-  async callServerTool(server, tool, args = {}, signal) {
+  async callServerTool(server, tool, args = {}, signal, metaOverrides = null) {
     const entry = await this._ensureEntry(server);
     if (this.closed) throw brokerError('INNER_UNAVAILABLE', 'local backend is shut down');
-    return entry.supervisor.callTool(tool, args, signal);
+    return entry.supervisor.callTool(tool, args, signal, metaOverrides);
   }
 
   async restartServer(server, { timeoutMs } = {}) {

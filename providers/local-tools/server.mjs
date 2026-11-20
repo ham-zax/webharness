@@ -2,7 +2,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { McpServer } from '@modelcontextprotocol/server';
 import { StdioServerTransport, serveStdio } from '@modelcontextprotocol/server/stdio';
-import { CALL_ID_META, markMutation, traceCall } from '../pi-dev/call-diagnostics.mjs';
+import { CALL_ID_META, RPC_BUDGET_META, markMutation, parseRpcBudgetMs, traceCall } from '../pi-dev/call-diagnostics.mjs';
 import { hasActiveRuntimeLeases } from '../../lib/runtime-leases.mjs';
 import { createStdioErrorReporter } from '../../lib/stdio-diagnostics.mjs';
 import { LocalDiagnosticLogger } from './logger.mjs';
@@ -172,10 +172,12 @@ export function createLocalBrokerServer({ broker } = {}) {
   mcp.server.setRequestHandler('tools/call', async (request, ctx) => {
     const reqArgs = request.params.arguments ?? {};
     const mutating = !isReadOnlyBrokerCall(request.params.name, reqArgs, broker);
+    const rpcBudgetMs = parseRpcBudgetMs(ctx.mcpReq._meta?.[RPC_BUDGET_META] ?? request.params._meta?.[RPC_BUDGET_META]);
     return traceCall({
       id: ctx.mcpReq._meta?.[CALL_ID_META] ?? request.params._meta?.[CALL_ID_META],
       layer: 'local', tool: BROKER_TOOL_NAMES.includes(request.params.name) ? request.params.name : 'unknown',
       mutating,
+      rpcBudgetMs,
       log: broker.logger ? record => broker.logger.log('info', record) : undefined,
     }, async () => {
       const signal = ctx.mcpReq.signal;

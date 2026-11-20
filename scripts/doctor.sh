@@ -214,6 +214,44 @@ NODE
   else
     warn "current lifecycle/status evidence reports stopped, unreachable, or unhealthy components"
   fi
+
+  WAKE_CALLS_LOG="$STATE_DIR/logs/wake-proxy-calls.log"
+  if [ -f "$WAKE_CALLS_LOG" ]; then
+    DISCONNECT_WARNINGS="$(node - "$WAKE_CALLS_LOG" <<'NODE' 2>/dev/null || true
+const fs = require('node:fs');
+const logPath = process.argv[2];
+const lines = fs.readFileSync(logPath, 'utf8').split(/\r?\n/).slice(-500);
+const byRule = new Map();
+for (const line of lines) {
+  if (!line) continue;
+  let rec;
+  try { rec = JSON.parse(line); } catch { continue; }
+  if (rec.event !== 'http_completed' || rec.outcome !== 'disconnected') continue;
+  if (typeof rec.duration_ms !== 'number' || rec.duration_ms < 5000 || rec.duration_ms > 290000) continue;
+  if (!Number.isSafeInteger(rec.rpc_budget_seconds) || rec.rpc_budget_seconds <= 0) continue;
+  if (rec.duration_ms > (rec.rpc_budget_seconds + 10) * 1000) continue;
+  const rule = rec.matched_rule || 'default';
+  const cur = byRule.get(rule) || { count: 0, minMs: rec.duration_ms, maxMs: rec.duration_ms, budget: rec.rpc_budget_seconds };
+  cur.count += 1;
+  cur.minMs = Math.min(cur.minMs, rec.duration_ms);
+  cur.maxMs = Math.max(cur.maxMs, rec.duration_ms);
+  cur.budget = rec.rpc_budget_seconds;
+  byRule.set(rule, cur);
+}
+for (const [rule, info] of byRule.entries()) {
+  const suggested = Math.max(10, Math.floor(info.minMs / 1000) - 5);
+  console.log(`${rule}: ${info.count} mid-flight disconnect(s) at ${(info.minMs / 1000).toFixed(1)}s..${(info.maxMs / 1000).toFixed(1)}s with rpc_budget_seconds=${info.budget}; consider lowering rpc_budget_seconds for "${rule}" to ${suggested} in connector-policy.yaml`);
+}
+NODE
+)"
+    if [ -n "$DISCONNECT_WARNINGS" ]; then
+      while IFS= read -r wline; do
+        [ -n "$wline" ] && warn "wake-proxy disconnect telemetry: $wline"
+      done <<<"$DISCONNECT_WARNINGS"
+    else
+      ok "no recent wake-proxy mid-flight disconnects near configured rpc_budget_seconds"
+    fi
+  fi
 fi
 
 printf '\nsummary: failures=%d warnings=%d\n' "$FAILURES" "$WARNINGS"

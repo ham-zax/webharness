@@ -804,3 +804,33 @@ test('transient systemd unavailability leaves the same durable wait pending for 
   assert.equal(recovered.deadlineAtMs, originalDeadline);
   assert.deepEqual(recovered.baseline, originalBaseline);
 });
+
+test('maxHoldSeconds option clamps explicit hold_seconds up to 45 without throwing', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'wait-engine-clamp-hold-test-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const store = new WaitStore({ stateDir: path.join(root, 'state') });
+  let nowMs = 1000;
+  const source = {
+    pollIntervalMs: 250,
+    async arm() {
+      return { status: 'pending', baseline: { token: 'clamp' } };
+    },
+    async check(record) {
+      return { status: 'pending', baseline: record.baseline };
+    },
+  };
+  const engine = new WaitEngine({
+    store,
+    sources: { fake: source },
+    now: () => nowMs,
+    sleep: async (ms) => { nowMs += ms; },
+  });
+
+  const res = await engine.run(
+    { name: 'clamped-hold', condition: { kind: 'fake' }, timeout_seconds: 120, hold_seconds: 45 },
+    undefined,
+    { maxHoldSeconds: 20 },
+  );
+  assert.equal(res.status, 'pending');
+  assert.equal(nowMs, 21_000, 'hold_seconds: 45 must clamp to maxHoldSeconds: 20 (20,000ms elapsed)');
+});

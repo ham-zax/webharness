@@ -15,6 +15,7 @@ test-fast:
         lib/bridge/test/connector-policy.test.mjs \
         lib/bridge/test/wake-proxy.test.mjs \
         lib/bridge/test/http-diagnostics.test.mjs \
+        lib/test/local-route-policy.test.mjs \
         lib/test/stdio-diagnostics.test.mjs \
         providers/local-tools/test/server.test.mjs \
         providers/local-tools/test/shutdown.test.mjs \

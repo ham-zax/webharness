@@ -320,3 +320,79 @@ process.send({ type: 'ready' });
   assert.deepEqual(res, { ok: true });
   await worker.close();
 });
+
+test('IdleExecutionWorker keeps promoted job supervised across short idleMs and releases runtime lease on completion', async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'dev-promoted-idle-'));
+  const leaseDir = path.join(root, 'leases');
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const worker = new IdleExecutionWorker({
+    serverPath: new URL('../server.mjs', import.meta.url).pathname,
+    idleMs: 40,
+    env: {
+      ...process.env,
+      MCP_DEV_SHELL_MODE: 'unrestricted',
+      MCP_DEV_PATH_MODE: 'workspace',
+      MCP_DEV_WORKSPACE_ROOT: root,
+      MCP_DEV_STATE_DIR: root,
+      MCP_LIFECYCLE_LEASE_DIR: leaseDir,
+    },
+  });
+  t.after(() => worker.close());
+
+  const res = await worker.call('bash', {
+    command: 'sleep 0.5 && echo finished-after-idle',
+    softTimeoutSeconds: 0.2,
+    timeout_seconds: 5,
+  });
+  assert.match(res.content[0].text, /promoted to job (\S+)/);
+  const jobId = res.content[0].text.match(/promoted to job (\S+)/)[1];
+  const exitPath = path.join(root, 'jobs', `${jobId}.exit`);
+  const logPath = path.join(root, 'jobs', `${jobId}.log`);
+
+  const leasesDuring = (await fs.readdir(leaseDir)).filter(f => f.endsWith('.json'));
+  assert.equal(leasesDuring.length, 1, 'active runtime lease must pin outer provider while promoted job runs');
+
+  // Wait longer than idleMs (40ms) for the job to finish naturally.
+  for (let i = 0; i < 100; i += 1) {
+    if (await fs.access(exitPath).then(() => true, () => false)) break;
+    await sleep(30);
+  }
+  assert.equal(await fs.readFile(exitPath, 'utf8'), '0\n');
+  assert.match(await fs.readFile(logPath, 'utf8'), /finished-after-idle/);
+
+  // Lease must be released after completion.
+  for (let i = 0; i < 40; i += 1) {
+    const remaining = (await fs.readdir(leaseDir)).filter(f => f.endsWith('.json'));
+    if (remaining.length === 0) break;
+    await sleep(20);
+  }
+  assert.deepEqual((await fs.readdir(leaseDir)).filter(f => f.endsWith('.json')), []);
+});
+
+test('IdleExecutionWorker explicit close() terminates promoted job with exit evidence instead of orphaning', async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'dev-promoted-close-'));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const worker = new IdleExecutionWorker({
+    serverPath: new URL('../server.mjs', import.meta.url).pathname,
+    idleMs: 60_000,
+    env: {
+      ...process.env,
+      MCP_DEV_SHELL_MODE: 'unrestricted',
+      MCP_DEV_PATH_MODE: 'workspace',
+      MCP_DEV_WORKSPACE_ROOT: root,
+      MCP_DEV_STATE_DIR: root,
+    },
+  });
+  t.after(() => worker.close());
+
+  const res = await worker.call('bash', {
+    command: 'sleep 30',
+    softTimeoutSeconds: 0.2,
+    timeout_seconds: 30,
+  });
+  const jobId = res.content[0].text.match(/promoted to job (\S+)/)[1];
+  const exitPath = path.join(root, 'jobs', `${jobId}.exit`);
+
+  await worker.close();
+  assert.equal(await fs.access(exitPath).then(() => true, () => false), true, 'explicit shutdown must write exit marker for promoted job');
+});

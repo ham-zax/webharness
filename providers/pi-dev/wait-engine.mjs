@@ -211,16 +211,20 @@ export class WaitEngine {
     return Math.max(MIN_POLL_MS, Number.isFinite(candidate) ? Math.floor(candidate) : MIN_POLL_MS);
   }
 
-  async run(args, signal) {
+  async run(args, signal, options = {}) {
     const name = args?.name;
     if (typeof name !== 'string') throw new WaitError('INVALID_WAIT_NAME', 'wait name is required');
-    const holdSeconds = integerInRange(
+    const requestedHoldSeconds = integerInRange(
       args.hold_seconds,
       'hold_seconds',
       0,
       MAX_HOLD_SECONDS,
       DEFAULT_HOLD_SECONDS,
     );
+    const maxHoldSeconds = Number.isSafeInteger(options?.maxHoldSeconds)
+      ? Math.max(1, Math.min(MAX_HOLD_SECONDS, options.maxHoldSeconds))
+      : MAX_HOLD_SECONDS;
+    const holdSeconds = Math.min(requestedHoldSeconds, maxHoldSeconds);
     const callStartedAtMs = this.now();
     const callDeadlineAtMs = holdSeconds > 0 ? callStartedAtMs + holdSeconds * 1000 : null;
     throwIfAborted(signal);

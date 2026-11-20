@@ -1238,3 +1238,60 @@ test('edit anchor miss reports the closest numbered file lines', async () => {
     }
   );
 });
+
+test('non-unique exact and tolerant edit errors report up to 5 line ranges and disambiguating context lines', async t => {
+  const workspaceRoot = await tempDir('pi-edit-dupes-');
+  t.after(() => fs.rm(workspaceRoot, { recursive: true, force: true }));
+  const lines = [];
+  for (let i = 1; i <= 7; i += 1) {
+    lines.push(`function section${i}() {`);
+    lines.push('  const value = 1;');
+    lines.push('  return value;');
+    lines.push('}');
+  }
+  await fs.writeFile(path.join(workspaceRoot, 'dupes.js'), lines.join('\n'));
+
+  // Exact non-unique (7 occurrences -> capped at 5 ranges)
+  await assert.rejects(
+    () => runEdit({
+      workspaceRoot,
+      targets: [{
+        path: 'dupes.js',
+        edits: [{ oldText: '  const value = 1;\n  return value;', newText: '  return 2;' }],
+      }],
+    }),
+    error => {
+      assert.match(error.message, /edits\[0\] exact text is not unique \(7 occurrences: L2-L3, L6-L7, L10-L11, L14-L15, L18-L19\)/);
+      assert.match(error.message, /Include surrounding lines to disambiguate:/);
+      assert.match(error.message, /  L1: function section1\(\) \{/);
+      assert.match(error.message, /  L17: function section5\(\) \{/);
+      assert.doesNotMatch(error.message, /L22-L23/);
+      return true;
+    },
+  );
+
+  // Tolerant non-unique (curly quotes force tolerant path)
+  await fs.writeFile(path.join(workspaceRoot, 'tolerant.js'), [
+    'const headerA = true;',
+    'const item = \u201ca\u201d;',
+    'const mid = 1;',
+    'const headerB = true;',
+    'const item = \u201ca\u201d;',
+  ].join('\n'));
+  await assert.rejects(
+    () => runEdit({
+      workspaceRoot,
+      targets: [{
+        path: 'tolerant.js',
+        edits: [{ oldText: 'const item = "a";', newText: 'const item = "b";' }],
+      }],
+    }),
+    error => {
+      assert.match(error.message, /edits\[0\] tolerant text is not unique \(2 occurrences: L2-L2, L5-L5\)/);
+      assert.match(error.message, /Include surrounding lines to disambiguate:/);
+      assert.match(error.message, /  L1: const headerA = true;/);
+      assert.match(error.message, /  L4: const headerB = true;/);
+      return true;
+    },
+  );
+});

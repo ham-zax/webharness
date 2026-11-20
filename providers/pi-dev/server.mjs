@@ -1,5 +1,5 @@
 import { constants as fsConstants } from 'node:fs';
-import { CALL_ID_META, traceCall, markMutation, diagnosticErrorCode } from './call-diagnostics.mjs';
+import { CALL_ID_META, RPC_BUDGET_META, traceCall, markMutation, diagnosticErrorCode, parseRpcBudgetMs } from './call-diagnostics.mjs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { McpServer } from '@modelcontextprotocol/server';
@@ -248,18 +248,30 @@ function registerTool(name, config, handler) {
   if (executionWorker) {
     executionToolConfigs.set(name, config);
     executionHandlers.set(name, (args, extra) => traceCall({
-      id: extra.callId, layer: 'dev-worker', tool: name, mutating, allowStep: true,
+      id: extra.callId, layer: 'dev-worker', tool: name, mutating, allowStep: true, rpcBudgetMs: extra.rpcBudgetMs,
     }, () => {
       if (mutating && name !== 'write') markMutation('unknown');
       return handler(args, extra);
     }));
   } else {
     toolRegistrations.push([name, config, (args, ctx) => traceCall({
-      id: ctx.mcpReq._meta?.[CALL_ID_META], layer: 'dev', tool: name, mutating,
+      id: ctx.mcpReq._meta?.[CALL_ID_META],
+      layer: 'dev',
+      tool: name,
+      mutating,
+      rpcBudgetMs: parseRpcBudgetMs(ctx.mcpReq._meta?.[RPC_BUDGET_META]),
     }, context => {
-      if (name === 'wait') return handler(args, { signal: AbortSignal.any([ctx.mcpReq.signal, shutdownController.signal]) });
+      if (name === 'wait') {
+        const maxHoldSeconds = context.rpcBudgetMs !== undefined
+          ? Math.max(1, Math.min(45, Math.floor(context.rpcBudgetMs / 1000) - 5))
+          : undefined;
+        return handler(args, {
+          signal: AbortSignal.any([ctx.mcpReq.signal, shutdownController.signal]),
+          maxHoldSeconds,
+        });
+      }
       if (mutating) markMutation('unknown');
-      return worker.call(name, args, ctx.mcpReq.signal, context.id);
+      return worker.call(name, args, ctx.mcpReq.signal, context.id, context.rpcBudgetMs);
     })]);
   }
 }
@@ -514,7 +526,7 @@ if (pathMode === 'user') {
     description: 'Create, resume, or cancel one durable named condition/timer wait. Prefer this over polling or sleep loops. Arm with name+condition and resume later with name only. A pending wait stays durable and must be resumed by a later active model turn; it does not start one. A matched wait reports its evidence in the same call, including an already-satisfied condition at arm time. For long-running commands, start the process through Local server="terminal" with terminal_open, then use terminal_exit or terminal_output waits across short RPCs and inspect final output with terminal_read. timeout_seconds is the durable deadline (default 300s, max 24h); hold_seconds bounds only this invocation (default 10s, max 45s). Supports timer, Terminal output/exit, process exit, TCP listen, file exists/change, HTTP readiness, and user-systemd conditions. Terminal-output waits observe only output produced after arming and do not consume the Terminal model cursor.',
     inputSchema: waitInputSchema,
   }, async (args, extra) => invokeWait(async () => {
-    const result = await waitEngine.run(args, extra.signal);
+    const result = await waitEngine.run(args, extra.signal, { maxHoldSeconds: extra.maxHoldSeconds });
     if (result.status === 'failed') {
       return {
         isError: true,
@@ -567,13 +579,20 @@ if (mode === 'unrestricted') {
     const result = await runExec({
       ...pathPolicy,
       ...args,
+      rpcBudgetMs: extra.rpcBudgetMs,
       maxOutputBytes,
       maxSpoolBytes,
       spoolTtlSeconds,
       maxSpoolTotalBytes,
       stateDir
     }, extra.signal);
-    return { content: [{ type: 'text', text: renderBashText(result) }] };
+    const commandOutcome = result.promoted
+      ? 'promoted'
+      : (result.timed_out || result.cancelled || result.exit_code !== 0 ? 'failed' : 'succeeded');
+    return {
+      content: [{ type: 'text', text: renderBashText(result) }],
+      _meta: { 'webharness/command-outcome': commandOutcome },
+    };
   }));
 
   registerTool('bash', {
@@ -595,13 +614,20 @@ if (mode === 'unrestricted') {
     const result = await runBash({
       ...pathPolicy,
       ...args,
+      rpcBudgetMs: extra.rpcBudgetMs,
       maxOutputBytes,
       maxSpoolBytes,
       spoolTtlSeconds,
       maxSpoolTotalBytes,
       stateDir
     }, extra.signal);
-    return { content: [{ type: 'text', text: renderBashText(result) }] };
+    const commandOutcome = result.promoted
+      ? 'promoted'
+      : (result.timed_out || result.cancelled || result.exit_code !== 0 ? 'failed' : 'succeeded');
+    return {
+      content: [{ type: 'text', text: renderBashText(result) }],
+      _meta: { 'webharness/command-outcome': commandOutcome },
+    };
   }));
 }
 

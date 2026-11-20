@@ -78,9 +78,9 @@ Persistent state defaults to `${XDG_STATE_HOME:-$HOME/.local/state}/mcp-dev-brid
 | `BRIDGE_COLD_START` | `1` | Runs `wake-proxy` on `MCP_ONE_MCP_PORT` and starts 1MCP on `BRIDGE_BACKEND_PORT` (default port + 10) on demand. Set `0` to keep 1MCP running directly on the public port. |
 | `BRIDGE_WAKE_IDLE_MS` | `1800000` (30m) | Evicts idle 1MCP after inactivity; `/health/ready` and `/health/live` do not wake it. Active streams and leases prevent eviction. |
 | `MCP_DEV_WORKER_IDLE_MS` | `1800000` (30m) | Evicts the expendable Pi execution worker when idle (`0` disables). Durable `wait` stays in the lightweight facade. |
-| `MCP_DEV_PREWARM_WORKER` | `0` | Set `1` to pre-fork the outer Dev worker at startup (omitted on the fallback-only inner mirror). |
+| `MCP_DEV_PREWARM_WORKER` | `1` (`personal`/`server`), `0` (`restricted`/`trusted-dev`) | Pre-forks the outer Dev execution worker at startup (still evicts after `MCP_DEV_WORKER_IDLE_MS`; set `0` to keep cold; omitted on the fallback-only inner mirror). |
 | `MCP_LOCAL_INNER_IDLE_MS` | `1800000` (30m) | Evicts each idle `DirectLocalServerPool` stdio server independently (`0` disables). Unscoped `tool_list` wakes nothing. |
-| `BRIDGE_CONNECTOR_POLICY_FILE` | `~/.config/mcp-dev-bridge/connector-policy.yaml` | Hot-reloading per-client connector policy (`default`, `clients`, `connector_write_tools`, `compat_annotations`, `banner`, `log_client_identifiers`). See [Operations](operations.md#per-client-connector-policy-connector-policyyaml). |
+| `BRIDGE_CONNECTOR_POLICY_FILE` | `~/.config/mcp-dev-bridge/connector-policy.yaml` | Hot-reloading per-client connector policy (`default`, `clients`, `connector_write_tools`, `compat_annotations`, `banner`, `rpc_budget_seconds` (`10..300`), `log_client_identifiers`). See [Operations](operations.md#per-client-connector-policy-connector-policyyaml). |
 
 ## WebSession adapter (optional)
 

@@ -367,7 +367,12 @@ export async function renderConfig(options) {
   const wakeIdleMs = integerSetting('BRIDGE_WAKE_IDLE_MS', 1800000, 1, 2147483647);
   const localIdleMs = integerSetting('MCP_LOCAL_INNER_IDLE_MS', 1800000, 0, 2147483647);
   const devIdleMs = integerSetting('MCP_DEV_WORKER_IDLE_MS', 1800000, 0, 2147483647);
-  const devPrewarmWorker = String(deployment.MCP_DEV_PREWARM_WORKER === '' ? '0' : (deployment.MCP_DEV_PREWARM_WORKER ?? '0'));
+  const defaultPrewarmWorker = isLocal ? '1' : '0';
+  const devPrewarmWorker = String(
+    deployment.MCP_DEV_PREWARM_WORKER === ''
+      ? defaultPrewarmWorker
+      : (deployment.MCP_DEV_PREWARM_WORKER ?? defaultPrewarmWorker),
+  );
   if (!['0', '1'].includes(devPrewarmWorker)) {
     throw new Error('MCP_DEV_PREWARM_WORKER must be 0 or 1');
   }

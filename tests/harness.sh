@@ -847,6 +847,15 @@ assert.match(await fs.readFile(result.bridgeEnvPath, 'utf8'), /BRIDGE_WAKE_IDLE_
 assert.match(await fs.readFile(result.bridgeEnvPath, 'utf8'), /BRIDGE_CONNECTOR_POLICY_FILE='\/tmp\/custom-policy\.yaml'/);
 const direct = await render('BRIDGE_COLD_START=0\n', 'direct');
 assert.match(await fs.readFile(direct.appConfigPath, 'utf8'), /^port = 43050/m);
+const directOuter = JSON.parse(await fs.readFile(direct.configPath));
+assert.equal(directOuter.mcpServers.dev.env.MCP_DEV_PREWARM_WORKER, '1');
+const prewarmDisabled = await render('MCP_DEV_PREWARM_WORKER=0\n', 'no-prewarm');
+const prewarmDisabledOuter = JSON.parse(await fs.readFile(prewarmDisabled.configPath));
+assert.equal(prewarmDisabledOuter.mcpServers.dev.env.MCP_DEV_PREWARM_WORKER, undefined);
+await fs.writeFile(envFile, `${base}MCP_WORKSPACE_ROOT=${root}\n`);
+const restricted = await renderConfig({ profile: 'restricted', repoRoot: root, stateDir: path.join(temp, 'restricted'), envFile });
+const restrictedOuter = JSON.parse(await fs.readFile(restricted.configPath));
+assert.equal(restrictedOuter.mcpServers.dev.env.MCP_DEV_PREWARM_WORKER, undefined);
 for (const [key, value] of [['BRIDGE_COLD_START', 'yes'], ['BRIDGE_BACKEND_PORT', '43050'], ['BRIDGE_BACKEND_PORT', '65536'], ['BRIDGE_WAKE_IDLE_MS', '-1'], ['BRIDGE_CONNECTOR_POLICY_FILE', 'relative.yaml'], ['MCP_LOCAL_INNER_IDLE_MS', 'bad'], ['MCP_DEV_WORKER_IDLE_MS', '2147483648'], ['MCP_DEV_PREWARM_WORKER', 'yes'], ['MCP_LIFECYCLE_LEASE_DIR', 'relative']]) {
   await assert.rejects(render(`${key}=${value}\n`), new RegExp(key));
 }

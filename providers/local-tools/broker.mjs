@@ -1,10 +1,11 @@
-import { markMutation } from '../pi-dev/call-diagnostics.mjs';
+import { MIN_RPC_BUDGET_MS, currentCall, markMutation } from '../pi-dev/call-diagnostics.mjs';
 import { explainSchemaViolation, looksLikeSchemaValidationError } from '../../lib/schema-hint.mjs';
 import {
   DEV_ROUTE_ARG_HINTS,
   hasUnsuccessfulDevCommandFooter,
   isArgumentSensitiveReadOnlyRoute,
   isKnownReadOnlyRoute,
+  isPromotedDevCommandResult,
   normalizeRouteTool,
 } from '../../lib/local-route-policy.mjs';
 import {
@@ -41,8 +42,19 @@ function optionalString(value, name) {
   return value === undefined ? undefined : requiredString(value, name);
 }
 
+function validateRouteIdentifier(value, label, code) {
+  requiredString(value, label);
+  if (/[\s{}:,"]/.test(value)) {
+    throw brokerError(
+      code,
+      'malformed tool or server name (looks like JSON arguments leaked into the name field); pass structured { server, tool, arguments } or { calls: [{ server, tool, arguments }] }',
+    );
+  }
+  return value;
+}
+
 function validateServerName(server, code = 'INVALID_SERVER') {
-  requiredString(server, 'server');
+  validateRouteIdentifier(server, 'server', code);
   if (server === '1mcp') throw brokerError(code, 'server name 1mcp is reserved');
   if (server.includes(INNER_TOOL_SEPARATOR)) throw brokerError(code, `server names must not contain ${INNER_TOOL_SEPARATOR}`);
   return server;
@@ -573,8 +585,10 @@ export class LocalToolBroker {
   }
 
   prepareRoute({ server, tool } = {}, allowedServers) {
+    validateRouteIdentifier(server, 'server', 'MALFORMED_TOOL_NAME');
     const selectedServer = validateServerName(server);
-    const selectedTool = normalizeRouteTool(selectedServer, requiredString(tool, 'tool'));
+    const rawTool = validateRouteIdentifier(tool, 'tool', 'MALFORMED_TOOL_NAME');
+    const selectedTool = normalizeRouteTool(selectedServer, rawTool);
     if (!allowedServers.has(selectedServer)) throw brokerError('UNKNOWN_SERVER', `unknown local server: ${selectedServer}`);
     return { server: selectedServer, tool: selectedTool };
   }
@@ -634,10 +648,10 @@ export class LocalToolBroker {
     }
   }
 
-  async dispatch({ server, tool }, args, signal) {
+  async dispatch({ server, tool }, args, signal, metaOverrides = null) {
     if (!this.isReadOnlyRoute(server, tool, args)) markMutation('unknown');
     try {
-      const result = await this.inner.callServerTool(server, tool, args, signal);
+      const result = await this.inner.callServerTool(server, tool, args, signal, metaOverrides);
       if (
         result?.isError === true
         && Array.isArray(result.content)
@@ -756,6 +770,9 @@ export class LocalToolBroker {
 
     if (sequential) {
       let failedPrior = false;
+      let promotedPrior = false;
+      const batchStartedAt = Date.now();
+      const rpcBudgetMs = currentCall()?.rpcBudgetMs;
       for (let index = 0; index < prepared.length; index += 1) {
         if (signal?.aborted) break;
         const call = prepared[index];
@@ -764,6 +781,37 @@ export class LocalToolBroker {
           ...(call.id === undefined ? {} : { id: call.id }),
           ...(homogeneous ? {} : { server: call.route.server, tool: call.route.tool }),
         };
+        if (promotedPrior) {
+          results[index] = {
+            ...identity,
+            status: 'rejected',
+            error: {
+              code: 'DEFERRED_AFTER_PROMOTION',
+              message: 'deferred: prior step was promoted to a background job; wait for it to finish before running remaining steps',
+            },
+          };
+          continue;
+        }
+        let stepMetaOverrides = null;
+        if (rpcBudgetMs !== undefined) {
+          if (index === 0) {
+            stepMetaOverrides = { rpcBudgetMs };
+          } else {
+            const remainingMs = rpcBudgetMs - (Date.now() - batchStartedAt);
+            if (remainingMs < MIN_RPC_BUDGET_MS) {
+              results[index] = {
+                ...identity,
+                status: 'rejected',
+                error: {
+                  code: 'DEFERRED_RPC_BUDGET',
+                  message: `deferred: sequential batch reached RPC budget (${Math.round(rpcBudgetMs / 1000)}s); re-issue remaining steps`,
+                },
+              };
+              continue;
+            }
+            stepMetaOverrides = { rpcBudgetMs: remainingMs };
+          }
+        }
         if (failedPrior && effectiveStopOnError) {
           results[index] = {
             ...identity,
@@ -774,9 +822,26 @@ export class LocalToolBroker {
         }
         try {
           await this.ensureServerAvailable(call.route.server);
-          const result = await this.dispatch(call.route, call.arguments, signal);
+          if (rpcBudgetMs !== undefined && index > 0) {
+            const postSetupRemainingMs = rpcBudgetMs - (Date.now() - batchStartedAt);
+            if (postSetupRemainingMs < MIN_RPC_BUDGET_MS) {
+              results[index] = {
+                ...identity,
+                status: 'rejected',
+                error: {
+                  code: 'DEFERRED_RPC_BUDGET',
+                  message: `deferred: sequential batch reached RPC budget (${Math.round(rpcBudgetMs / 1000)}s); re-issue remaining steps`,
+                },
+              };
+              continue;
+            }
+            stepMetaOverrides = { rpcBudgetMs: postSetupRemainingMs };
+          }
+          const result = await this.dispatch(call.route, call.arguments, signal, stepMetaOverrides);
           results[index] = { ...identity, status: 'fulfilled', result };
-          if (effectiveStopOnError && isFailedBatchEntryResult(call.route, result)) {
+          if (call.route.server === 'dev' && (call.route.tool === 'exec' || call.route.tool === 'bash') && isPromotedDevCommandResult(result)) {
+            promotedPrior = true;
+          } else if (effectiveStopOnError && isFailedBatchEntryResult(call.route, result)) {
             failedPrior = true;
           }
         } catch (error) {

@@ -4,6 +4,7 @@ import {
   openSync,
   renameSync,
   unlinkSync,
+  writeFileSync,
   writeSync
 } from 'node:fs';
 import fs from 'node:fs/promises';
@@ -12,8 +13,10 @@ import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { pruneBashSpools } from './spool-gc.mjs';
 export { pruneBashSpools } from './spool-gc.mjs';
-import { createLocalBashOperations } from '@earendil-works/pi-coding-agent';
 import { resolveUserCwd, resolveWorkspaceCwd } from './boundary.mjs';
+import { acquireRuntimeLease } from '../../lib/runtime-leases.mjs';
+import { beginBackgroundWork } from './idle-worker.mjs';
+import { MIN_RPC_BUDGET_MS } from './call-diagnostics.mjs';
 
 const DEFAULT_TIMEOUT_SECONDS = 30;
 const MAX_TIMEOUT_SECONDS = 300;
@@ -166,7 +169,7 @@ function killProcessTree(child) {
   }
 }
 
-function executeArgv(file, args, cwd, { onData, signal, timeout }) {
+function executeArgv(file, args, cwd, { onData, signal, timeout, softTimeout, onSoftPromote, onBackgroundComplete }) {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
       reject(new Error('aborted'));
@@ -175,8 +178,11 @@ function executeArgv(file, args, cwd, { onData, signal, timeout }) {
 
     let settled = false;
     let exited = false;
+    let promoted = false;
     let exitCode = null;
     let termination = null;
+    let hardTimedOut = false;
+    let softTimer = null;
     let deadlineTimer = null;
     let postExitTimer = null;
     let stdoutEnded = false;
@@ -199,6 +205,7 @@ function executeArgv(file, args, cwd, { onData, signal, timeout }) {
     stderrEnded = child.stderr === null;
 
     const cleanup = () => {
+      if (softTimer !== null) clearTimeout(softTimer);
       if (deadlineTimer !== null) clearTimeout(deadlineTimer);
       if (postExitTimer !== null) clearTimeout(postExitTimer);
       signal?.removeEventListener('abort', abort);
@@ -216,25 +223,30 @@ function executeArgv(file, args, cwd, { onData, signal, timeout }) {
       cleanup();
       child.stdout?.destroy();
       child.stderr?.destroy();
+      if (promoted) {
+        onBackgroundComplete?.({ exitCode: code, hardTimedOut });
+        return;
+      }
       if (error) reject(error);
       else resolve({ exitCode: code });
     };
     const finishAfterExit = () => {
       if (!exited || settled) return;
       if (stdoutEnded && stderrEnded) {
-        finish(termination === null ? null : new Error(termination));
+        finish(termination === null ? null : (termination instanceof Error ? termination : new Error(termination)));
       }
     };
     const armPostExitTimer = () => {
       if (postExitTimer !== null) clearTimeout(postExitTimer);
       postExitTimer = setTimeout(
-        () => finish(termination === null ? null : new Error(termination)),
+        () => finish(termination === null ? null : (termination instanceof Error ? termination : new Error(termination))),
         EXIT_STDIO_GRACE_MS
       );
     };
     const terminate = reason => {
       if (settled || termination !== null) return;
       termination = reason;
+      if (typeof reason === 'string' && reason.startsWith('timeout:')) hardTimedOut = true;
       killProcessTree(child);
     };
     const abort = () => terminate('aborted');
@@ -254,6 +266,10 @@ function executeArgv(file, args, cwd, { onData, signal, timeout }) {
     const handleExit = code => {
       exited = true;
       exitCode = code;
+      if (softTimer !== null) {
+        clearTimeout(softTimer);
+        softTimer = null;
+      }
       if (deadlineTimer !== null) {
         clearTimeout(deadlineTimer);
         deadlineTimer = null;
@@ -261,7 +277,7 @@ function executeArgv(file, args, cwd, { onData, signal, timeout }) {
       finishAfterExit();
       if (!settled) armPostExitTimer();
     };
-    const handleClose = code => finish(termination === null ? null : new Error(termination), code);
+    const handleClose = code => finish(termination === null ? null : (termination instanceof Error ? termination : new Error(termination)), code);
 
     child.stdout?.on('data', handleData);
     child.stdout?.once('end', handleStdoutEnd);
@@ -271,9 +287,45 @@ function executeArgv(file, args, cwd, { onData, signal, timeout }) {
     child.once('exit', handleExit);
     child.once('close', handleClose);
     deadlineTimer = setTimeout(() => terminate(`timeout: ${timeout}`), timeout * 1000);
+    if (softTimeout !== undefined) {
+      softTimer = setTimeout(() => {
+        if (settled || exited || promoted) return;
+        try {
+          onSoftPromote?.(child, () => terminate('aborted'));
+        } catch (promoteErr) {
+          terminate(promoteErr instanceof Error ? promoteErr : new Error(String(promoteErr)));
+          return;
+        }
+        promoted = true;
+        signal?.removeEventListener('abort', abort);
+        deadlineTimer?.unref?.();
+        child.unref?.();
+      }, softTimeout * 1000);
+    }
     signal?.addEventListener('abort', abort, { once: true });
     if (signal?.aborted) abort();
   });
+}
+
+function resolveCommandDeadlines({ timeout_seconds, softTimeoutSeconds, rpcBudgetMs }) {
+  if (softTimeoutSeconds !== undefined) {
+    positiveNumber('softTimeoutSeconds', softTimeoutSeconds, MAX_TIMEOUT_SECONDS);
+  }
+  const budgetSoft = softTimeoutSeconds !== undefined
+    ? softTimeoutSeconds
+    : (Number.isSafeInteger(rpcBudgetMs) && rpcBudgetMs >= MIN_RPC_BUDGET_MS
+      ? Math.max(1, Math.floor(rpcBudgetMs / 1000) - 3)
+      : undefined);
+  let hardTimeoutSeconds = timeout_seconds;
+  if (hardTimeoutSeconds === undefined) {
+    hardTimeoutSeconds = budgetSoft === undefined
+      ? DEFAULT_TIMEOUT_SECONDS
+      : Math.min(MAX_TIMEOUT_SECONDS, Math.max(120, budgetSoft + 30));
+  }
+  return {
+    hardTimeoutSeconds,
+    softTimeoutSeconds: budgetSoft !== undefined && budgetSoft < hardTimeoutSeconds ? budgetSoft : undefined,
+  };
 }
 
 async function runCaptured({
@@ -283,6 +335,7 @@ async function runCaptured({
   workspaceRoot,
   cwd,
   timeoutSeconds = DEFAULT_TIMEOUT_SECONDS,
+  softTimeoutSeconds,
   maxOutputBytes,
   maxSpoolBytes = DEFAULT_MAX_SPOOL_BYTES,
   spoolTtlSeconds = DEFAULT_SPOOL_TTL_SECONDS,
@@ -297,12 +350,22 @@ async function runCaptured({
     maxSpoolTotalBytes,
     stateDir,
   });
+  if (softTimeoutSeconds !== undefined) {
+    positiveNumber('softTimeoutSeconds', softTimeoutSeconds, MAX_TIMEOUT_SECONDS);
+  }
 
   const resolvedCwd = await resolveExecutionCwd({ pathMode, defaultCwd, workspaceRoot, cwd });
   mkdirSync(stateDir, { recursive: true, mode: 0o700 });
   const spool = path.join(stateDir, `${spoolPrefix}-${Date.now()}-${process.pid}-${randomUUID()}.log`);
   const activeSpool = `${spool}.active`;
   const fd = openSync(activeSpool, 'wx', 0o600);
+  let fdClosed = false;
+  const closeFdOnce = () => {
+    if (!fdClosed) {
+      fdClosed = true;
+      try { closeSync(fd); } catch {}
+    }
+  };
   const started = process.hrtime.bigint();
   const headBudget = headBudgetFor(maxOutputBytes);
   const headBuffer = headBudget > 0 ? Buffer.allocUnsafe(headBudget) : null;
@@ -314,51 +377,159 @@ async function runCaptured({
   let timedOut = false;
   let cancelled = false;
   let unexpected = null;
+  let promotedInfo = null;
+  let leasePromise = null;
+  let endBackground = null;
+  let resolveBgDone;
+  const bgDonePromise = new Promise(resolve => { resolveBgDone = resolve; });
 
   const onData = data => {
+    if (fdClosed) return;
     const chunk = Buffer.isBuffer(data) ? data : Buffer.from(data);
     const remainingSpoolBytes = Math.max(0, maxSpoolBytes - spoolBytes);
     if (remainingSpoolBytes > 0) {
       const retained = chunk.length <= remainingSpoolBytes
         ? chunk
         : chunk.subarray(0, remainingSpoolBytes);
-      writeSync(fd, retained);
-      spoolBytes += retained.length;
+      try {
+        writeSync(fd, retained);
+        spoolBytes += retained.length;
+      } catch {}
     }
     outputBytes += chunk.length;
-    if (headBuffer !== null && headBytes < headBudget) {
-      const room = headBudget - headBytes;
-      const copied = Math.min(room, chunk.length);
-      chunk.copy(headBuffer, headBytes, 0, copied);
-      headBytes += copied;
+    if (promotedInfo === null) {
+      if (headBuffer !== null && headBytes < headBudget) {
+        const room = headBudget - headBytes;
+        const copied = Math.min(room, chunk.length);
+        chunk.copy(headBuffer, headBytes, 0, copied);
+        headBytes += copied;
+      }
+      tail = boundedTail(tail, chunk, maxOutputBytes);
     }
-    tail = boundedTail(tail, chunk, maxOutputBytes);
   };
 
   try {
-    ({ exitCode } = await execute({
-      cwd: resolvedCwd,
-      onData,
-      signal,
-      timeout: timeoutSeconds,
-    }));
+    const outcome = await new Promise((resolveOutcome, rejectOutcome) => {
+      const onSoftPromote = (child, terminatePromoted) => {
+        const jobsDir = path.join(stateDir, 'jobs');
+        mkdirSync(jobsDir, { recursive: true, mode: 0o700 });
+        void pruneFinishedJobs(jobsDir, spoolTtlSeconds);
+        const jobId = `${Date.now()}-${randomUUID().slice(0, 8)}`;
+        const logPath = path.join(jobsDir, `${jobId}.log`);
+        const exitPath = path.join(jobsDir, `${jobId}.exit`);
+        renameSync(activeSpool, logPath);
+        promotedInfo = { jobId, pid: child.pid, logPath, exitPath };
+        endBackground = beginBackgroundWork(terminatePromoted);
+        leasePromise = acquireRuntimeLease({ kind: 'pi-dev-job' });
+        void leasePromise.then(
+          () => {
+            resolveOutcome({ promoted: true });
+          },
+          async leaseErr => {
+            const staleLog = promotedInfo?.logPath;
+            promotedInfo = null;
+            terminatePromoted?.();
+            await bgDonePromise;
+            if (staleLog) {
+              try { unlinkSync(staleLog); } catch {}
+            }
+            rejectOutcome(leaseErr);
+          },
+        );
+      };
+      const onBackgroundComplete = ({ exitCode: bgExitCode, hardTimedOut }) => {
+        if (promotedInfo) {
+          if (hardTimedOut && !fdClosed && spoolBytes < maxSpoolBytes) {
+            try {
+              writeSync(fd, Buffer.from(`\n[hard timeout after ${timeoutSeconds}s]\n`, 'utf8'));
+            } catch {}
+          }
+          closeFdOnce();
+          const finalCode = hardTimedOut ? 124 : (typeof bgExitCode === 'number' ? bgExitCode : 128);
+          const tmpExit = `${promotedInfo.exitPath}.tmp`;
+          try {
+            writeFileSync(tmpExit, `${finalCode}\n`, { mode: 0o600 });
+            renameSync(tmpExit, promotedInfo.exitPath);
+          } catch {}
+        } else {
+          closeFdOnce();
+        }
+        resolveBgDone();
+        if (endBackground) {
+          const finishBg = endBackground;
+          endBackground = null;
+          finishBg();
+        }
+        if (leasePromise) {
+          const p = leasePromise;
+          leasePromise = null;
+          void p.then(lease => lease?.close()).catch(() => {});
+        }
+      };
+      execute({
+        cwd: resolvedCwd,
+        onData,
+        signal,
+        timeout: timeoutSeconds,
+        softTimeout: softTimeoutSeconds,
+        onSoftPromote,
+        onBackgroundComplete,
+      }).then(
+        res => resolveOutcome({ promoted: false, exitCode: res.exitCode }),
+        err => rejectOutcome(err),
+      );
+    });
+    if (!outcome.promoted) {
+      exitCode = outcome.exitCode;
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (message === 'aborted') cancelled = true;
     else if (message.startsWith('timeout:')) timedOut = true;
     else unexpected = error;
   } finally {
-    closeSync(fd);
+    if (!promotedInfo) {
+      closeFdOnce();
+    }
   }
 
   if (unexpected) {
-    try { unlinkSync(activeSpool); } catch {}
+    if (!promotedInfo) {
+      try { unlinkSync(activeSpool); } catch {}
+    }
     throw unexpected;
   }
 
   const durationMs = Number(process.hrtime.bigint() - started) / 1_000_000;
   const truncated = outputBytes > maxOutputBytes;
   const spoolTruncated = outputBytes > maxSpoolBytes;
+  const renderedOutput = truncated && headBuffer !== null
+    ? composeHeadTail(headBuffer.subarray(0, headBytes), tail, outputBytes, maxOutputBytes)
+    : decodeBoundedUtf8Tail(tail, maxOutputBytes);
+
+  if (promotedInfo !== null) {
+    return {
+      cwd: resolvedCwd,
+      promoted: true,
+      exit_code: null,
+      job_id: promotedInfo.jobId,
+      pid: promotedInfo.pid,
+      log_path: promotedInfo.logPath,
+      exit_path: promotedInfo.exitPath,
+      hard_timeout_seconds: timeoutSeconds,
+      soft_timeout_seconds: softTimeoutSeconds,
+      output: renderedOutput,
+      output_bytes: outputBytes,
+      duration_ms: Math.round(durationMs),
+      timed_out: false,
+      cancelled: false,
+      truncated,
+      spool_truncated: spoolTruncated,
+      full_output_path: promotedInfo.logPath,
+      timeout_seconds: timeoutSeconds,
+    };
+  }
+
   if (truncated) {
     renameSync(activeSpool, spool);
   } else {
@@ -378,10 +549,9 @@ async function runCaptured({
 
   return {
     cwd: resolvedCwd,
+    promoted: false,
     exit_code: timedOut || cancelled ? null : exitCode,
-    output: truncated && headBuffer !== null
-      ? composeHeadTail(headBuffer.subarray(0, headBytes), tail, outputBytes, maxOutputBytes)
-      : decodeBoundedUtf8Tail(tail, maxOutputBytes),
+    output: renderedOutput,
     output_bytes: outputBytes,
     duration_ms: Math.round(durationMs),
     timed_out: timedOut,
@@ -396,6 +566,8 @@ async function runCaptured({
 export async function runBash({
   command,
   timeout_seconds,
+  softTimeoutSeconds,
+  rpcBudgetMs,
   detach = false,
   ...options
 }, signal) {
@@ -406,16 +578,19 @@ export async function runBash({
     if (timeout_seconds !== undefined) throw new Error('timeout_seconds does not apply to detach: true');
     return runDetached({ argv: ['bash', '-lc', command], ...options });
   }
-  timeout_seconds ??= DEFAULT_TIMEOUT_SECONDS;
-  const ops = createLocalBashOperations();
+  const deadlines = resolveCommandDeadlines({ timeout_seconds, softTimeoutSeconds, rpcBudgetMs });
   return runCaptured({
     ...options,
     spoolPrefix: 'bash',
-    timeoutSeconds: timeout_seconds,
-  }, signal, ({ cwd, onData, signal: executionSignal, timeout }) => ops.exec(command, cwd, {
+    timeoutSeconds: deadlines.hardTimeoutSeconds,
+    softTimeoutSeconds: deadlines.softTimeoutSeconds,
+  }, signal, ({ cwd, onData, signal: executionSignal, timeout, softTimeout, onSoftPromote, onBackgroundComplete }) => executeArgv('bash', ['-c', command], cwd, {
     onData,
     signal: executionSignal,
     timeout,
+    softTimeout,
+    onSoftPromote,
+    onBackgroundComplete,
   }));
 }
 
@@ -485,6 +660,8 @@ async function runDetached({
 export async function runExec({
   argv,
   timeout_seconds,
+  softTimeoutSeconds,
+  rpcBudgetMs,
   detach = false,
   ...options
 }, signal) {
@@ -498,15 +675,19 @@ export async function runExec({
     if (timeout_seconds !== undefined) throw new Error('timeout_seconds does not apply to detach: true');
     return runDetached({ argv, ...options });
   }
-  timeout_seconds ??= DEFAULT_TIMEOUT_SECONDS;
+  const deadlines = resolveCommandDeadlines({ timeout_seconds, softTimeoutSeconds, rpcBudgetMs });
   const [file, ...args] = argv;
   return runCaptured({
     ...options,
     spoolPrefix: 'exec',
-    timeoutSeconds: timeout_seconds,
-  }, signal, ({ cwd, onData, signal: executionSignal, timeout }) => executeArgv(file, args, cwd, {
+    timeoutSeconds: deadlines.hardTimeoutSeconds,
+    softTimeoutSeconds: deadlines.softTimeoutSeconds,
+  }, signal, ({ cwd, onData, signal: executionSignal, timeout, softTimeout, onSoftPromote, onBackgroundComplete }) => executeArgv(file, args, cwd, {
     onData,
     signal: executionSignal,
     timeout,
+    softTimeout,
+    onSoftPromote,
+    onBackgroundComplete,
   }));
 }

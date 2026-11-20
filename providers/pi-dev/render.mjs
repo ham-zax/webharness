@@ -9,6 +9,18 @@ function appendLines(output, annotations) {
 
 export function renderBashText(result) {
   const annotations = [];
+  if (result.promoted) {
+    const softLabel = Number.isFinite(result.soft_timeout_seconds)
+      ? `${Number(result.soft_timeout_seconds).toFixed(1)}s`
+      : `${((result.duration_ms ?? 0) / 1000).toFixed(1)}s`;
+    annotations.push(
+      `[still running after ${softLabel} · promoted to job ${result.job_id} (pid ${result.pid}, hard cap ${result.hard_timeout_seconds}s)]`,
+      `log: ${result.log_path}`,
+      `exit: ${result.exit_path}`,
+      `Next: wait {"name":"job-${result.job_id}","condition":{"kind":"file_exists","path":"${result.exit_path}"}}, then read the log.`
+    );
+    return appendLines(result.output, annotations);
+  }
   if (result.truncated && result.full_output_path) {
     annotations.push(result.spool_truncated
       ? `[truncated · ${result.output_bytes} bytes total · retained output capped · saved on remote host: ${result.full_output_path}]`
@@ -26,6 +38,9 @@ export function renderBashText(result) {
   }
   if (Number.isFinite(result.duration_ms)) {
     status += ` · ${(result.duration_ms / 1000).toFixed(1)}s`;
+  }
+  if (result.timed_out) {
+    annotations.push('Hint: for longer commands use detach:true + dev/wait, just queue <cmd>, or Local terminal_open + dev/wait.');
   }
   annotations.push(`[${status}]`);
   return appendLines(result.output, annotations);

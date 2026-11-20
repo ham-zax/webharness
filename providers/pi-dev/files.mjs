@@ -234,6 +234,42 @@ function findClosestAnchorSnippet(content, oldText) {
   return `\nClosest match in file (lines ${startLine}-${endLine}):\n${snippetLines.join('\n')}`;
 }
 
+const DUPLICATE_MAX_OCCURRENCES = 5;
+const DUPLICATE_LINE_MAX_CHARS = 100;
+const DUPLICATE_TOTAL_MAX_CHARS = 600;
+
+function formatDuplicateLocations(content, needle) {
+  const ranges = [];
+  const contextLines = [];
+  const contentLines = content.split('\n');
+  let offset = 0;
+  let totalChars = 0;
+  while (ranges.length < DUPLICATE_MAX_OCCURRENCES) {
+    const idx = content.indexOf(needle, offset);
+    if (idx === -1) break;
+    const range = matchedLineRange(content, idx, needle.length);
+    const startLine = range.start + 1;
+    const endLine = range.end;
+    ranges.push(`L${startLine}-L${endLine}`);
+    const ctxIdx = range.start > 0 ? range.start - 1 : range.start;
+    const rawLine = (contentLines[ctxIdx] ?? '').trim();
+    const trimmed = rawLine.length > DUPLICATE_LINE_MAX_CHARS
+      ? `${rawLine.slice(0, DUPLICATE_LINE_MAX_CHARS - 1)}…`
+      : rawLine;
+    const formatted = `  L${ctxIdx + 1}: ${trimmed}`;
+    if (totalChars + formatted.length + 1 <= DUPLICATE_TOTAL_MAX_CHARS) {
+      contextLines.push(formatted);
+      totalChars += formatted.length + 1;
+    }
+    offset = idx + Math.max(1, needle.length);
+  }
+  if (ranges.length === 0) return '';
+  const suffix = contextLines.length > 0
+    ? `. Include surrounding lines to disambiguate:\n${contextLines.join('\n')}`
+    : '';
+  return { rangesText: ranges.join(', '), suffix };
+}
+
 function classifyEdits(content, edits, path, sourceOffsets = null) {
   const tolerantView = tolerantMatchView(content);
   const tolerantContent = tolerantView.content;
@@ -245,7 +281,9 @@ function classifyEdits(content, edits, path, sourceOffsets = null) {
 
     const exactMatch = occurrenceMatch(content, oldText);
     if (exactMatch.count > 1) {
-      throw new Error(`edits[${editIndex}] exact text is not unique (${exactMatch.count} occurrences)`);
+      const dupes = formatDuplicateLocations(content, oldText);
+      const detail = dupes ? `: ${dupes.rangesText})${dupes.suffix}` : ')';
+      throw new Error(`edits[${editIndex}] exact text is not unique (${exactMatch.count} occurrences${detail}`);
     }
     if (exactMatch.count === 1) {
       const normalizedIndex = exactMatch.index;
@@ -267,7 +305,9 @@ function classifyEdits(content, edits, path, sourceOffsets = null) {
       );
     }
     if (tolerantMatch.count > 1) {
-      throw new Error(`edits[${editIndex}] tolerant text is not unique (${tolerantMatch.count} occurrences)`);
+      const dupes = formatDuplicateLocations(tolerantContent, tolerantOldText);
+      const detail = dupes ? `: ${dupes.rangesText})${dupes.suffix}` : ')';
+      throw new Error(`edits[${editIndex}] tolerant text is not unique (${tolerantMatch.count} occurrences${detail}`);
     }
     const normalizedIndex = tolerantMatch.index;
     const normalizedEnd = normalizedIndex + tolerantOldText.length;

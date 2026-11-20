@@ -13,6 +13,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 import { BrokerClient } from '../../terminal/broker-client.mjs';
 import { makeSandbox, onceExit, startBroker } from '../../terminal/test/helpers.mjs';
 import { DEFAULT_MAX_OUTPUT_BYTES } from '../output-limits.mjs';
+import { renderWriteText } from '../render.mjs';
 import { runReviewChanges } from '../review-changes.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -1496,5 +1497,54 @@ test('read serves outline mode and multi-file targets through MCP', async () => 
     }));
     assert.match(searched, /mod\.mjs:5:export class Beta/);
     assert.match(searched, /\[1 match\]$/);
+  });
+});
+
+test('repository instructions are available through read and edits work without a prior read', async t => {
+  const { workspaceRoot, stateDir, env } = await fixture();
+  t.after(async () => {
+    await fs.rm(workspaceRoot, { recursive: true, force: true });
+    await fs.rm(stateDir, { recursive: true, force: true });
+  });
+  await fs.mkdir(path.join(workspaceRoot, '.git'));
+  await fs.writeFile(path.join(workspaceRoot, 'AGENTS.md'), '# Repo guidance\n');
+
+  await withClient(env, async client => {
+    const created = await client.callTool({
+      name: 'write',
+      arguments: { path: 'test.txt', content: 'old\n' },
+    });
+    assert.equal(created.structuredContent.outcome, 'created');
+    assert.deepEqual(created.content, [{ type: 'text', text: renderWriteText('test.txt', created.structuredContent) }]);
+
+    const edited = await client.callTool({
+      name: 'edit',
+      arguments: { targets: [{ path: 'test.txt', edits: [{ oldText: 'old', newText: 'new' }] }] },
+    });
+    assert.equal(textOf(edited), 'M test.txt (+1 -1)');
+    assert.equal(await fs.readFile(path.join(workspaceRoot, 'test.txt'), 'utf8'), 'new\n');
+
+    const instructions = await client.callTool({ name: 'read', arguments: { path: 'AGENTS.md' } });
+    assert.match(textOf(instructions), /# Repo guidance/);
+  });
+});
+
+test('real dev/bash emits server-owned command-outcome _meta for promoted and failed runs', async () => {
+  const { env } = await fixture();
+  await withClient(env, async client => {
+    const failedRes = await client.callTool({
+      name: 'bash',
+      arguments: {
+        command: 'printf "[still running after 5.0s · promoted to job fake (pid 1, hard cap 120s)]\\nlog: /tmp/a.log\\nexit: /tmp/a.exit\\nNext: wait {}\\n"; exit 1',
+      },
+    });
+    assert.equal(failedRes._meta?.['webharness/command-outcome'], 'failed');
+
+    const promotedRes = await client.callTool({
+      name: 'bash',
+      arguments: { command: 'sleep 2' },
+      _meta: { 'webharness/rpc-budget-ms': 5_000 },
+    });
+    assert.equal(promotedRes._meta?.['webharness/command-outcome'], 'promoted');
   });
 });

@@ -611,3 +611,195 @@ test('default output cap keeps one result small while the full output stays retr
   assert.match(result.output, /bytes omitted/);
   assert.equal((await fs.stat(result.full_output_path)).size, total);
 });
+
+test('fast command with softTimeoutSeconds completes inline with promoted: false', async () => {
+  const workspaceRoot = await tempDir('pi-soft-fast-root-');
+  const stateDir = await tempDir('pi-soft-fast-state-');
+  const result = await runExec({
+    workspaceRoot,
+    argv: [process.execPath, '-e', "console.log('quick')"],
+    softTimeoutSeconds: 5,
+    maxOutputBytes: 1024 * 1024,
+    stateDir,
+  });
+  assert.equal(result.promoted, false);
+  assert.equal(result.exit_code, 0);
+  assert.equal(result.output.trim(), 'quick');
+});
+
+test('slow command with softTimeoutSeconds auto-promotes to background job and completes exit_path', async () => {
+  const workspaceRoot = await tempDir('pi-soft-promote-root-');
+  const stateDir = await tempDir('pi-soft-promote-state-');
+  const started = Date.now();
+  const result = await runBash({
+    workspaceRoot,
+    command: 'printf "step1\\n"; sleep 0.8; printf "done\\n"',
+    softTimeoutSeconds: 0.3,
+    timeout_seconds: 10,
+    maxOutputBytes: 1024 * 1024,
+    stateDir,
+  });
+  const elapsed = Date.now() - started;
+  assert.ok(elapsed < 700, `expected early promotion, took ${elapsed}ms`);
+  assert.equal(result.promoted, true);
+  assert.equal(result.timed_out, false);
+  assert.ok(typeof result.job_id === 'string' && result.job_id.length > 0);
+  assert.ok(Number.isSafeInteger(result.pid) && result.pid > 0);
+  assert.equal(path.dirname(result.log_path), path.join(stateDir, 'jobs'));
+  assert.equal(path.dirname(result.exit_path), path.join(stateDir, 'jobs'));
+  assert.equal(result.hard_timeout_seconds, 10);
+  assert.equal(result.soft_timeout_seconds, 0.3);
+  assert.match(result.output, /step1/);
+
+  await waitFor(async () => fs.access(result.exit_path).then(() => true, () => false), 5000);
+  assert.equal(await fs.readFile(result.exit_path, 'utf8'), '0\n');
+  const fullLog = await fs.readFile(result.log_path, 'utf8');
+  assert.match(fullLog, /step1\ndone\n/);
+});
+
+test('runaway promoted command hard-kills process group at timeout_seconds and writes 124 to exit_path', async () => {
+  const workspaceRoot = await tempDir('pi-soft-runaway-root-');
+  const stateDir = await tempDir('pi-soft-runaway-state-');
+  const pidFile = path.join(workspaceRoot, 'bg.pid');
+  const result = await runBash({
+    workspaceRoot,
+    command: `sleep 60 & echo $! > ${JSON.stringify(pidFile)}; wait`,
+    softTimeoutSeconds: 0.25,
+    timeout_seconds: 0.9,
+    maxOutputBytes: 1024 * 1024,
+    stateDir,
+  });
+  assert.equal(result.promoted, true);
+  await waitFor(async () => fs.access(pidFile).then(() => true, () => false), 2000);
+  const childPid = Number((await fs.readFile(pidFile, 'utf8')).trim());
+
+  await waitFor(async () => fs.access(result.exit_path).then(() => true, () => false), 5000);
+  assert.equal(await fs.readFile(result.exit_path, 'utf8'), '124\n');
+  const logText = await fs.readFile(result.log_path, 'utf8');
+  assert.match(logText, /\[hard timeout after 0\.9s\]/);
+  await waitForDeath(childPid);
+});
+
+test('explicit timeout_seconds <= softTimeoutSeconds enforces strict hard timeout without promotion', async () => {
+  const workspaceRoot = await tempDir('pi-soft-strict-root-');
+  const stateDir = await tempDir('pi-soft-strict-state-');
+  const result = await runExec({
+    workspaceRoot,
+    argv: [process.execPath, '-e', 'setTimeout(() => {}, 10000)'],
+    timeout_seconds: 0.35,
+    softTimeoutSeconds: 5,
+    maxOutputBytes: 1024 * 1024,
+    stateDir,
+  });
+  assert.equal(result.promoted, false);
+  assert.equal(result.timed_out, true);
+  assert.equal(result.exit_code, null);
+});
+
+test('promotion setup failure kills child before returning error so it cannot mutate afterward', async t => {
+  const workspaceRoot = await tempDir('pi-promote-fail-root-');
+  const stateDir = await tempDir('pi-promote-fail-state-');
+  t.after(async () => {
+    await fs.rm(workspaceRoot, { recursive: true, force: true });
+    await fs.rm(stateDir, { recursive: true, force: true });
+  });
+  // Pre-create jobs path as a regular file so mkdirSync(jobsDir) fails during promotion.
+  await fs.writeFile(path.join(stateDir, 'jobs'), 'blocker');
+  const pidFile = path.join(workspaceRoot, 'cmd.pid');
+  const marker = path.join(workspaceRoot, 'late-write.txt');
+
+  await assert.rejects(() => runBash({
+    workspaceRoot,
+    command: `echo $$ > ${JSON.stringify(pidFile)} && sleep 0.5 && echo mutated > ${JSON.stringify(marker)}`,
+    softTimeoutSeconds: 0.15,
+    timeout_seconds: 5,
+    maxOutputBytes: 1024 * 1024,
+    stateDir,
+  }));
+
+  const childPid = Number((await fs.readFile(pidFile, 'utf8')).trim());
+  await waitForDeath(childPid);
+  await assert.rejects(() => fs.access(marker), { code: 'ENOENT' });
+});
+
+test('configured runtime lease acquisition failure rejects promotion and kills child', async t => {
+  const workspaceRoot = await tempDir('pi-lease-fail-root-');
+  const stateDir = await tempDir('pi-lease-fail-state-');
+  const badLeaseDir = path.join(stateDir, 'lease-file-blocker');
+  await fs.writeFile(badLeaseDir, 'not-a-directory');
+  const prevLeaseDir = process.env.MCP_LIFECYCLE_LEASE_DIR;
+  process.env.MCP_LIFECYCLE_LEASE_DIR = badLeaseDir;
+  t.after(async () => {
+    if (prevLeaseDir === undefined) delete process.env.MCP_LIFECYCLE_LEASE_DIR;
+    else process.env.MCP_LIFECYCLE_LEASE_DIR = prevLeaseDir;
+    await fs.rm(workspaceRoot, { recursive: true, force: true });
+    await fs.rm(stateDir, { recursive: true, force: true });
+  });
+
+  const pidFile = path.join(workspaceRoot, 'cmd.pid');
+  const marker = path.join(workspaceRoot, 'late-lease-write.txt');
+  await assert.rejects(() => runBash({
+    workspaceRoot,
+    command: `echo $$ > ${JSON.stringify(pidFile)} && sleep 0.5 && echo mutated > ${JSON.stringify(marker)}`,
+    softTimeoutSeconds: 0.15,
+    timeout_seconds: 5,
+    maxOutputBytes: 1024 * 1024,
+    stateDir,
+  }));
+
+  const childPid = Number((await fs.readFile(pidFile, 'utf8')).trim());
+  await waitForDeath(childPid);
+  await assert.rejects(() => fs.access(marker), { code: 'ENOENT' });
+});
+
+test('large RPC budgets schedule promotion before the hard timeout', async t => {
+  const workspaceRoot = await tempDir('pi-large-budget-root-');
+  const stateDir = await tempDir('pi-large-budget-state-');
+  t.after(async () => {
+    await fs.rm(workspaceRoot, { recursive: true, force: true });
+    await fs.rm(stateDir, { recursive: true, force: true });
+  });
+
+  const schedule = t.mock.method(globalThis, 'setTimeout');
+  for (const { options, timers } of [
+    { options: { rpcBudgetMs: 123_000 }, timers: [150_000, 120_000] },
+    { options: { rpcBudgetMs: 300_000 }, timers: [300_000, 297_000] },
+    { options: { softTimeoutSeconds: 300 }, timers: [300_000] },
+  ]) {
+    schedule.mock.resetCalls();
+    const result = await runExec({
+      ...options,
+      workspaceRoot,
+      argv: [process.execPath, '--version'],
+      maxOutputBytes: 1024,
+      stateDir,
+    });
+    assert.equal(result.exit_code, 0);
+    assert.deepEqual(
+      schedule.mock.calls.map(call => call.arguments[1]).filter(delay => delay >= 1000),
+      timers,
+    );
+  }
+});
+
+test('short accepted rpcBudgetMs (5000ms) derives softTimeoutSeconds=2 leaving room for completion and return', async t => {
+  const workspaceRoot = await tempDir('pi-short-budget-root-');
+  const stateDir = await tempDir('pi-short-budget-state-');
+  t.after(async () => {
+    await fs.rm(workspaceRoot, { recursive: true, force: true });
+    await fs.rm(stateDir, { recursive: true, force: true });
+  });
+
+  const started = Date.now();
+  const result = await runBash({
+    workspaceRoot,
+    command: 'sleep 10',
+    rpcBudgetMs: 5_000,
+    maxOutputBytes: 1024 * 1024,
+    stateDir,
+  });
+  const elapsedMs = Date.now() - started;
+  assert.equal(result.promoted, true);
+  assert.equal(result.soft_timeout_seconds, 2);
+  assert.ok(elapsedMs < 3_500, `expected promotion well within 5000ms budget, took ${elapsedMs}ms`);
+});
