@@ -20,6 +20,7 @@ test-fast:
         providers/local-tools/test/server.test.mjs \
         providers/local-tools/test/shutdown.test.mjs \
         providers/skill-library/test/server.test.mjs \
+        scripts/test/gemini-auto-continue.test.mjs \
       ); \
       if [ -d providers/websession-adapter/test ]; then \
         files+=( \
