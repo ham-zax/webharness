@@ -187,6 +187,9 @@ echo "== applying pinned 1MCP single-owner OAuth policy =="
 # idempotent, so re-running this installer never applies a blind replacement.
 node "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/patch-1mcp-oauth-policy.mjs" "$(npm root -g)/@1mcp/agent"
 
+echo "== applying pinned 1MCP tool budget and schema timeout policy =="
+node "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/patch-1mcp-tool-budget.mjs" "$(npm root -g)/@1mcp/agent"
+
 echo "== verifying WebHarness prerequisites =="
 REQUIRED_CMDS=(node npm npx cloudflared curl flock)
 for cmd in "${REQUIRED_CMDS[@]}"; do

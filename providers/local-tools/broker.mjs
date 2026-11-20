@@ -1,4 +1,4 @@
-import { MIN_RPC_BUDGET_MS, currentCall, markMutation } from '../pi-dev/call-diagnostics.mjs';
+import { MIN_RPC_BUDGET_MS, currentCall, markMutation, toolResultErrorCode } from '../pi-dev/call-diagnostics.mjs';
 import { explainSchemaViolation, looksLikeSchemaValidationError } from '../../lib/schema-hint.mjs';
 import {
   DEV_ROUTE_ARG_HINTS,
@@ -271,6 +271,7 @@ function isPlainTextBlock(block) {
 
 export function batchResult(value) {
   const content = [];
+  const diagnostics = { batch_total: value.results.length, batch_failed: 0, batch_deferred: 0, batch_skipped: 0 };
   const pushBlock = block => {
     if (isPlainTextBlock(block) && content.length > 0 && isPlainTextBlock(content[content.length - 1])) {
       content[content.length - 1] = {
@@ -286,8 +287,21 @@ export function batchResult(value) {
     const routeTag = value.server === undefined && entry.server && entry.tool ? ` [${entry.server}/${entry.tool}]` : '';
     const label = `${baseLabel}${routeTag}`;
     if (entry.status === 'rejected') {
+      const code = entry.error.code;
+      if (code === 'DEFERRED_RPC_BUDGET' || code === 'DEFERRED_AFTER_PROMOTION') {
+        diagnostics.batch_deferred++;
+      } else if (code === 'SKIPPED_AFTER_PRIOR_FAILURE') {
+        diagnostics.batch_skipped++;
+      } else {
+        diagnostics.batch_failed++;
+        diagnostics.error_code ??= code;
+      }
       pushBlock({ type: 'text', text: `call ${label}: rejected ${entry.error.code}: ${entry.error.message}` });
       continue;
+    }
+    if (isFailedBatchEntryResult({ server: entry.server ?? value.server, tool: entry.tool ?? value.tool }, entry.result)) {
+      diagnostics.batch_failed++;
+      diagnostics.error_code ??= toolResultErrorCode(entry.result);
     }
     pushBlock({
       type: 'text',
@@ -297,6 +311,8 @@ export function batchResult(value) {
       for (const block of entry.result.content) pushBlock(block);
     }
   }
+  const call = currentCall();
+  if (call) call.batchDiagnostics = diagnostics;
   return { content, structuredContent: value };
 }
 
@@ -650,6 +666,14 @@ export class LocalToolBroker {
 
   async dispatch({ server, tool }, args, signal, metaOverrides = null) {
     if (!this.isReadOnlyRoute(server, tool, args)) markMutation('unknown');
+    const rpcBudgetMs = metaOverrides?.rpcBudgetMs ?? currentCall()?.rpcBudgetMs;
+    if (server === 'browser-daily' && tool === 'execute' && rpcBudgetMs !== undefined) {
+      const cap = Math.max(1_000, rpcBudgetMs - 3_000);
+      if (args.timeoutMs === undefined) args = { ...args, timeoutMs: Math.min(60_000, cap) };
+      else if (args.timeoutMs === 0 || (Number.isSafeInteger(args.timeoutMs) && args.timeoutMs > cap)) {
+        args = { ...args, timeoutMs: cap };
+      }
+    }
     try {
       const result = await this.inner.callServerTool(server, tool, args, signal, metaOverrides);
       if (

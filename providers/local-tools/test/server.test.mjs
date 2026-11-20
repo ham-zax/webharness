@@ -17,6 +17,7 @@ import {
 } from '../server.mjs';
 import { acquireRuntimeLease, hasActiveRuntimeLeases } from '../../../lib/runtime-leases.mjs';
 import { reclaimStaleRuntimeOwnership } from '../../../lib/one-mcp-runtime-ownership.mjs';
+import { CALL_ID_META, RPC_BUDGET_META, callId, traceCall } from '../../pi-dev/call-diagnostics.mjs';
 
 async function configFile(t, servers = ['browser']) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'local-tools-test-'));
@@ -1200,7 +1201,9 @@ test('DirectLocalServerPool wakes only the addressed server and negotiates both 
     }
   }), 'utf8');
 
-  const pool = new DirectLocalServerPool({ configPath: cfgPath, idleMs: 0 });
+  const records = [];
+  const logger = { log: (_level, record) => records.push(record), flush: async () => {} };
+  const pool = new DirectLocalServerPool({ configPath: cfgPath, idleMs: 0, logger });
   const broker = new LocalToolBroker({ inner: pool, configPath: cfgPath });
   t.after(() => broker.shutdown());
 
@@ -1212,8 +1215,14 @@ test('DirectLocalServerPool wakes only the addressed server and negotiates both 
   assert.deepEqual(await readPids(alpha.pidLog), []);
   assert.deepEqual(await readPids(beta.pidLog), []);
 
-  const alphaRes = await broker.call({ server: 'alpha', tool: 'ping_alpha', arguments: { msg: 'one' } });
+  const id = callId();
+  const alphaRes = await traceCall({ id, layer: 'local', tool: 'tool_call', log: () => {} },
+    () => broker.call({ server: 'alpha', tool: 'ping_alpha', arguments: { msg: 'one' } }));
   assert.equal(alphaRes.content[0].text, 'alpha:one');
+  assert.deepEqual(records.filter(record => record.event === 'tool_call_completed').map(({ duration_ms, ...record }) => {
+    assert.ok(duration_ms >= 0);
+    return record;
+  }), [{ event: 'tool_call_completed', call_id: id, server: 'alpha', tool: 'ping_alpha', outcome: 'success' }]);
   const alphaPids = await readPids(alpha.pidLog);
   assert.equal(alphaPids.length, 1);
   assert.deepEqual(await readPids(beta.pidLog), [], 'addressing alpha must never spawn beta');
@@ -1398,7 +1407,63 @@ test('DirectLocalServerPool enforces per-server requestTimeout and logs failure 
   await logger.flush();
   const logText = await fs.readFile(logFile, 'utf8');
   assert.match(logText, /event="tool_call_failed" server="slow" tool="ping_slow" duration_ms=\d+/);
+  assert.match(logText, /event="tool_call_completed" server="slow" tool="ping_slow" duration_ms=\d+ outcome="error"/);
   assert.match(logText, /event="server_stderr" server="slow" stderr="slow: handling call"/);
+});
+
+test('broker budgets browser-daily execute and reports mixed batch outcomes with the ingress call ID', async t => {
+  const configPath = await configFile(t, ['browser-daily']);
+  const records = [];
+  const observed = [];
+  const inner = {
+    isServerLive: () => true,
+    listServerTools: async () => ({ tools: [{ name: 'execute' }] }),
+    callServerTool: async (_server, _tool, args) => {
+      observed.push(args);
+      if (args.code === 'fail') return { content: [], isError: true, structuredContent: { error: { code: 'BROWSE_FAILED' } } };
+      return { content: [] };
+    },
+    close: async () => {},
+  };
+  const broker = new LocalToolBroker({ inner, configPath, logger: { log: (_level, record) => records.push(record), flush: async () => {} } });
+  const server = createLocalBrokerServer({ broker });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const client = new Client({ name: 'local-budget-test', version: '1.0.0' });
+  t.after(async () => { await client.close(); await server.close(); await broker.shutdown(); });
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+
+  const id = callId();
+  const route = { server: 'browser-daily', tool: 'execute' };
+  const result = await client.callTool({
+    name: 'fallback_dispatch',
+    _meta: { [CALL_ID_META]: id, [RPC_BUDGET_META]: 25_000 },
+    arguments: {
+      ...route,
+      calls: [
+        { arguments: { code: 'ok' } },
+        { arguments: { code: 'fail', timeoutMs: 55_000 } },
+        { arguments: { code: 'ok', timeoutMs: 0 } },
+        { arguments: { code: 'ok', timeoutMs: 5_000 } },
+      ],
+    },
+  });
+  assert.deepEqual(observed.map(args => args.timeoutMs), [22_000, 22_000, 22_000, 5_000]);
+  assert.equal(result.isError, undefined);
+  assert.equal(result.structuredContent.results[1].result.isError, true);
+  const completed = records.find(row => row.event === 'call_completed' && row.call_id === id);
+  assert.equal(completed.outcome, 'partial_error');
+  assert.equal(completed.batch_total, 4);
+  assert.equal(completed.batch_failed, 1);
+  assert.equal(completed.error_code, 'BROWSE_FAILED');
+  const failed = await client.callTool({
+    name: 'fallback_dispatch',
+    arguments: { ...route, calls: [{ arguments: { code: 'fail' } }] },
+  });
+  assert.equal(failed.isError, undefined);
+  assert.equal(records.at(-1).outcome, 'error');
+  await client.callTool({ name: 'tool_call', arguments: { ...route, arguments: { code: 'ok' } } });
+  assert.equal(observed.at(-1).timeoutMs, undefined);
 });
 
 test('DirectLocalServerPool crash recovery respects restartOnExit without auto-replaying failed calls', async t => {

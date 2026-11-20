@@ -34,7 +34,7 @@ export function diagnosticErrorCode(value) {
   return typeof value === 'string' && /^[A-Z][A-Z0-9_]{1,63}$/.test(value) ? value : 'TOOL_FAILED';
 }
 
-function resultCode(result) {
+export function toolResultErrorCode(result) {
   const text = result?.content?.find(item => item.type === 'text')?.text;
   return diagnosticErrorCode(result?._meta?.['webharness/error-code'] ?? result?.structuredContent?.error?.code ?? /^([A-Z][A-Z0-9_]+):/.exec(text ?? '')?.[1]);
 }
@@ -66,9 +66,14 @@ export async function traceCall({ id, layer, tool, mutating = true, allowStep = 
       if (['not_started', 'started', 'published', 'unknown', 'not_applicable'].includes(downstreamState)) {
         context.mutationState = downstreamState;
       }
+      const { error_code: batchErrorCode, ...batch } = context.batchDiagnostics ?? {};
+      const incomplete = (batch.batch_failed ?? 0) + (batch.batch_deferred ?? 0) + (batch.batch_skipped ?? 0);
       context.emit('completed', {
-        outcome: result?.isError ? 'error' : 'success',
-        ...(result?.isError ? { error_code: resultCode(result) } : {}),
+        ...batch,
+        outcome: result?.isError ? 'error' : incomplete === 0 ? 'success'
+          : incomplete === batch.batch_total ? 'error' : 'partial_error',
+        ...(batchErrorCode !== undefined ? { error_code: diagnosticErrorCode(batchErrorCode) } : {}),
+        ...(result?.isError ? { error_code: toolResultErrorCode(result) } : {}),
         duration_ms: Math.round(performance.now() - started), mutation_state: context.mutationState,
       });
       return { ...result, _meta: { ...result?._meta, [CALL_ID_META]: context.id, [MUTATION_META]: context.mutationState } };

@@ -497,6 +497,7 @@ export class DirectServerClient {
       ...(call ? { [CALL_ID_META]: call.id } : {}),
       ...(rpcBudgetMs !== undefined ? { [RPC_BUDGET_META]: rpcBudgetMs } : {}),
     };
+    let outcome = 'error';
     try {
       const result = await this.client.callTool(
         { name, arguments: args, ...(Object.keys(meta).length > 0 ? { _meta: meta } : {}) },
@@ -510,6 +511,8 @@ export class DirectServerClient {
           duration_ms: Date.now() - startedAt,
           error: extractIsErrorText(result)
         });
+      } else {
+        outcome = 'success';
       }
       return result;
     } catch (error) {
@@ -521,6 +524,15 @@ export class DirectServerClient {
         error: causeSummary(error)
       });
       throw error;
+    } finally {
+      this.logger?.log('info', {
+        event: 'tool_call_completed',
+        call_id: call?.id,
+        server: this.serverName,
+        tool: name,
+        duration_ms: Date.now() - startedAt,
+        outcome,
+      });
     }
   }
 
