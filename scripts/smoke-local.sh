@@ -76,16 +76,17 @@ const local = cfg.mcpServers?.local;
 if (cfg.mcpServers?.filesystem) throw new Error('filesystem provider must be absent after Pi cutover');
 if (cfg.mcpServers?.codedb) throw new Error('CodeDB is not part of the maintained tool surface');
 if (cfg.mcpServers?.['browser-devtools'] || cfg.mcpServers?.['browser-fast']) throw new Error('Browser providers must remain behind the Local broker');
+const isLocalProfile = profile === 'personal' || profile === 'server';
 if (profile) {
   const actual = Object.keys(cfg.mcpServers ?? {}).sort();
-  const expected = (profile === 'trusted-dev' || profile === 'restricted') ? ['dev'] : profile === 'personal' ? ['dev', 'local'] : null;
+  const expected = (profile === 'trusted-dev' || profile === 'restricted') ? ['dev'] : isLocalProfile ? ['dev', 'local'] : null;
   if (!expected || JSON.stringify(actual) !== JSON.stringify(expected)) {
     throw new Error(`unexpected final provider set for ${profile || 'unknown'}: ${actual.join(',')}`);
   }
 }
-if (profile === 'personal' && (code || terminal)) throw new Error('Code and Terminal must be published behind Local, not as outer providers');
+if (isLocalProfile && (code || terminal)) throw new Error('Code and Terminal must be published behind Local, not as outer providers');
 if (local) {
-  if (profile !== 'personal') throw new Error('Local broker is private to the personal profile');
+  if (!isLocalProfile) throw new Error('Local broker is private to the personal and server profiles');
   if (local.command !== 'node') throw new Error('Local broker must run with node');
   if (local.protocolVersion !== '2026-07-28') throw new Error('Local broker must negotiate MCP 2026-07-28');
   const expectedServer = path.join(repoRoot, 'providers', 'local-tools', 'server.mjs');
@@ -107,13 +108,16 @@ if (local) {
 
   const inner = JSON.parse(fs.readFileSync(env.MCP_LOCAL_INNER_CONFIG, 'utf8'));
   const innerNames = Object.keys(inner.mcpServers ?? {}).sort();
-  for (const required of ['browser-devtools', 'browser-fast', 'terminal', 'host', 'dev', 'skill-library']) {
+  const requiredInner = profile === 'personal'
+    ? ['browser-devtools', 'browser-fast', 'terminal', 'host', 'dev', 'skill-library']
+    : ['terminal', 'dev', 'skill-library'];
+  for (const required of requiredInner) {
     if (!innerNames.includes(required)) throw new Error(`Local inner provider set is missing required server: ${required}`);
     if (inner.mcpServers[required]?.protocolVersion !== '2026-07-28') {
       throw new Error(`Local inner provider ${required} must negotiate MCP 2026-07-28`);
     }
   }
-  if (env.MCP_LOCAL_FALLBACK_ONLY_SERVERS !== 'dev') throw new Error('only Dev may be fallback-only in personal Local');
+  if (env.MCP_LOCAL_FALLBACK_ONLY_SERVERS !== 'dev') throw new Error(`only Dev may be fallback-only in ${profile} Local`);
 
   if (inner.mcpServers.code || inner.mcpServers.codedb) throw new Error('CodeDB must be absent from the Local tool surface');
 
@@ -126,35 +130,37 @@ if (local) {
   if (terminal.env.MCP_TERMINAL_READ_MAX_BYTES !== '65536') throw new Error('unexpected inner Terminal read limit');
   if (terminal.tags !== undefined) throw new Error('inner Terminal provider must not carry an outer OAuth tag');
 
-  const host = inner.mcpServers.host;
-  if (host.command !== 'node') throw new Error('inner Host provider must run with node');
-  const expectedHostServer = path.join(repoRoot, 'providers', 'pi-dev', 'host-server.mjs');
-  if (JSON.stringify(host.args ?? []) !== JSON.stringify([expectedHostServer])) throw new Error('unexpected inner Host provider server path');
-  if (host.tags !== undefined) throw new Error('inner Host provider must not carry an outer OAuth tag');
-  const browser = inner.mcpServers['browser-devtools'];
-  if (browser.command !== 'node') throw new Error('inner Browser facade must run with node');
-  const expectedBrowserServer = path.join(repoRoot, 'providers', 'browser', 'server.mjs');
-  if (JSON.stringify(browser.args ?? []) !== JSON.stringify([expectedBrowserServer])) throw new Error('unexpected inner Browser facade server path');
-  const browserEnv = browser.env ?? {};
-  if (!path.isAbsolute(browserEnv.XDG_RUNTIME_DIR ?? '')) throw new Error('Browser XDG_RUNTIME_DIR must be absolute');
-  if (browserEnv.WAYLAND_DISPLAY !== 'wayland-0' || browserEnv.DISPLAY !== ':0' || browserEnv.PULSE_SERVER !== 'unix:/mnt/wslg/PulseServer') throw new Error('unexpected Browser WSLg environment');
-  if (browser.tags !== undefined) throw new Error('inner Browser provider must not carry an outer OAuth tag');
-  const browserPkg = JSON.parse(fs.readFileSync(path.join(repoRoot, 'providers', 'browser', 'package.json'), 'utf8'));
-  if (browserPkg.dependencies?.['@modelcontextprotocol/client'] !== '2.4.0' || browserPkg.dependencies?.['@modelcontextprotocol/server'] !== '2.4.0') throw new Error('unexpected Browser MCP SDK pin');
-  if (browserPkg.dependencies?.zod !== '4.4.3') throw new Error('unexpected Browser zod pin');
+  if (profile === 'personal') {
+    const host = inner.mcpServers.host;
+    if (host.command !== 'node') throw new Error('inner Host provider must run with node');
+    const expectedHostServer = path.join(repoRoot, 'providers', 'pi-dev', 'host-server.mjs');
+    if (JSON.stringify(host.args ?? []) !== JSON.stringify([expectedHostServer])) throw new Error('unexpected inner Host provider server path');
+    if (host.tags !== undefined) throw new Error('inner Host provider must not carry an outer OAuth tag');
+    const browser = inner.mcpServers['browser-devtools'];
+    if (browser.command !== 'node') throw new Error('inner Browser facade must run with node');
+    const expectedBrowserServer = path.join(repoRoot, 'providers', 'browser', 'server.mjs');
+    if (JSON.stringify(browser.args ?? []) !== JSON.stringify([expectedBrowserServer])) throw new Error('unexpected inner Browser facade server path');
+    const browserEnv = browser.env ?? {};
+    if (!path.isAbsolute(browserEnv.XDG_RUNTIME_DIR ?? '')) throw new Error('Browser XDG_RUNTIME_DIR must be absolute');
+    if (browserEnv.WAYLAND_DISPLAY !== 'wayland-0' || browserEnv.DISPLAY !== ':0' || browserEnv.PULSE_SERVER !== 'unix:/mnt/wslg/PulseServer') throw new Error('unexpected Browser WSLg environment');
+    if (browser.tags !== undefined) throw new Error('inner Browser provider must not carry an outer OAuth tag');
+    const browserPkg = JSON.parse(fs.readFileSync(path.join(repoRoot, 'providers', 'browser', 'package.json'), 'utf8'));
+    if (browserPkg.dependencies?.['@modelcontextprotocol/client'] !== '2.4.0' || browserPkg.dependencies?.['@modelcontextprotocol/server'] !== '2.4.0') throw new Error('unexpected Browser MCP SDK pin');
+    if (browserPkg.dependencies?.zod !== '4.4.3') throw new Error('unexpected Browser zod pin');
 
-  const fast = inner.mcpServers['browser-fast'];
-  if (fast.command !== 'node') throw new Error('inner Browser Fast provider must run with node');
-  const expectedFastServer = path.join(repoRoot, 'providers', 'browser-fast', 'server.mjs');
-  if (JSON.stringify(fast.args ?? []) !== JSON.stringify([expectedFastServer])) throw new Error('unexpected inner Browser Fast server path');
-  const fastEnv = fast.env ?? {};
-  if (!path.isAbsolute(fastEnv.XDG_RUNTIME_DIR ?? '')) throw new Error('Browser Fast XDG_RUNTIME_DIR must be absolute');
-  if (fastEnv.WAYLAND_DISPLAY !== 'wayland-0' || fastEnv.DISPLAY !== ':0' || fastEnv.PULSE_SERVER !== 'unix:/mnt/wslg/PulseServer') throw new Error('unexpected Browser Fast WSLg environment');
-  if (fast.tags !== undefined) throw new Error('inner Browser Fast provider must not carry an outer OAuth tag');
-  const fastPkg = JSON.parse(fs.readFileSync(path.join(repoRoot, 'providers', 'browser-fast', 'package.json'), 'utf8'));
-  if (fastPkg.dependencies?.['@modelcontextprotocol/client'] !== '2.4.0' || fastPkg.dependencies?.['@modelcontextprotocol/server'] !== '2.4.0') throw new Error('unexpected Browser Fast MCP SDK pin');
-  if (fastPkg.dependencies?.['agent-browser'] !== '0.43.0') throw new Error('unexpected Browser Fast Agent Browser pin');
-  if (fastPkg.dependencies?.zod !== '4.4.3') throw new Error('unexpected Browser Fast zod pin');
+    const fast = inner.mcpServers['browser-fast'];
+    if (fast.command !== 'node') throw new Error('inner Browser Fast provider must run with node');
+    const expectedFastServer = path.join(repoRoot, 'providers', 'browser-fast', 'server.mjs');
+    if (JSON.stringify(fast.args ?? []) !== JSON.stringify([expectedFastServer])) throw new Error('unexpected inner Browser Fast server path');
+    const fastEnv = fast.env ?? {};
+    if (!path.isAbsolute(fastEnv.XDG_RUNTIME_DIR ?? '')) throw new Error('Browser Fast XDG_RUNTIME_DIR must be absolute');
+    if (fastEnv.WAYLAND_DISPLAY !== 'wayland-0' || fastEnv.DISPLAY !== ':0' || fastEnv.PULSE_SERVER !== 'unix:/mnt/wslg/PulseServer') throw new Error('unexpected Browser Fast WSLg environment');
+    if (fast.tags !== undefined) throw new Error('inner Browser Fast provider must not carry an outer OAuth tag');
+    const fastPkg = JSON.parse(fs.readFileSync(path.join(repoRoot, 'providers', 'browser-fast', 'package.json'), 'utf8'));
+    if (fastPkg.dependencies?.['@modelcontextprotocol/client'] !== '2.4.0' || fastPkg.dependencies?.['@modelcontextprotocol/server'] !== '2.4.0') throw new Error('unexpected Browser Fast MCP SDK pin');
+    if (fastPkg.dependencies?.['agent-browser'] !== '0.43.0') throw new Error('unexpected Browser Fast Agent Browser pin');
+    if (fastPkg.dependencies?.zod !== '4.4.3') throw new Error('unexpected Browser Fast zod pin');
+  }
 }
 if (dev) {
   if (dev.protocolVersion !== '2026-07-28') throw new Error('Dev provider must negotiate MCP 2026-07-28');
@@ -169,12 +175,12 @@ if (dev) {
   if (!/^[1-9][0-9]*$/.test(env.MCP_DEV_SPOOL_MAX_TOTAL_BYTES ?? '')) throw new Error('MCP_DEV_SPOOL_MAX_TOTAL_BYTES must be a positive integer');
   if (Number(env.MCP_DEV_SPOOL_MAX_TOTAL_BYTES) < Number(env.MCP_DEV_MAX_SPOOL_BYTES)) throw new Error('MCP_DEV_SPOOL_MAX_TOTAL_BYTES must be >= MCP_DEV_MAX_SPOOL_BYTES');
   if (!['allowlist', 'unrestricted'].includes(env.MCP_DEV_SHELL_MODE)) throw new Error('MCP_DEV_SHELL_MODE must be allowlist or unrestricted');
-  if (profile === 'personal') {
-    if (env.MCP_DEV_PATH_MODE !== 'user') throw new Error('personal MCP_DEV_PATH_MODE must be user');
-    if (!path.isAbsolute(env.MCP_DEV_DEFAULT_CWD ?? '')) throw new Error('personal MCP_DEV_DEFAULT_CWD must be absolute');
-    if (env.MCP_DEV_WORKSPACE_ROOT !== undefined) throw new Error('personal dev provider must not use MCP_DEV_WORKSPACE_ROOT');
-    if (!path.isAbsolute(env.MCP_DEV_TERMINAL_SOCKET ?? '')) throw new Error('personal MCP_DEV_TERMINAL_SOCKET must be absolute');
-    if (path.basename(env.MCP_DEV_TERMINAL_SOCKET) !== 'wsl-agent-terminal.sock') throw new Error('unexpected personal dev Terminal broker socket name');
+  if (isLocalProfile) {
+    if (env.MCP_DEV_PATH_MODE !== 'user') throw new Error(`${profile} MCP_DEV_PATH_MODE must be user`);
+    if (!path.isAbsolute(env.MCP_DEV_DEFAULT_CWD ?? '')) throw new Error(`${profile} MCP_DEV_DEFAULT_CWD must be absolute`);
+    if (env.MCP_DEV_WORKSPACE_ROOT !== undefined) throw new Error(`${profile} dev provider must not use MCP_DEV_WORKSPACE_ROOT`);
+    if (!path.isAbsolute(env.MCP_DEV_TERMINAL_SOCKET ?? '')) throw new Error(`${profile} MCP_DEV_TERMINAL_SOCKET must be absolute`);
+    if (path.basename(env.MCP_DEV_TERMINAL_SOCKET) !== 'wsl-agent-terminal.sock') throw new Error(`unexpected ${profile} dev Terminal broker socket name`);
   } else {
     if (env.MCP_DEV_PATH_MODE !== 'workspace') throw new Error('public MCP_DEV_PATH_MODE must be workspace');
     if (!path.isAbsolute(env.MCP_DEV_WORKSPACE_ROOT ?? '')) throw new Error('MCP_DEV_WORKSPACE_ROOT must be absolute');
