@@ -100,7 +100,7 @@ Generated state and OAuth sessions live outside Git under `${XDG_STATE_HOME:-$HO
 
 ## Key boundaries & security notes
 
-- **Pinned 1MCP 0.39.8:** Loopback-only behind Cloudflare Tunnel with required OAuth and two qualified compatibility patches (see [Operations](docs/operations.md)).
+- **Pinned 1MCP 0.40.0:** Loopback-only behind Cloudflare Tunnel with required OAuth and qualified compatibility patches (see [Operations](docs/operations.md)).
 - **Browser isolation:** Windows automation uses a dedicated Chrome profile (`%LOCALAPPDATA%\mcp-dev-bridge\chrome-profile`, ephemeral loopback CDP port) separate from everyday Chrome. Linux uses WSLg and `~/.config/mcp-dev-bridge/browser-fast.json`. Everyday browser access happens only if you opt into `browser-daily`.
 - **Honest annotations & `tag:local`:** `fallback_dispatch` declares mutating annotations by default. Per-client `compat_annotations: true` in `connector-policy.yaml` is strictly a client-side transport shim—treat the downstream operation as the real side-effect boundary.
 - **Human secrets stay in tmux:** Enter sudo/passwords/MFA in a human-controlled terminal (`wsl-term attach`), never in MCP arguments.

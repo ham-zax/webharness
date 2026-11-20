@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import {
+  buildCliTokenAuthorization,
   classifyIdentity,
   ensureIdentity,
   NON_EXPIRING_MS,
@@ -238,6 +239,29 @@ test('sessionLifetime never invents an expiry', () => {
   assert.equal(sessionLifetime({ expires: NON_EXPIRING_MS }), 'never');
   const expires = Date.now() + 1000;
   assert.equal(sessionLifetime({ expires }), new Date(expires).toISOString());
+});
+
+test('provision sends 1MCP-CLI proof header when 1MCP configDir has capability store', async t => {
+  const { root, stateDir, sessionsDir } = fixture(t);
+  const configDir = join(root, '1mcp');
+  mkdirSync(configDir, { recursive: true, mode: 0o700 });
+  const secret = Buffer.from('0123456789abcdef0123456789abcdef').toString('base64url');
+  writeFileSync(join(configDir, 'template-context-capability.json'), JSON.stringify({
+    version: 1,
+    runtimeScopeId: 'scope-abc',
+    secret,
+  }));
+  const service = fakeService({ sessionsDir });
+  const result = await provisionIdentity({ stateDir, base: 'http://127.0.0.1:3050', sessionsDir, configDir, fetchImpl: service.fetchImpl });
+  assert.equal(result.provisioned, true);
+  assert.equal(service.calls.length, 1);
+  const auth = service.calls[0].options.headers.authorization;
+  assert.match(auth, /^1MCP-CLI /);
+  const proof = JSON.parse(Buffer.from(auth.slice('1MCP-CLI '.length), 'base64url').toString('utf8'));
+  assert.equal(proof.version, 1);
+  assert.equal(proof.runtimeScopeId, 'scope-abc');
+  assert.equal(typeof proof.signature, 'string');
+  assert.equal(buildCliTokenAuthorization(join(root, 'missing')), null);
 });
 
 test('supervised startup exits on provisioning failure so systemd can retry', t => {

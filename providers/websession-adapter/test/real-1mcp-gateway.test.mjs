@@ -102,7 +102,7 @@ const oneMcpRoot = detectInstalled1McpRoot();
 const requireQualification = process.env.WEBHARNESS_REQUIRE_1MCP_QUALIFICATION === '1';
 
 test(
-  'real pinned 1MCP 0.39.8 serves compact instructions and overlaps six modern 2026-07-28 sessions with failure/cancel isolation',
+  'real pinned 1MCP 0.40.0 serves compact instructions and overlaps six modern 2026-07-28 sessions with failure/cancel isolation',
   { skip: !oneMcpRoot && !requireQualification ? 'pinned @1mcp/agent is not installed globally' : false },
   async t => {
     assert.ok(oneMcpRoot && existsSync(join(oneMcpRoot, 'build', 'index.js')), 'WEBHARNESS_REQUIRE_1MCP_QUALIFICATION=1 requires pinned @1mcp/agent');
@@ -308,7 +308,7 @@ process.once('SIGTERM', () => { void handle.close().finally(() => process.exit(0
       discovered.instructions,
       '<fixture>\nReal 1MCP gateway fixture instructions.\n</fixture>\n\nTools are namespaced by server as `{server}_{tool}`.',
     );
-    assert.equal(counts.legacyInitializes, 0, 'modern 1MCP 0.39.8 must negotiate 2026-07-28 without legacy fallback');
+    assert.equal(counts.legacyInitializes, 0, 'modern 1MCP 0.40.0 must negotiate 2026-07-28 without legacy fallback');
 
     const submitted = capabilities.map((cap, idx) => core.submit(
       cap.token,

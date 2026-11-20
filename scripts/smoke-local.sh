@@ -59,7 +59,7 @@ try {
 const oneMcpRoot = npmRoot ? path.join(npmRoot, '@1mcp', 'agent') : '';
 if (oneMcpRoot && fs.existsSync(oneMcpRoot)) {
   const oneMcpPkg = JSON.parse(fs.readFileSync(path.join(oneMcpRoot, 'package.json'), 'utf8'));
-  if (oneMcpPkg.version !== '0.39.8') throw new Error(`unexpected installed 1MCP version: ${oneMcpPkg.version}`);
+  if (oneMcpPkg.version !== '0.40.0') throw new Error(`unexpected installed 1MCP version: ${oneMcpPkg.version}`);
   const oneMcpConstants = fs.readFileSync(path.join(oneMcpRoot, 'build', 'constants', 'mcp.js'), 'utf8');
   if (!oneMcpConstants.includes("process.env.WEBHARNESS_MCP_URI_SEPARATOR || '_'")) {
     throw new Error('installed 1MCP is missing the WebHarness clean tool namespacing patch');

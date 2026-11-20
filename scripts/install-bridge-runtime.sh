@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ONE_MCP_VERSION="0.39.8"
+ONE_MCP_VERSION="0.40.0"
 
 if [ "${1:-}" = "--headless" ]; then
   shift

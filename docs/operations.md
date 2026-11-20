@@ -82,13 +82,13 @@ Rendered configs embed absolute source paths. Before removing an old checkout or
 - Smoke check: `scripts/smoke-local.sh [MCP_URL]` (checks readiness and unauthenticated refusal). Add `--auth-state-dir DIR --read-path PATH` to verify authorized read access using an existing unexpired adapter token.
 - Instruction-template check: `node --test lib/test/instruction-template.test.mjs`.
 
-## 1MCP 0.39.8 compatibility
+## 1MCP 0.40.0 compatibility
 
-WebHarness pins `@1mcp/agent@0.39.8` with targeted runtime supervision and patches:
+WebHarness pins `@1mcp/agent@0.40.0` with targeted runtime supervision and patches:
 
 - Supervises the real Node entrypoint directly (never `serve --background`) under a kernel `flock` lease with a 10s graceful TERM window.
 - Patches consent-page CSP to allow exact registered HTTPS callback origins (required by hosted web connectors) and seeds `InstructionAggregator` at cold start so `activeInstructionTemplate` applies before hot reload.
-- Uses Winston native tailable file rotation configured via `1mcp/config.toml` and hot-reloads `mcp.json` changes automatically.
+- Uses Winston native tailable file rotation configured via `1mcp/config.toml`, disables upstream product telemetry (`ONE_MCP_PRODUCT_TELEMETRY=false`), raises schema worker compile/evaluate timeouts for WSL cold starts, and hot-reloads `mcp.json` changes automatically.
 
 Requalify these patches whenever upgrading 1MCP.
 
@@ -100,7 +100,7 @@ External MCP connectors (not `User-Agent: websession-adapter/*`) are shaped per 
 - Changes hot-reload on the next `initialize` or `tools/list`; transient read/parse errors retain the last-good policy and log `connector_policy_parse_warning`.
 - `clients:` rules run top-to-bottom (first match wins); multiple keys inside `match:` use AND semantics; unknown match keys fail closed. `query_client` is exact case-insensitive (`?client=<value>`); `user_agent` and `client_info` are case-insensitive regexes (substring fallback).
 - Default policy keeps direct read + write tools with honest annotations for ChatGPT/Claude. The starter template matches Gemini automatically via `user_agent: "^Google$"` (with `?client=gemini` as backup), hiding outer write tools and applying `compat_annotations: true` to `local_fallback_dispatch` only for Gemini.
-- Optional `rpc_budget_seconds` (`10..300`) sets a per-client RPC budget propagated via `_meta["webharness/rpc-budget-ms"]`: `exec`/`bash` soft-promote to background `jobs/<id>.{log,exit}` after `budget - 3s` (keeping a hard kill cap), `wait` clamps `hold_seconds` to `budget - 5s`, and sequential `fallback_dispatch` batches defer remaining steps before exhausting the budget.
+- Optional `rpc_budget_seconds` (`10..300`) sets a per-client RPC budget forwarded from `wake-proxy` via `x-webharness-rpc-budget-ms` and propagated by patched 1MCP into `_meta["webharness/rpc-budget-ms"]` for Local and Dev: `exec`/`bash` soft-promote to background `jobs/<id>.{log,exit}` after `budget - 3s` (keeping a hard kill cap), `browser-daily/execute` clamps `timeoutMs` to `budget - 3s`, `wait` clamps `hold_seconds` to `budget - 5s`, and sequential `fallback_dispatch` batches defer remaining steps before exhausting the budget.
 - Set `log_client_identifiers: true` to log exact client headers (`connector_client_identified`) in wake-proxy logs; `http_completed` records include `matched_rule` and `rpc_budget_seconds`, and `webharness doctor` flags mid-flight client disconnects near the configured budget.
 
 **Optional Gemini Web userscript:** `scripts/gemini-auto-continue.user.js` (Tampermonkey/Violentmonkey) automates checkpoints and confirmation cards. As of `v1.3.0`, both `armed` and `autoAllow` (no allowlist) start ON on page load unless disarmed in the widget—install only where unattended approval is intended.

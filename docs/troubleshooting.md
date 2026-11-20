@@ -16,9 +16,10 @@ The Dev provider can accept a larger internal `timeout_seconds`, but that does n
 
 A `timeout_seconds` value above 300 is rejected before the command runs, with `timeout_seconds must be from 1 to 300`. The cap is deliberate, because the deadline cannot outlive the connector window. Do not raise it. Use the Terminal and `wait` path above, or pass `detach=true` to `exec` or `bash` and wait on its exit file.
 
-**Per-client RPC budgets & soft auto-detach:** When `connector-policy.yaml` sets `rpc_budget_seconds` (`10..300`, e.g. `25` for Gemini or `40` default), `wake-proxy` injects `params._meta["webharness/rpc-budget-ms"]` into `tools/call` requests:
+**Per-client RPC budgets & soft auto-detach:** When `connector-policy.yaml` sets `rpc_budget_seconds` (`10..300`, e.g. `25` for Gemini or `40` default), `wake-proxy` sends `x-webharness-rpc-budget-ms` and patched 1MCP propagates `_meta["webharness/rpc-budget-ms"]` to Local and Dev:
 
 - Direct `exec`/`bash` commands running longer than `rpc_budget_seconds - 3s` automatically promote to durable background jobs (`stateDir/jobs/<jobId>.{log,exit}`) with a hard kill cap (`timeout_seconds`, default `120s`), returning partial output and the exact `wait(condition={kind:"file_exists",path:"..."})` follow-up.
+- `browser-daily/execute` defaults/clamps `timeoutMs` to `rpc_budget_seconds - 3s`.
 - `wait` clamps `hold_seconds` to `rpc_budget_seconds - 5s` so durable waits return `pending` before the client disconnects.
 - Sequential `local_fallback_dispatch(sequential: true)` batches track cumulative wall-clock time against the budget, forwarding the remaining milliseconds to each step and cleanly pausing remaining steps with `DEFERRED_AFTER_PROMOTION` or `DEFERRED_RPC_BUDGET` instead of timing out the outer RPC.
 - If `webharness doctor` warns about mid-flight `outcome:"disconnected"` entries in `logs/wake-proxy-calls.log`, lower `rpc_budget_seconds` for that matched client rule in `connector-policy.yaml`.

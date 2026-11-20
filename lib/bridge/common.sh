@@ -327,6 +327,7 @@ bridge_start_1mcp() {
       exit 75
     fi
     "${BRIDGE_NODE_BIN:-node}" "$BRIDGE_ROOT/lib/one-mcp-runtime-ownership.mjs" "$BRIDGE_CONFIG_DIR"
+    export ONE_MCP_PRODUCT_TELEMETRY="${ONE_MCP_PRODUCT_TELEMETRY:-false}"
     exec setsid "${BRIDGE_NODE_BIN:-node}" "$entry" serve \
       --config-dir "$BRIDGE_CONFIG_DIR" \
       --enable-auth \

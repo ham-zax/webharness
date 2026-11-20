@@ -86,7 +86,7 @@ process.stdin.once('end', () => { void handle.close(); });
       backend = spawn(process.execPath, [path.join(copy, 'build/index.js'), 'serve',
         '--config-dir', config, '--transport', 'http', '--host', '127.0.0.1',
         '--port', String(port), '--external-url', origin, '--log-level', 'warn'], {
-        env: { ...process.env, BRIDGE_COLD_START: coldStart, WEBHARNESS_MCP_URI_SEPARATOR: '_' },
+        env: { ...process.env, BRIDGE_COLD_START: coldStart, WEBHARNESS_MCP_URI_SEPARATOR: '_', ONE_MCP_PRODUCT_TELEMETRY: 'false' },
         stdio: ['ignore', 'pipe', 'pipe'],
       });
       for (const stream of [backend.stdout, backend.stderr]) {

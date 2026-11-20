@@ -20,10 +20,11 @@
  *   WEBSESSION_ADAPTER_STATE_DIR          private adapter state directory (required)
  *   WEBSESSION_ADAPTER_1MCP_BASE         loopback 1MCP base URL (default http://127.0.0.1:3050)
  *   WEBSESSION_ADAPTER_1MCP_SESSIONS_DIR 1MCP inbound session directory (required to judge ownership)
+ *   WEBSESSION_ADAPTER_1MCP_CONFIG_DIR   1MCP config/runtime-scope directory (for local CLI token proof)
  */
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { randomBytes } from 'node:crypto';
+import { createHmac, randomBytes } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 
 export const SERVICE_CLIENT_ID = 'websession-adapter';
@@ -119,14 +120,43 @@ export function revokeDedicatedSessions(sessionsDir) {
   return removed;
 }
 
-async function requestServiceToken(base, fetchImpl) {
+export function buildCliTokenAuthorization(configDir, now = Date.now()) {
+  if (!configDir) return null;
+  const capPath = join(configDir, 'template-context-capability.json');
+  if (!existsSync(capPath)) return null;
+  const parsed = JSON.parse(readFileSync(capPath, 'utf8'));
+  if (parsed?.version !== 1 || typeof parsed.runtimeScopeId !== 'string' || !parsed.runtimeScopeId || typeof parsed.secret !== 'string' || !parsed.secret) {
+    throw new Error(`invalid 1MCP runtime capability file: ${capPath}`);
+  }
+  const unsigned = { version: 1, runtimeScopeId: parsed.runtimeScopeId, issuedAt: now };
+  const signature = createHmac('sha256', Buffer.from(parsed.secret, 'base64url'))
+    .update(JSON.stringify(['1mcp-cli-token-v1', unsigned.runtimeScopeId, unsigned.issuedAt]))
+    .digest('base64url');
+  const proof = { ...unsigned, signature };
+  return `1MCP-CLI ${Buffer.from(JSON.stringify(proof)).toString('base64url')}`;
+}
+
+async function requestServiceToken(base, fetchImpl, configDir) {
+  let authorization = buildCliTokenAuthorization(configDir);
+  if (!authorization && configDir) {
+    // Wake 1MCP on cold start so it initializes template-context-capability.json if missing.
+    await fetchImpl(`${base}/health/ready`, { signal: AbortSignal.timeout(30_000) }).catch(() => {});
+    authorization = buildCliTokenAuthorization(configDir);
+  }
   const response = await fetchImpl(`${base}/api/auth/cli-token`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: {
+      'content-type': 'application/json',
+      ...(authorization ? { authorization } : {}),
+    },
     body: JSON.stringify({ service: true }),
     signal: AbortSignal.timeout(30_000),
   });
   if (response.status === 403) {
+    const errBody = await response.json().catch(() => null);
+    if (typeof errBody?.error === 'string' && /runtime credentials/i.test(errBody.error)) {
+      throw new Error(`${errBody.error}; ensure WEBSESSION_ADAPTER_1MCP_CONFIG_DIR points to the 1MCP config directory`);
+    }
     throw new Error('this deployment does not enable local service identities; set WEBHARNESS_OAUTH_SERVICE_IDENTITY=1 in the bridge environment');
   }
   if (!response.ok) {
@@ -150,7 +180,7 @@ async function requestServiceToken(base, fetchImpl) {
  * repeated provision never leaves an orphan permanent session. A borrowed
  * connector session is reported and left intact.
  */
-export async function provisionIdentity({ stateDir, base, sessionsDir, fetchImpl = fetch, log = () => {} }) {
+export async function provisionIdentity({ stateDir, base, sessionsDir, configDir = '', fetchImpl = fetch, log = () => {} }) {
   const current = classifyIdentity({ stateDir, sessionsDir });
   if (current.state === 'dedicated') {
     log('service_identity: present');
@@ -166,7 +196,7 @@ export async function provisionIdentity({ stateDir, base, sessionsDir, fetchImpl
   const removed = revokeDedicatedSessions(sessionsDir);
   if (removed.length > 0) log(`revoked_stale_sessions: ${removed.length}`);
 
-  const token = await requestServiceToken(base, fetchImpl);
+  const token = await requestServiceToken(base, fetchImpl, configDir);
   const state = readState(stateDir);
   state.tokens = { access_token: token, token_type: 'Bearer' };
   state.identity = { clientId: SERVICE_CLIENT_ID, provisionedAt: new Date().toISOString() };
@@ -271,10 +301,11 @@ async function main() {
   const stateDir = process.env.WEBSESSION_ADAPTER_STATE_DIR;
   const base = (process.env.WEBSESSION_ADAPTER_1MCP_BASE || 'http://127.0.0.1:3050').replace(/\/$/, '');
   const sessionsDir = process.env.WEBSESSION_ADAPTER_1MCP_SESSIONS_DIR || '';
+  const configDir = process.env.WEBSESSION_ADAPTER_1MCP_CONFIG_DIR || '';
   if (!stateDir) throw new Error('WEBSESSION_ADAPTER_STATE_DIR is required');
   const log = line => process.stdout.write(`${line}\n`);
-  if (action === 'ensure') await ensureIdentity({ stateDir, base, sessionsDir, log });
-  else if (action === 'provision') await provisionIdentity({ stateDir, base, sessionsDir, log });
+  if (action === 'ensure') await ensureIdentity({ stateDir, base, sessionsDir, configDir, log });
+  else if (action === 'provision') await provisionIdentity({ stateDir, base, sessionsDir, configDir, log });
   else if (action === 'status') statusIdentity({ stateDir, sessionsDir, log });
   else if (action === 'revoke') revokeIdentity({ stateDir, sessionsDir, log });
   else throw new Error('usage: node identity.mjs ensure|provision|status|revoke');

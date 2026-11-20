@@ -2,8 +2,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const [agentRoot] = process.argv.slice(2);
-if (!agentRoot || JSON.parse(fs.readFileSync(path.join(agentRoot, 'package.json'), 'utf8')).version !== '0.39.8') {
-  throw new Error('Expected pinned @1mcp/agent 0.39.8');
+if (!agentRoot || JSON.parse(fs.readFileSync(path.join(agentRoot, 'package.json'), 'utf8')).version !== '0.40.0') {
+  throw new Error('Expected pinned @1mcp/agent 0.40.0');
 }
 
 const contextFile = 'core/server/webharnessToolMetadata.js';

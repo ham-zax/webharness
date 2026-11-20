@@ -21,6 +21,7 @@ test-fast:
         providers/local-tools/test/shutdown.test.mjs \
         providers/skill-library/test/server.test.mjs \
         scripts/test/gemini-auto-continue.test.mjs \
+        scripts/test/one-mcp-tool-budget.test.mjs \
       ); \
       if [ -d providers/websession-adapter/test ]; then \
         files+=( \
