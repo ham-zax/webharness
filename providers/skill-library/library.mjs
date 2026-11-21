@@ -126,7 +126,7 @@ export class SkillLibrary {
 
   async read({ id, revision, file, cursor, max_bytes } = {}) {
     if (typeof id !== 'string' || id.length > 129 || !id.includes('/')) throw failure('INVALID_ARGUMENT', 'id must name one discovered skill');
-    if (typeof revision !== 'string' || !/^[a-f0-9]{64}$/.test(revision)) throw failure('INVALID_ARGUMENT', 'revision must be the discovered SHA-256 revision');
+    if (typeof revision !== 'string' || !/^[a-f0-9]{64}$/.test(revision)) throw failure('INVALID_ARGUMENT', 'revision must be the 64-character SHA-256 revision returned by find_skills');
     const budget = integer(max_bytes, 8192, 256, 16384, 'max_bytes');
     await this.checkPolicy();
     const [packId, skillId, extra] = id.split('/');

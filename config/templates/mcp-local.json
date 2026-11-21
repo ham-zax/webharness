@@ -2,6 +2,7 @@
   "version": "1.0.0",
   "mcpServers": {
     "skill-library": {
+      "type": "stdio",
       "command": "node",
       "protocolVersion": "2026-07-28",
       "args": ["__REPO_ROOT__/providers/skill-library/server.mjs"],
@@ -12,6 +13,7 @@
       }
     },
     "browser-devtools": {
+      "type": "stdio",
       "command": "node",
       "protocolVersion": "2026-07-28",
       "args": [
@@ -26,6 +28,7 @@
       }
     },
     "browser-fast": {
+      "type": "stdio",
       "command": "node",
       "protocolVersion": "2026-07-28",
       "args": [
@@ -40,6 +43,7 @@
       }
     },
     "browser-daily": {
+      "type": "stdio",
       "command": "node",
       "protocolVersion": "2026-07-28",
       "args": [
@@ -48,6 +52,7 @@
       "requestTimeout": 180000
     },
     "terminal": {
+      "type": "stdio",
       "command": "node",
       "protocolVersion": "2026-07-28",
       "args": [
@@ -60,6 +65,7 @@
       }
     },
     "host": {
+      "type": "stdio",
       "command": "node",
       "protocolVersion": "2026-07-28",
       "args": [

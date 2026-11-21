@@ -131,6 +131,27 @@ function enrichSchemaValidationResult(server, tool, result, detail = null) {
   return { ...result, content: nextContent };
 }
 
+function rewriteBudgetCappedBrowserTimeout(result, capMs, rpcBudgetMs) {
+  if (!result || typeof result !== 'object' || result.isError !== true || !Array.isArray(result.content)) {
+    return result;
+  }
+  const pattern = /(execute timed out after \d+ ms) \(pass a larger timeoutMs, or split the work into several calls\)/;
+  let changed = false;
+  const budgetSeconds = Math.round(rpcBudgetMs / 1000);
+  const nextContent = result.content.map(item => {
+    if (item?.type !== 'text' || typeof item.text !== 'string' || !pattern.test(item.text)) return item;
+    changed = true;
+    return {
+      ...item,
+      text: item.text.replace(
+        pattern,
+        `$1 (capped at ${capMs} ms by this client's ${budgetSeconds}s RPC budget; split the work into smaller calls instead of passing a larger timeoutMs)`,
+      ),
+    };
+  });
+  return changed ? { ...result, content: nextContent } : result;
+}
+
 function normalizeLimit(value) {
   if (value === undefined) return DEFAULT_LIST_LIMIT;
   if (!Number.isInteger(value) || value < 1 || value > MAX_LIST_LIMIT) {
@@ -667,15 +688,23 @@ export class LocalToolBroker {
   async dispatch({ server, tool }, args, signal, metaOverrides = null) {
     if (!this.isReadOnlyRoute(server, tool, args)) markMutation('unknown');
     const rpcBudgetMs = metaOverrides?.rpcBudgetMs ?? currentCall()?.rpcBudgetMs;
+    let browserDailyBudgetCapMs = null;
     if (server === 'browser-daily' && tool === 'execute' && rpcBudgetMs !== undefined) {
       const cap = Math.max(1_000, rpcBudgetMs - 3_000);
-      if (args.timeoutMs === undefined) args = { ...args, timeoutMs: Math.min(60_000, cap) };
-      else if (args.timeoutMs === 0 || (Number.isSafeInteger(args.timeoutMs) && args.timeoutMs > cap)) {
+      if (args.timeoutMs === undefined) {
+        const capped = Math.min(60_000, cap);
+        args = { ...args, timeoutMs: capped };
+        if (capped === cap && cap < 60_000) browserDailyBudgetCapMs = cap;
+      } else if (args.timeoutMs === 0 || (Number.isSafeInteger(args.timeoutMs) && args.timeoutMs > cap)) {
         args = { ...args, timeoutMs: cap };
+        browserDailyBudgetCapMs = cap;
       }
     }
     try {
-      const result = await this.inner.callServerTool(server, tool, args, signal, metaOverrides);
+      let result = await this.inner.callServerTool(server, tool, args, signal, metaOverrides);
+      if (browserDailyBudgetCapMs !== null) {
+        result = rewriteBudgetCappedBrowserTimeout(result, browserDailyBudgetCapMs, rpcBudgetMs);
+      }
       if (
         result?.isError === true
         && Array.isArray(result.content)

@@ -75,6 +75,59 @@ const patches = [
   ['core/validation/schemaPolicy.js',
     '    compileMs: 250,\n    evaluateMs: 50,',
     '    compileMs: 1500,\n    evaluateMs: 250,'],
+  ['sdk/legacy/client/runtime/clientManager.js',
+    `            if (isUnknownMessageIdError(error)) {
+                logger.error('clientManager.client.received.a.response.for.an.unknown.message.id.a605b144');`,
+    `            if (isUnknownMessageIdError(error)) {
+                if (this.isShuttingDown) {
+                    return;
+                }
+                logger.error('clientManager.client.received.a.response.for.an.unknown.message.id.a605b144');`],
+  ['logger/logger.js',
+    `export function writeBackendDiagnostic(entry) {
+    if (!isBackendDiagnosticEntry(entry))
+        return;
+    sink.warn(\`[\${entry.displayName}] \${entry.content}\`, {
+        serverName: entry.canonicalName,
+        source: 'backend-stderr',
+        backendLogSequence: entry.sequence,
+        backendLogSourceId: entry.sourceId,
+        backendLogEventKind: entry.kind,
+        ...(entry.count === undefined ? {} : { count: entry.count }),
+        ...(entry.truncated ? { truncated: true } : {}),
+    });
+}`,
+    `function isWebHarnessInfoStderr(content) {
+    if (typeof content !== 'string' || !content.startsWith('{') || !content.endsWith('}'))
+        return false;
+    try {
+        const parsed = JSON.parse(content);
+        return Boolean(parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+            && typeof parsed.event === 'string' && parsed.event.startsWith('call_')
+            && parsed.outcome !== 'error' && parsed.outcome !== 'partial_error');
+    }
+    catch {
+        return false;
+    }
+}
+export function writeBackendDiagnostic(entry) {
+    if (!isBackendDiagnosticEntry(entry))
+        return;
+    const level = isWebHarnessInfoStderr(entry.content) ? 'info' : 'warn';
+    if (!sink.isLevelEnabled(level))
+        return;
+    sink.log({
+        level,
+        message: \`[\${entry.displayName}] \${entry.content}\`,
+        serverName: entry.canonicalName,
+        source: 'backend-stderr',
+        backendLogSequence: entry.sequence,
+        backendLogSourceId: entry.sourceId,
+        backendLogEventKind: entry.kind,
+        ...(entry.count === undefined ? {} : { count: entry.count }),
+        ...(entry.truncated ? { truncated: true } : {}),
+    });
+}`],
 ];
 
 const build = path.join(agentRoot, 'build');

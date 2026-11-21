@@ -7,6 +7,77 @@ import { CALL_ID_META, RPC_BUDGET_META, currentCall } from '../pi-dev/call-diagn
 const MAX_STDERR_LINE_BYTES = 2048;
 const MAX_CAUSE_SUMMARY_LENGTH = 512;
 const MAX_CONFIG_CACHE_ENTRIES = 64;
+const MAX_STARTUP_STDERR_LINES = 8;
+const MAX_STARTUP_STDERR_SNIPPET = 360;
+
+export function classifyServerStderrLevel(line) {
+  if (typeof line === 'string' && line.startsWith('{') && line.endsWith('}')) {
+    try {
+      const parsed = JSON.parse(line);
+      if (
+        parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+        && typeof parsed.event === 'string' && parsed.event.startsWith('call_')
+      ) {
+        return parsed.outcome === 'error' || parsed.outcome === 'partial_error' ? 'warn' : 'info';
+      }
+    } catch {
+      /* non-JSON or malformed lines stay warn */
+    }
+  }
+  return 'warn';
+}
+
+function formatStartupOperatorDetail(exitInfo, stderrLines) {
+  const parts = [];
+  if (exitInfo) {
+    if (exitInfo.signal) parts.push(`signal ${exitInfo.signal}`);
+    else if (exitInfo.code !== null && exitInfo.code !== undefined) parts.push(`exit code ${exitInfo.code}`);
+  }
+  const relevant = stderrLines.filter(line => classifyServerStderrLevel(line) !== 'info');
+  const tail = (relevant.length > 0 ? relevant : stderrLines).slice(-3);
+  if (tail.length > 0) {
+    const joined = tail.join(' | ').replace(/[\r\n]+/g, ' ').trim();
+    if (joined) {
+      parts.push(`stderr: ${joined.length > MAX_STARTUP_STDERR_SNIPPET ? `${joined.slice(0, MAX_STARTUP_STDERR_SNIPPET)}...` : joined}`);
+    }
+  }
+  return parts.join('; ');
+}
+
+// Extract only safe, bounded diagnostic tokens (exit status + structured provider error
+// code) for MCP callers so raw provider stderr cannot leak paths, tokens, or stack traces.
+function extractSelectedStartupErrorCode(stderrLines) {
+  for (let i = stderrLines.length - 1; i >= 0; i -= 1) {
+    const line = stderrLines[i];
+    if (typeof line !== 'string') continue;
+    const prefixCode = /^[a-z0-9._-]+:\s+([A-Z][A-Z0-9_]{2,48})(?::|\s|$)/.exec(line);
+    if (prefixCode) return prefixCode[1];
+    if (line.startsWith('{') && line.endsWith('}')) {
+      try {
+        const parsed = JSON.parse(line);
+        const code = parsed?.error_code ?? parsed?.code;
+        if (typeof code === 'string' && /^[A-Z][A-Z0-9_]{2,48}$/.test(code)) return code;
+      } catch {
+        /* ignore malformed JSON */
+      }
+    }
+  }
+  return null;
+}
+
+function formatStartupClientDetail(exitInfo, stderrLines) {
+  const parts = [];
+  if (exitInfo) {
+    if (exitInfo.signal) parts.push(`signal ${exitInfo.signal}`);
+    else if (exitInfo.code !== null && exitInfo.code !== undefined) parts.push(`exit code ${exitInfo.code}`);
+  }
+  const code = extractSelectedStartupErrorCode(stderrLines);
+  if (code) parts.push(`code ${code}`);
+  if (stderrLines.some(line => classifyServerStderrLevel(line) !== 'info')) {
+    parts.push('see local-inner.log for startup stderr');
+  }
+  return parts.join('; ');
+}
 
 export function brokerError(code, message, cause) {
   const error = new Error(`${code}: ${message}`, cause ? { cause } : undefined);
@@ -404,6 +475,9 @@ export class DirectServerClient {
     }
     const startedAt = Date.now();
     let instance = null;
+    let starting = true;
+    const startupStderr = [];
+    let startupExit = null;
     const transport = new DetachedStdioClientTransport({
       command: definition.command,
       args: definition.args,
@@ -412,9 +486,16 @@ export class DirectServerClient {
       disposableProbe: definition.protocolVersion === 'auto',
       stderr: 'pipe',
       onStderrLine: line => {
-        logger?.log('warn', { event: 'server_stderr', server: serverName, stderr: line });
+        if (starting) {
+          startupStderr.push(line);
+          if (startupStderr.length > MAX_STARTUP_STDERR_LINES) startupStderr.shift();
+        }
+        logger?.log(classifyServerStderrLevel(line), { event: 'server_stderr', server: serverName, stderr: line });
       },
       onExit: ({ pid, code, signal: exitSignal, intentional }) => {
+        if (starting && !intentional) {
+          startupExit = { code: code ?? null, signal: exitSignal ?? null };
+        }
         if (!intentional && instance && !instance.closed) {
           logger?.log('warn', {
             event: 'server_exited',
@@ -444,6 +525,8 @@ export class DirectServerClient {
         transport,
         connectTimeout ? { timeout: connectTimeout } : undefined
       );
+      starting = false;
+      startupStderr.length = 0;
       logger?.log('info', {
         event: 'server_started',
         server: serverName,
@@ -455,13 +538,27 @@ export class DirectServerClient {
     } catch (error) {
       instance.closed = true;
       try { await transport.close(); } catch { /* failed startup may already be closed */ }
+      starting = false;
+      const operatorCrashDetail = formatStartupOperatorDetail(startupExit, startupStderr);
+      const clientCrashDetail = formatStartupClientDetail(startupExit, startupStderr);
+      const causeText = causeSummary(error);
+      const operatorDetail = operatorCrashDetail
+        ? (causeText ? `${operatorCrashDetail} (${causeText})` : operatorCrashDetail)
+        : causeText;
+      const clientDetail = clientCrashDetail
+        ? (causeText ? `${clientCrashDetail} (${causeText})` : clientCrashDetail)
+        : causeText;
       logger?.log('error', {
         event: 'server_start_failed',
         server: serverName,
         duration_ms: Date.now() - startedAt,
-        error: causeSummary(error)
+        error: operatorDetail
       });
-      throw brokerError('INNER_START_FAILED', withCauseDetail(`failed to start local server ${serverName}`, error), error);
+      throw brokerError(
+        'INNER_START_FAILED',
+        clientDetail ? `failed to start local server ${serverName}: ${clientDetail}` : `failed to start local server ${serverName}`,
+        error
+      );
     } finally {
       signal?.removeEventListener('abort', onAbort);
     }

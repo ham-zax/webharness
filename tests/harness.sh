@@ -77,6 +77,7 @@ for (const config of [restricted, trusted, personal, personalLocal, server, serv
   if (config.mcpServers.dev.env.MCP_DEV_READ_DEFAULT_LINES !== '50') process.exit(1);
   for (const entry of Object.values(config.mcpServers)) {
     if (entry.protocolVersion !== '2026-07-28') process.exit(1);
+    if (entry.type !== 'stdio') process.exit(1);
   }
 }
 if (restricted.mcpServers.dev.env.MCP_DEV_MAX_SPOOL_BYTES !== '2048') process.exit(1);

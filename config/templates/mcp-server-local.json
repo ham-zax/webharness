@@ -2,6 +2,7 @@
   "version": "1.0.0",
   "mcpServers": {
     "skill-library": {
+      "type": "stdio",
       "command": "node",
       "protocolVersion": "2026-07-28",
       "args": ["__REPO_ROOT__/providers/skill-library/server.mjs"],
@@ -12,6 +13,7 @@
       }
     },
     "terminal": {
+      "type": "stdio",
       "command": "node",
       "protocolVersion": "2026-07-28",
       "args": [

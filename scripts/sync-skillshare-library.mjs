@@ -8,6 +8,7 @@
 // stays clean. Pass --build-starter-policy only to regenerate tracked
 // skill-library/policy.example.json from the three starter pack directories.
 
+import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -371,126 +372,152 @@ async function main() {
     ? JSON.parse(await fs.readFile(starterPolicyPath, 'utf8'))
     : { version: 1, packs: [] };
 
-  const stagingDir = path.join(path.dirname(opts.outDir), `.skill-library-sync-${process.pid}`);
-  await fs.rm(stagingDir, { recursive: true, force: true });
-  await fs.mkdir(path.join(stagingDir, 'packs'), { recursive: true });
-
-  // Copy tracked starter packs into staging only for validation; real tracked dirs stay untouched.
-  const packs = [];
-  for (const starterPack of starterPolicy.packs || []) {
-    const srcPack = path.join(opts.outDir, starterPack.root);
-    if (!await exists(srcPack)) continue;
-    await copyTreeRegularFiles(srcPack, path.join(stagingDir, starterPack.root));
-    packs.push(starterPack);
-  }
-  const existingIds = new Set(packs.map(p => p.id));
-
-  // 1. Sync Skillshare skills into gitignored per-collection packs.
-  const discovered = await discoverSkillshareEntries(opts.sourceDir, opts.includeShims);
-  for (const packId of [...discovered.keys()].sort()) {
-    if (existingIds.has(packId)) continue;
-    const skillMap = discovered.get(packId);
-    if (!skillMap || skillMap.size === 0) continue;
-    const packDir = path.join(stagingDir, 'packs', packId);
-    await fs.mkdir(packDir, { recursive: true });
-    const license = 'Local operator Skillshare sync; upstream per-skill terms retained';
-    const source = `local Skillshare (${opts.sourceDir})`;
-    await ensurePackNotices(packDir, packId, source, license);
-
-    const skills = [];
-    for (const skillId of [...skillMap.keys()].sort()) {
-      const files = await copyTreeRegularFiles(skillMap.get(skillId), path.join(packDir, skillId), skillId);
-      const rec = buildSkillDescriptor(skillId, files, 'unverified');
-      if (rec) skills.push(rec);
-    }
-    if (skills.length > 0) {
-      packs.push({ id: packId, root: `packs/${packId}`, license, source, skills });
-      existingIds.add(packId);
-    }
-  }
-
-  // 2. Sync optional operator extra packs (e.g. ~/.config/mcp-dev-bridge/skill-packs/marketing).
-  if (await exists(opts.extraPacksDir)) {
-    const extras = await fs.readdir(opts.extraPacksDir, { withFileTypes: true });
-    extras.sort((a, b) => a.name.localeCompare(b.name));
-    for (const entry of extras) {
-      if (entry.name.startsWith('.') || SKIP_DIRS.has(entry.name)) continue;
-      const packId = slugify(entry.name);
-      if (!packId || existingIds.has(packId)) continue;
-      const srcPackDir = path.join(opts.extraPacksDir, entry.name);
-      const stat = await fs.stat(srcPackDir).catch(() => null);
-      if (!stat || !stat.isDirectory()) continue;
-
-      const dstPackDir = path.join(stagingDir, 'packs', packId);
-      await fs.mkdir(dstPackDir, { recursive: true });
-      const license = 'Local operator extra pack; upstream per-skill terms retained';
-      const source = `local extra packs (${opts.extraPacksDir}/${entry.name})`;
-      for (const notice of ['LICENSE', 'PROVENANCE.md']) {
-        if (await exists(path.join(srcPackDir, notice))) {
-          await fs.copyFile(path.join(srcPackDir, notice), path.join(dstPackDir, notice));
-        }
-      }
-      await ensurePackNotices(dstPackDir, packId, source, license);
-
-      const sharedFiles = [];
-      if (await exists(path.join(srcPackDir, 'shared'))) {
-        const copied = await copyTreeRegularFiles(path.join(srcPackDir, 'shared'), path.join(dstPackDir, 'shared'), 'shared');
-        sharedFiles.push(...copied);
-      }
-
-      const children = await fs.readdir(srcPackDir, { withFileTypes: true });
-      children.sort((a, b) => a.name.localeCompare(b.name));
-      const skills = [];
-      for (const child of children) {
-        if (child.name.startsWith('.') || SKIP_DIRS.has(child.name) || child.name === 'shared') continue;
-        const childSrc = path.join(srcPackDir, child.name);
-        if (!await exists(path.join(childSrc, 'SKILL.md'))) continue;
-        const skillId = slugify(child.name);
-        if (!skillId) continue;
-        const files = await copyTreeRegularFiles(childSrc, path.join(dstPackDir, skillId), skillId);
-        const rec = buildSkillDescriptor(skillId, files, 'unverified');
-        if (rec) {
-          if (sharedFiles.length) {
-            rec.readable = trimInventoryForBudget([...rec.readable, ...sharedFiles], [
-              `${skillId}/SKILL.md`, 'LICENSE', 'PROVENANCE.md',
-              ...(rec.adaptation ? [rec.adaptation] : []),
-            ]);
-          }
-          skills.push(rec);
-        }
-      }
-      if (skills.length > 0) {
-        packs.push({ id: packId, root: `packs/${packId}`, license, source, skills });
-        existingIds.add(packId);
-      }
-    }
-  }
-
-  const stagedPolicyPath = path.join(stagingDir, 'policy.json');
-  await fs.writeFile(stagedPolicyPath, `${JSON.stringify({ version: 1, packs }, null, 2)}\n`, 'utf8');
-
-  // Validate with the real SkillLibrary validator before swapping into place.
-  const lib = await SkillLibrary.open(stagedPolicyPath);
-  const catalog = await lib.catalog();
-
-  // Swap only non-starter packs in skill-library/packs/ so tracked starter folders stay clean.
   const outPacksDir = path.join(opts.outDir, 'packs');
   await fs.mkdir(outPacksDir, { recursive: true });
-  for (const old of await fs.readdir(outPacksDir)) {
-    if (STARTER_PACK_IDS.has(old)) continue;
-    await fs.rm(path.join(outPacksDir, old), { recursive: true, force: true });
-  }
-  for (const next of await fs.readdir(path.join(stagingDir, 'packs'))) {
-    if (STARTER_PACK_IDS.has(next)) continue;
-    await fs.rename(path.join(stagingDir, 'packs', next), path.join(outPacksDir, next));
-  }
-  await fs.rename(stagedPolicyPath, path.join(opts.outDir, 'policy.json'));
-  await fs.rm(stagingDir, { recursive: true, force: true });
 
-  const summary = packs.map(p => `${p.id}=${p.skills.length}`).join(', ');
-  process.stdout.write(
-    `Synced ${catalog.skills.length} skills across ${packs.length} collections (${summary}) -> ${path.join(opts.outDir, 'policy.json')}\n`,
-  );
+  // Publish synced packs into a fresh generation directory under skill-library/packs/
+  // and validate a temporary policy against the real final paths before atomically
+  // swapping policy.json. Old packs stay completely intact if sync fails or aborts.
+  const genToken = `${Date.now()}-${process.pid}-${crypto.randomBytes(4).toString('hex')}`;
+  const genName = `sync-${genToken}`;
+  const tempGenDir = path.join(outPacksDir, `.tmp-${genName}`);
+  const finalGenDir = path.join(outPacksDir, genName);
+  const tempPolicyPath = path.join(opts.outDir, `.policy.${genToken}.tmp`);
+  let published = false;
+  let movedGenIntoPlace = false;
+  let hasSyncedPacks = false;
+
+  try {
+    await fs.rm(tempGenDir, { recursive: true, force: true });
+    await fs.mkdir(tempGenDir, { recursive: true });
+
+    const packs = [];
+    for (const starterPack of starterPolicy.packs || []) {
+      const srcPack = path.join(opts.outDir, starterPack.root);
+      if (!await exists(srcPack)) continue;
+      packs.push(starterPack);
+    }
+    const existingIds = new Set(packs.map(p => p.id));
+
+    // 1. Sync Skillshare skills into gitignored per-collection packs under the new generation.
+    const discovered = await discoverSkillshareEntries(opts.sourceDir, opts.includeShims);
+    for (const packId of [...discovered.keys()].sort()) {
+      if (existingIds.has(packId)) continue;
+      const skillMap = discovered.get(packId);
+      if (!skillMap || skillMap.size === 0) continue;
+      const packDir = path.join(tempGenDir, packId);
+      await fs.mkdir(packDir, { recursive: true });
+      const license = 'Local operator Skillshare sync; upstream per-skill terms retained';
+      const source = `local Skillshare (${opts.sourceDir})`;
+      await ensurePackNotices(packDir, packId, source, license);
+
+      const skills = [];
+      for (const skillId of [...skillMap.keys()].sort()) {
+        const files = await copyTreeRegularFiles(skillMap.get(skillId), path.join(packDir, skillId), skillId);
+        const rec = buildSkillDescriptor(skillId, files, 'unverified');
+        if (rec) skills.push(rec);
+      }
+      if (skills.length > 0) {
+        packs.push({ id: packId, root: `packs/${genName}/${packId}`, license, source, skills });
+        existingIds.add(packId);
+        hasSyncedPacks = true;
+      }
+    }
+
+    // 2. Sync optional operator extra packs (e.g. ~/.config/mcp-dev-bridge/skill-packs/marketing).
+    if (await exists(opts.extraPacksDir)) {
+      const extras = await fs.readdir(opts.extraPacksDir, { withFileTypes: true });
+      extras.sort((a, b) => a.name.localeCompare(b.name));
+      for (const entry of extras) {
+        if (entry.name.startsWith('.') || SKIP_DIRS.has(entry.name)) continue;
+        const packId = slugify(entry.name);
+        if (!packId || existingIds.has(packId)) continue;
+        const srcPackDir = path.join(opts.extraPacksDir, entry.name);
+        const stat = await fs.stat(srcPackDir).catch(() => null);
+        if (!stat || !stat.isDirectory()) continue;
+
+        const dstPackDir = path.join(tempGenDir, packId);
+        await fs.mkdir(dstPackDir, { recursive: true });
+        const license = 'Local operator extra pack; upstream per-skill terms retained';
+        const source = `local extra packs (${opts.extraPacksDir}/${entry.name})`;
+        for (const notice of ['LICENSE', 'PROVENANCE.md']) {
+          if (await exists(path.join(srcPackDir, notice))) {
+            await fs.copyFile(path.join(srcPackDir, notice), path.join(dstPackDir, notice));
+          }
+        }
+        await ensurePackNotices(dstPackDir, packId, source, license);
+
+        const sharedFiles = [];
+        if (await exists(path.join(srcPackDir, 'shared'))) {
+          const copied = await copyTreeRegularFiles(path.join(srcPackDir, 'shared'), path.join(dstPackDir, 'shared'), 'shared');
+          sharedFiles.push(...copied);
+        }
+
+        const children = await fs.readdir(srcPackDir, { withFileTypes: true });
+        children.sort((a, b) => a.name.localeCompare(b.name));
+        const skills = [];
+        for (const child of children) {
+          if (child.name.startsWith('.') || SKIP_DIRS.has(child.name) || child.name === 'shared') continue;
+          const childSrc = path.join(srcPackDir, child.name);
+          if (!await exists(path.join(childSrc, 'SKILL.md'))) continue;
+          const skillId = slugify(child.name);
+          if (!skillId) continue;
+          const files = await copyTreeRegularFiles(childSrc, path.join(dstPackDir, skillId), skillId);
+          const rec = buildSkillDescriptor(skillId, files, 'unverified');
+          if (rec) {
+            if (sharedFiles.length) {
+              rec.readable = trimInventoryForBudget([...rec.readable, ...sharedFiles], [
+                `${skillId}/SKILL.md`, 'LICENSE', 'PROVENANCE.md',
+                ...(rec.adaptation ? [rec.adaptation] : []),
+              ]);
+            }
+            skills.push(rec);
+          }
+        }
+        if (skills.length > 0) {
+          packs.push({ id: packId, root: `packs/${genName}/${packId}`, license, source, skills });
+          existingIds.add(packId);
+          hasSyncedPacks = true;
+        }
+      }
+    }
+
+    if (hasSyncedPacks) {
+      await fs.rename(tempGenDir, finalGenDir);
+      movedGenIntoPlace = true;
+    } else {
+      await fs.rm(tempGenDir, { recursive: true, force: true });
+    }
+
+    await fs.writeFile(tempPolicyPath, `${JSON.stringify({ version: 1, packs }, null, 2)}\n`, 'utf8');
+
+    // Validate the staged policy against the real final pack directories before swapping.
+    const lib = await SkillLibrary.open(tempPolicyPath);
+    const catalog = await lib.catalog();
+
+    // Atomic publish: previous policy.json and its pack set remain untouched until this rename succeeds.
+    await fs.rename(tempPolicyPath, path.join(opts.outDir, 'policy.json'));
+    published = true;
+
+    // Post-publish cleanup: remove superseded non-starter generations and legacy top-level synced packs.
+    for (const old of await fs.readdir(outPacksDir)) {
+      if (STARTER_PACK_IDS.has(old) || (hasSyncedPacks && old === genName) || old.startsWith('.tmp-')) continue;
+      await fs.rm(path.join(outPacksDir, old), { recursive: true, force: true });
+    }
+
+    const summary = packs.map(p => `${p.id}=${p.skills.length}`).join(', ');
+    process.stdout.write(
+      `Synced ${catalog.skills.length} skills across ${packs.length} collections (${summary}) -> ${path.join(opts.outDir, 'policy.json')}\n`,
+    );
+  } finally {
+    if (!published) {
+      await fs.rm(tempPolicyPath, { force: true }).catch(() => {});
+      await fs.rm(tempGenDir, { recursive: true, force: true }).catch(() => {});
+      if (movedGenIntoPlace) {
+        await fs.rm(finalGenDir, { recursive: true, force: true }).catch(() => {});
+      }
+    }
+  }
 }
 
 main().catch(err => {

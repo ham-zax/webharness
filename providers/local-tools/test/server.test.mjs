@@ -1948,3 +1948,99 @@ test('malformed JSON-bleed in tool or server name fails fast with MALFORMED_TOOL
     err => err.code === 'MALFORMED_TOOL_NAME' && /looks like JSON arguments leaked/.test(err.message),
   );
 });
+
+test('DirectLocalServerPool logs startup stderr for operators, returns selected diagnostics to clients, and classifies JSON call_* stderr as info', async t => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'local-startup-stderr-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const crashScript = path.join(dir, 'crash.mjs');
+  await fs.writeFile(crashScript, [
+    'process.stderr.write("Authorization: Bearer super-secret-token-xyz\\n");',
+    'process.stderr.write("skill-library: MISSING_DEPENDENCY: approved file is missing: /private/path/foo/SKILL.md\\n");',
+    'process.exit(1);',
+  ].join('\n'), 'utf8');
+
+  const healthy = await writeFixtureMcpServer(dir, 'healthy', { modern: true });
+  const diagScript = path.join(dir, 'diag-wrapper.mjs');
+  await fs.writeFile(diagScript, [
+    'process.stderr.write(JSON.stringify({ event: "call_started", layer: "dev", tool: "read" }) + "\\n");',
+    'process.stderr.write(JSON.stringify({ event: "call_completed", layer: "dev", tool: "read", outcome: "error" }) + "\\n");',
+    'process.stderr.write("plain warning line\\n");',
+    `await import(${JSON.stringify(new URL(`file://${healthy.script}`).href)});`,
+  ].join('\n'), 'utf8');
+
+  const cfgPath = path.join(dir, 'mcp.json');
+  const logFile = path.join(dir, 'logs', 'local-inner.log');
+  const tomlPath = path.join(dir, 'config.toml');
+  await fs.writeFile(tomlPath, `[logging]\nfile = ${JSON.stringify(logFile)}\nlevel = "info"\nmaxSize = 65536\nmaxFiles = 2\n`, 'utf8');
+  await fs.writeFile(cfgPath, JSON.stringify({
+    version: '1.0.0',
+    mcpServers: {
+      broken: { type: 'stdio', protocolVersion: '2026-07-28', command: process.execPath, args: [crashScript] },
+      diag: { type: 'stdio', protocolVersion: '2026-07-28', command: process.execPath, args: [diagScript] },
+    },
+  }), 'utf8');
+
+  const logger = new LocalDiagnosticLogger({ appConfigPath: tomlPath });
+  const pool = new DirectLocalServerPool({ configPath: cfgPath, idleMs: 0, logger });
+  const broker = new LocalToolBroker({ inner: pool, configPath: cfgPath, logger });
+  t.after(() => broker.shutdown());
+
+  await assert.rejects(
+    () => broker.call({ server: 'broken', tool: 'find_skills', arguments: {} }),
+    err => err.code === 'INNER_CALL_FAILED'
+      && err.cause?.code === 'INNER_START_FAILED'
+      && /exit code 1/.test(err.message)
+      && /code MISSING_DEPENDENCY/.test(err.message)
+      && /see local-inner\.log for startup stderr/.test(err.message)
+      && !/super-secret-token-xyz/.test(err.message)
+      && !/\/private\/path\/foo\/SKILL\.md/.test(err.message),
+  );
+
+  const list = await broker.list({ server: 'diag' });
+  assert.ok(list.tools.length >= 1);
+  await logger.flush();
+  const logText = await fs.readFile(logFile, 'utf8');
+  assert.match(logText, /\[error\] event="server_start_failed" server="broken".*MISSING_DEPENDENCY.*\/private\/path\/foo\/SKILL\.md/);
+  assert.match(logText, /\[info\] event="server_stderr" server="diag" stderr="\{\\"event\\":\\"call_started\\"/);
+  assert.match(logText, /\[warn\] event="server_stderr" server="diag" stderr="\{\\"event\\":\\"call_completed\\".*\\"outcome\\":\\"error\\"/);
+  assert.match(logText, /\[warn\] event="server_stderr" server="diag" stderr="plain warning line"/);
+});
+
+test('broker rewrites misleading browser-daily timeoutMs advice when capped by rpcBudgetMs', async t => {
+  const configPath = await configFile(t, ['browser-daily']);
+  const inner = {
+    isServerLive: () => true,
+    listServerTools: async () => ({ tools: [{ name: 'execute' }] }),
+    callServerTool: async (_server, _tool, args) => ({
+      isError: true,
+      content: [{
+        type: 'text',
+        text: `tab: 42 Error: execute timed out after ${args.timeoutMs ?? 60000} ms (pass a larger timeoutMs, or split the work into several calls)`,
+      }],
+    }),
+    close: async () => {},
+  };
+  const broker = new LocalToolBroker({ inner, configPath });
+  const server = createLocalBrokerServer({ broker });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const client = new Client({ name: 'local-browser-timeout-test', version: '1.0.0' });
+  t.after(async () => { await client.close(); await server.close(); await broker.shutdown(); });
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+
+  const capped = await client.callTool({
+    name: 'fallback_dispatch',
+    _meta: { [CALL_ID_META]: callId(), [RPC_BUDGET_META]: 25_000 },
+    arguments: { server: 'browser-daily', tool: 'execute', arguments: { code: 'slow()' } },
+  });
+  assert.equal(capped.isError, true);
+  assert.match(capped.content[0].text, /capped at 22000 ms by this client's 25s RPC budget; split the work into smaller calls instead of passing a larger timeoutMs/);
+
+  const uncapped = await client.callTool({
+    name: 'fallback_dispatch',
+    _meta: { [CALL_ID_META]: callId(), [RPC_BUDGET_META]: 25_000 },
+    arguments: { server: 'browser-daily', tool: 'execute', arguments: { code: 'slow()', timeoutMs: 5_000 } },
+  });
+  assert.equal(uncapped.isError, true);
+  assert.match(uncapped.content[0].text, /pass a larger timeoutMs, or split the work into several calls/);
+});

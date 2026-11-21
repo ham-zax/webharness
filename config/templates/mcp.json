@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "mcpServers": {
     "dev": {
+      "type": "stdio",
       "command": "node",
       "protocolVersion": "2026-07-28",
       "args": [

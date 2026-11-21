@@ -44,8 +44,10 @@ export function createSkillServer(library) {
       const tool = TOOLS.find(item => item.name === request.params.name);
       const args = request.params.arguments ?? {};
       if (!tool) throw Object.assign(new Error('unknown skill tool'), { code: 'UNKNOWN_TOOL' });
-      if (Object.keys(args).some(key => !Object.hasOwn(tool.inputSchema.properties, key))) {
-        throw Object.assign(new Error('unexpected argument'), { code: 'INVALID_ARGUMENT' });
+      const unexpected = Object.keys(args).filter(key => !Object.hasOwn(tool.inputSchema.properties, key));
+      if (unexpected.length > 0) {
+        const allowed = Object.keys(tool.inputSchema.properties).join(', ');
+        throw Object.assign(new Error(`unexpected argument(s): ${unexpected.join(', ')}; allowed: ${allowed}`), { code: 'INVALID_ARGUMENT' });
       }
       const value = tool.name === 'find_skills' ? await library.find({ ...args, signal: ctx.mcpReq.signal }) : await library.read(args);
       return { content: [{ type: 'text', text: JSON.stringify(value) }], structuredContent: value };
