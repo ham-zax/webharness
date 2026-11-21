@@ -139,6 +139,7 @@ test_prepare_without_startup_consent() {
 
   [ -f "$state/1mcp/mcp.json" ] || return 1
   cmp -s "$BROWSER_CONFIG_TEMPLATE" "$home/.config/mcp-dev-bridge/browser-fast.json" || return 1
+  cmp -s "$ROOT/config/connector-policy.example.yaml" "$home/.config/mcp-dev-bridge/connector-policy.yaml" || return 1
   [ -L "$home/.local/bin/wsl-term" ] || return 1
   [ "$(readlink "$home/.local/bin/wsl-term")" = "$ROOT/bin/wsl-term" ] || return 1
   [ ! -e "$systemd_dir/mcp-dev-bridge.service" ] || return 1
@@ -195,6 +196,7 @@ EOF
   ! grep -Fqi 'module not found' <<<"$cli_output" || return 1
 
   hash_before="$(sha256sum "$dropin" "$systemd_dir/mcp-dev-bridge.service" "$systemd_dir/wsl-agent-tmux.service" "$systemd_dir/wsl-agent-terminal-broker.service")"
+  printf '# custom operator policy\n' >> "$home/.config/mcp-dev-bridge/connector-policy.yaml"
   : > "$home/systemctl.log"
   : > "$home/loginctl.log"
   output="$(run_bootstrap_fixture "$home" "$runtime" "$state" "$systemd_dir" "$fakebin" "$env_file" --enable-startup 2>&1)"
@@ -202,6 +204,7 @@ EOF
   [ "$rc" -eq 0 ] || { printf '%s\n' "$output" >&2; return 1; }
   hash_after="$(sha256sum "$dropin" "$systemd_dir/mcp-dev-bridge.service" "$systemd_dir/wsl-agent-tmux.service" "$systemd_dir/wsl-agent-terminal-broker.service")"
   [ "$hash_before" = "$hash_after" ] || return 1
+  grep -Fq '# custom operator policy' "$home/.config/mcp-dev-bridge/connector-policy.yaml" || return 1
   ! grep -q '^enable-linger ' "$home/loginctl.log" || return 1
   grep -Fxq -- '--user enable --now wsl-agent-tmux.service wsl-agent-terminal-broker.service mcp-dev-bridge.service' "$home/systemctl.log" || return 1
 }

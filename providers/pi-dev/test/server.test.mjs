@@ -239,8 +239,10 @@ test('built-in instructions ship token-efficiency rules ahead of the owner conte
     assert.match(published, /Replace inline tools\.bash pipelines inside run_script with justfile recipes called via exec\(argv=\["just", \.\.\.\]\)/);
     assert.match(published, /Promise\.all for independent reads/);
     assert.match(published, /Await dependent edits and checks in order/);
+    assert.match(published, /pack 2\+ mixed ops\/turn into one local_fallback_dispatch\(calls:\[\.\.\.\]\)/);
     assert.match(published, /tool_batch for independent calls to one downstream server\/tool/);
     assert.match(published, /Start long work detached or in Terminal/);
+    assert.match(published, /pueue: just queue \/ pueue add --after/);
     assert.match(published, /review_changes once after the final related edit/);
     assert.match(published, /restart or reload/);
     assert.match(published, /80k-100k tokens/);

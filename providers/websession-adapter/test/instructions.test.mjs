@@ -151,6 +151,7 @@ test('authenticated discovery compacts 1MCP guidance and exposes the capability 
   assert.match(httpGuidance, /do not probe endpoint names/);
   assert.match(httpGuidance, /never use dev_run_script for parallel reads, searches, or git history/);
   assert.match(httpGuidance, /replace inline tools\.bash pipelines inside dev_run_script with justfile recipes called via dev_exec\(argv=\["just", \.\.\.\]\)/);
+  assert.match(httpGuidance, /pueue \(just queue \/ pueue add --after\)/);
 
   // When upstream <dev> instructions already report host CLI accelerators, avoid duplicating the line.
   const withUpstreamAccel = webSessionInstructions('<dev>\nHost CLI accelerators available: jq (prefer for JSON queries).\n</dev>');

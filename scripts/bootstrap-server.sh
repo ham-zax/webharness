@@ -74,6 +74,15 @@ else
   echo "== skipping provider installation by SERVER_BOOTSTRAP_SKIP_INSTALL =="
 fi
 
+POLICY_DIR="$USER_HOME/.config/mcp-dev-bridge"
+POLICY_FILE="$POLICY_DIR/connector-policy.yaml"
+if [ ! -e "$POLICY_FILE" ]; then
+  mkdir -p "$POLICY_DIR"
+  cp "$ROOT/config/connector-policy.example.yaml" "$POLICY_FILE"
+  chmod 0600 "$POLICY_FILE"
+  echo "installed starter connector-policy: $POLICY_FILE"
+fi
+
 RENDER_ARGS=(--profile server --env-file "$ENV_FILE" --state-dir "$STATE_DIR" --repo-root "$ROOT")
 echo "== rendering headless server MCP composition =="
 HOME="$USER_HOME" XDG_RUNTIME_DIR="$RUNTIME_DIR" node "$ROOT/scripts/render-config.mjs" "${RENDER_ARGS[@]}"

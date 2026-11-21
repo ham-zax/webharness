@@ -25,24 +25,23 @@
 default:
   connector_write_tools: true
   compat_annotations: false
-  banner: default
+  banner: none
   # Optional client RPC budget in seconds (10..300). Commands exceeding (budget - 3s)
   # auto-promote to durable background jobs, and wait hold_seconds clamps to (budget - 5s).
   rpc_budget_seconds: 40
 
 clients:
-  # Example: disable outer write tools & apply compat_annotations only for Gemini
-  # (which sends User-Agent: Google, or register https://<host>/mcp?client=gemini),
+  # Gemini-only compatibility shim: hide outer write tools & apply compat_annotations
+  # (Gemini sends User-Agent: Google, clientInfo.name "Gemini", or ?client=gemini),
   # while ChatGPT, Claude, and other connectors inherit default (direct write tools enabled).
-  # Inspect wake-proxy diagnostics ("event":"connector_client_identified") after one connection
-  # to see the exact User-Agent and clientInfo values your client sends.
-  # Use banner: batch-writes instead of default if you want aggressive single-call batching.
+  # Lean batching/just/pueue directives ship natively in tools/list & provider instructions,
+  # so banner: none avoids redundant initialize payload bloat.
   gemini:
     match:
       user_agent: "^Google$"
     connector_write_tools: false
     compat_annotations: true
-    banner: default
+    banner: none
     rpc_budget_seconds: 25
 
   gemini_query:
@@ -50,5 +49,13 @@ clients:
       query_client: gemini
     connector_write_tools: false
     compat_annotations: true
-    banner: default
+    banner: none
+    rpc_budget_seconds: 25
+
+  gemini_info:
+    match:
+      client_info: "gemini"
+    connector_write_tools: false
+    compat_annotations: true
+    banner: none
     rpc_budget_seconds: 25
