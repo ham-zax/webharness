@@ -128,6 +128,132 @@ export function writeBackendDiagnostic(entry) {
         ...(entry.truncated ? { truncated: true } : {}),
     });
 }`],
+  ['transport/http/middlewares/errorHandler.js',
+    `import logger from '../../../logger/logger.js';
+import { ErrorCode } from '../../../sdk/contracts/index.js';
+import { z } from 'zod';
+const protocolVersionHeaderSchema = z.string();
+export default function errorHandler(err, req, res, _next) {
+    logger.error('errorHandler.express.error.037179d1', { error: err });
+    const rawClaimedVersion = req.headers?.['mcp-protocol-version'];
+    const parsedVersion = protocolVersionHeaderSchema.safeParse(rawClaimedVersion);
+    const claimedVersion = parsedVersion.success ? parsedVersion.data : undefined;
+    if (req.path === '/mcp' &&
+        claimedVersion !== undefined &&
+        !LEGACY_PROTOCOL_REVISIONS.includes(claimedVersion) &&
+        err instanceof SyntaxError) {
+        res.status(400).json({
+            jsonrpc: '2.0',
+            id: null,
+            error: { code: -32700, message: 'Parse error' },
+        });
+        return;
+    }
+    res.status(500).json({
+        error: {
+            code: ErrorCode.InternalError,
+            message: 'Internal server error',
+        },
+    });
+}`,
+    `import { httpContentType, sanitizeHttpPath } from '../../../logger/httpDiagnostics.js';
+import logger, { writeHttpDiagnostic } from '../../../logger/logger.js';
+import { sanitizeForLogging } from '../../../logger/secureLogger.js';
+import { ErrorCode } from '../../../sdk/contracts/index.js';
+import { z } from 'zod';
+const protocolVersionHeaderSchema = z.string();
+const WH_UUID_RE = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
+function boundedSafeToken(value, maxLen = 64) {
+    if (typeof value !== 'string')
+        return undefined;
+    const clean = value.trim();
+    if (!clean)
+        return undefined;
+    const sanitized = sanitizeForLogging(clean);
+    const text = typeof sanitized === 'string' ? sanitized : clean;
+    return text.length > maxLen ? text.slice(0, maxLen) : text;
+}
+function sanitizeExpressErrorSummary(err) {
+    const raw = typeof err?.message === 'string' ? err.message.split(/\\r?\\n/, 1)[0].trim() : '';
+    if (!raw)
+        return undefined;
+    let text = raw;
+    if (err instanceof SyntaxError || err?.type === 'entity.parse.failed') {
+        // Never log raw request body snippets embedded in JSON.parse SyntaxError messages.
+        text = text.replace(/,\\s*"[\\s\\S]*$/, '').replace(/\\s+in JSON at position \\d+.*$/, '').trim() || 'JSON parse error';
+    }
+    const sanitized = sanitizeForLogging(text);
+    const clean = typeof sanitized === 'string' ? sanitized : text;
+    return clean.length > 160 ? \`\${clean.slice(0, 160)}...\` : clean;
+}
+function topStackFrame(err) {
+    if (typeof err?.stack !== 'string')
+        return undefined;
+    const frame = err.stack.split(/\\r?\\n/).slice(1).map((line) => line.trim()).find((line) => line.startsWith('at '));
+    return boundedSafeToken(frame, 160);
+}
+export default function errorHandler(err, req, res, _next) {
+    logger.error('errorHandler.express.error.037179d1', { error: err });
+    const rawStatus = Number.isInteger(err?.status) ? err.status : (Number.isInteger(err?.statusCode) ? err.statusCode : undefined);
+    const errorStatus = rawStatus !== undefined && rawStatus >= 100 && rawStatus <= 599 ? rawStatus : undefined;
+    const rawReqId = req?.headers?.['x-webharness-request-id'];
+    const rawContentLen = req?.headers?.['content-length'];
+    const rawCode = err?.code;
+    const errorCode = typeof rawCode === 'number' && Number.isSafeInteger(rawCode)
+        ? String(rawCode)
+        : boundedSafeToken(rawCode, 64);
+    const diag = {
+        method: typeof req?.method === 'string' ? req.method : 'unknown',
+        path: sanitizeHttpPath(req?.originalUrl ?? req?.path),
+        ...(typeof rawReqId === 'string' && WH_UUID_RE.test(rawReqId) ? { requestId: rawReqId } : {}),
+        ...(boundedSafeToken(err?.name, 64) ? { errorName: boundedSafeToken(err?.name, 64) } : {}),
+        ...(boundedSafeToken(err?.type, 64) ? { errorType: boundedSafeToken(err?.type, 64) } : {}),
+        ...(errorCode ? { errorCode } : {}),
+        ...(errorStatus !== undefined ? { errorStatus } : {}),
+        contentType: httpContentType(req?.headers?.['content-type']),
+        ...(typeof rawContentLen === 'string' && /^\\d{1,12}$/.test(rawContentLen) ? { contentLength: Number(rawContentLen) } : {}),
+        ...(boundedSafeToken(req?.headers?.['content-encoding'], 32) ? { contentEncoding: boundedSafeToken(req?.headers?.['content-encoding'], 32) } : {}),
+        ...(sanitizeExpressErrorSummary(err) ? { errorSummary: sanitizeExpressErrorSummary(err) } : {}),
+        ...(topStackFrame(err) ? { stackTop: topStackFrame(err) } : {}),
+    };
+    writeHttpDiagnostic('error', 'http.express-error', diag);
+    if (res.headersSent || res.writableEnded || res.destroyed)
+        return;
+    const rawClaimedVersion = req.headers?.['mcp-protocol-version'];
+    const parsedVersion = protocolVersionHeaderSchema.safeParse(rawClaimedVersion);
+    const claimedVersion = parsedVersion.success ? parsedVersion.data : undefined;
+    if (req.path === '/mcp' &&
+        err instanceof SyntaxError &&
+        (err?.type === 'entity.parse.failed' ||
+            (claimedVersion !== undefined && !LEGACY_PROTOCOL_REVISIONS.includes(claimedVersion)))) {
+        res.status(400).json({
+            jsonrpc: '2.0',
+            id: null,
+            error: { code: -32700, message: 'Parse error' },
+        });
+        return;
+    }
+    if (err?.expose === true && errorStatus !== undefined && errorStatus >= 400 && errorStatus < 500) {
+        const message = errorStatus === 413
+            ? 'Payload too large'
+            : errorStatus === 415
+                ? 'Unsupported media type'
+                : 'Bad request';
+        res.status(errorStatus).json({
+            error: {
+                code: ErrorCode.InvalidRequest,
+                message,
+            },
+        });
+        return;
+    }
+    res.status(500).json({
+        error: {
+            code: ErrorCode.InternalError,
+            message: 'Internal server error',
+        },
+    });
+}`],
 ];
 
 const build = path.join(agentRoot, 'build');

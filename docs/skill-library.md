@@ -83,6 +83,6 @@ Disabled by default so ordinary discovery stays 100% offline. To opt in:
 | Code | Fix |
 |---|---|
 | `STALE_REVISION` / `STALE_CURSOR` | Re-run `find_skills` (without cursor) to get fresh revisions. |
-| `POLICY_CHANGED` | Restart the bridge/Local provider after updating `policy.json`. |
+| `POLICY_CHANGED` | Automatic when routed through `Local` (recycles `skill-library` once to apply the updated `policy.json`); restart standalone stdio servers manually. |
 | `FILE_NOT_APPROVED` / `MISSING_DEPENDENCY` / `UNSAFE_FILE` | Re-run `just sync-skills` or fix the declared regular file in `policy.json`. |
 | `JEV_SCOPE_TOO_LARGE` / `JEV_DISABLED` | Specify a single `collection` (<=64 skills), or use default `mode="lexical"`. |

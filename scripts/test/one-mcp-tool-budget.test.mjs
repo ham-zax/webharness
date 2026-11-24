@@ -59,6 +59,8 @@ test('real 1MCP HTTP and stdio hops preserve gateway tool budgets and call IDs',
     const loggerSource = fs.readFileSync(path.join(copy, 'build/logger/logger.js'), 'utf8');
     assert.match(loggerSource, /function isWebHarnessInfoStderr\(content\)/);
     assert.doesNotMatch(loggerSource, /return;\s*sink\.warn\(/);
+    const errHandlerSource = fs.readFileSync(path.join(copy, 'build/transport/http/middlewares/errorHandler.js'), 'utf8');
+    assert.match(errHandlerSource, /http\.express-error/);
 
     const config = path.join(dir, 'runtime');
     fs.mkdirSync(config, { mode: 0o700 });
@@ -203,6 +205,37 @@ process.stdin.once('end', () => { void handle.close(); });
       body: JSON.stringify({ jsonrpc: '2.0', id: 102, method: 'tools/list', params: {} }),
     });
     assert.equal(afterTeardown.status, 404, 'retired persisted session must not remain resumable after cold DELETE');
+
+    // Malformed JSON POST without mcp-protocol-version must return 400 JSON-RPC Parse error
+    // (not a masked 500) and emit sanitized http.express-error diagnostics without leaking secrets.
+    const badJsonReqId = randomUUID();
+    const badJsonResp = await fetch(gateway + '/mcp', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        accept: 'application/json, text/event-stream',
+        'x-webharness-request-id': badJsonReqId,
+      },
+      body: '{"jsonrpc":"2.0","token":"super-secret-parse-leak",',
+    });
+    assert.equal(badJsonResp.status, 400);
+    const badJsonBody = await badJsonResp.json();
+    assert.equal(badJsonBody?.error?.code, -32700);
+    assert.match(runtimeOutput, /http\.express-error/);
+    assert.match(runtimeOutput, new RegExp(badJsonReqId));
+    assert.match(runtimeOutput, /entity\.parse\.failed/);
+    assert.doesNotMatch(runtimeOutput, /super-secret-parse-leak/);
+
+    // Exposed body-parser 415 Unsupported Media Type must map to 415 instead of 500.
+    const badEncResp = await fetch(gateway + '/mcp', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'content-encoding': 'bogus-encoding',
+      },
+      body: '{}',
+    });
+    assert.equal(badEncResp.status, 415);
 
     await proxy.close();
     proxy = undefined;

@@ -2044,3 +2044,64 @@ test('broker rewrites misleading browser-daily timeoutMs advice when capped by r
   assert.equal(uncapped.isError, true);
   assert.match(uncapped.content[0].text, /pass a larger timeoutMs, or split the work into several calls/);
 });
+
+test('broker recycles skill-library once on POLICY_CHANGED and bounds retries', async t => {
+  const configPath = await configFile(t, ['skill-library', 'other']);
+  const policyChangedRes = {
+    isError: true,
+    content: [{ type: 'text', text: JSON.stringify({ code: 'POLICY_CHANGED', message: 'approved policy changed' }) }],
+  };
+  const events = [];
+  const logger = { log: (level, record) => events.push({ level, ...record }) };
+
+  let skillCalls = 0;
+  let restarted = false;
+  const inner = fakeInner({
+    pages: { FIRST: { tools: [{ name: 'find_skills' }] } },
+    callHandler: async (server) => {
+      if (server === 'skill-library') {
+        skillCalls += 1;
+        return restarted ? { content: [{ type: 'text', text: '{"candidates":[]}' }] } : policyChangedRes;
+      }
+      return policyChangedRes;
+    },
+    restartHandler: async () => { restarted = true; },
+  });
+  const broker = new LocalToolBroker({ inner, configPath, logger, recovery: { pollMs: 5, timeoutMs: 500 } });
+  const recovered = await broker.call({ server: 'skill-library', tool: 'find_skills', arguments: {} });
+  assert.equal(recovered.isError, undefined);
+  assert.equal(skillCalls, 2);
+  assert.equal(inner.restartCalls.length, 1);
+  assert.equal(inner.restartCalls[0].server, 'skill-library');
+  assert.ok(events.some(e => e.event === 'server_policy_reload' && e.server === 'skill-library'));
+
+  // Other servers returning POLICY_CHANGED must not trigger skill-library recycling.
+  const otherRes = await broker.call({ server: 'other', tool: 'find_skills', arguments: {} });
+  assert.equal(otherRes.isError, true);
+  assert.equal(inner.restartCalls.length, 1);
+
+  // Persistent POLICY_CHANGED must only retry once (no infinite loop).
+  const stuckInner = fakeInner({
+    pages: { FIRST: { tools: [{ name: 'find_skills' }] } },
+    callHandler: async () => policyChangedRes,
+  });
+  const stuckBroker = new LocalToolBroker({ inner: stuckInner, configPath, recovery: { pollMs: 5, timeoutMs: 500 } });
+  const stuckRes = await stuckBroker.call({ server: 'skill-library', tool: 'find_skills', arguments: {} });
+  assert.equal(stuckRes.isError, true);
+  assert.equal(stuckInner.callCalls.length, 2);
+  assert.equal(stuckInner.restartCalls.length, 1);
+
+  // Respect restartOnExit: false (canAutoRecover === false).
+  const noAutoInner = {
+    ...fakeInner({
+      pages: { FIRST: { tools: [{ name: 'find_skills' }] } },
+      callHandler: async () => policyChangedRes,
+    }),
+    canAutoRecover: async () => false,
+  };
+  const noAutoBroker = new LocalToolBroker({ inner: noAutoInner, configPath, recovery: { pollMs: 5, timeoutMs: 500 } });
+  const noAutoRes = await noAutoBroker.call({ server: 'skill-library', tool: 'find_skills', arguments: {} });
+  assert.equal(noAutoRes.isError, true);
+  assert.equal(noAutoInner.callCalls.length, 1);
+  assert.equal(noAutoInner.restartCalls.length, 0);
+});

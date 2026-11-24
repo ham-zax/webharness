@@ -7,12 +7,11 @@ import {
   writeFileSync,
   writeSync
 } from 'node:fs';
-import fs from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { pruneBashSpools } from './spool-gc.mjs';
-export { pruneBashSpools } from './spool-gc.mjs';
+import { pruneBashSpools, pruneJobSpools } from './spool-gc.mjs';
+export { pruneBashSpools, pruneJobSpools } from './spool-gc.mjs';
 import { resolveUserCwd, resolveWorkspaceCwd } from './boundary.mjs';
 import { acquireRuntimeLease } from '../../lib/runtime-leases.mjs';
 import { beginBackgroundWork } from './idle-worker.mjs';
@@ -413,7 +412,7 @@ async function runCaptured({
       const onSoftPromote = (child, terminatePromoted) => {
         const jobsDir = path.join(stateDir, 'jobs');
         mkdirSync(jobsDir, { recursive: true, mode: 0o700 });
-        void pruneFinishedJobs(jobsDir, spoolTtlSeconds);
+        void pruneJobSpools({ jobsDir, ttlSeconds: spoolTtlSeconds }).catch(() => {});
         const jobId = `${Date.now()}-${randomUUID().slice(0, 8)}`;
         const logPath = path.join(jobsDir, `${jobId}.log`);
         const exitPath = path.join(jobsDir, `${jobId}.exit`);
@@ -599,27 +598,6 @@ export async function runBash({
 const DETACHED_WRAPPER = 'log=$1; exitf=$2; shift 2; "$@" >"$log" 2>&1 </dev/null; '
   + 'code=$?; printf "%s\\n" "$code" >"$exitf.tmp" && mv -f "$exitf.tmp" "$exitf"';
 
-async function pruneFinishedJobs(jobsDir, ttlSeconds, nowMs = Date.now()) {
-  let entries;
-  try {
-    entries = await fs.readdir(jobsDir, { withFileTypes: true });
-  } catch {
-    return;
-  }
-  for (const entry of entries) {
-    if (!entry.isFile() || !entry.name.endsWith('.exit')) continue;
-    const exitPath = path.join(jobsDir, entry.name);
-    try {
-      const stats = await fs.lstat(exitPath);
-      if (nowMs - stats.mtimeMs < ttlSeconds * 1000) continue;
-      await fs.rm(`${exitPath.slice(0, -'.exit'.length)}.log`, { force: true });
-      await fs.rm(exitPath, { force: true });
-    } catch {
-      // Another call pruned it first.
-    }
-  }
-}
-
 async function runDetached({
   argv,
   pathMode = 'workspace',
@@ -636,7 +614,7 @@ async function runDetached({
   const resolvedCwd = await resolveExecutionCwd({ pathMode, defaultCwd, workspaceRoot, cwd });
   const jobsDir = path.join(stateDir, 'jobs');
   mkdirSync(jobsDir, { recursive: true, mode: 0o700 });
-  await pruneFinishedJobs(jobsDir, spoolTtlSeconds);
+  await pruneJobSpools({ jobsDir, ttlSeconds: spoolTtlSeconds }).catch(() => {});
 
   const jobId = `${Date.now()}-${randomUUID().slice(0, 8)}`;
   const logPath = path.join(jobsDir, `${jobId}.log`);

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { pruneBashSpools, runBash, runExec } from '../shell.mjs';
+import { pruneBashSpools, pruneJobSpools, runBash, runExec } from '../shell.mjs';
 import { DEFAULT_MAX_OUTPUT_BYTES } from '../output-limits.mjs';
 
 const tempDir = prefix => fs.mkdtemp(path.join(os.tmpdir(), prefix));
@@ -802,4 +802,64 @@ test('short accepted rpcBudgetMs (5000ms) derives softTimeoutSeconds=2 leaving r
   assert.equal(result.promoted, true);
   assert.equal(result.soft_timeout_seconds, 2);
   assert.ok(elapsedMs < 3_500, `expected promotion well within 5000ms budget, took ${elapsedMs}ms`);
+});
+
+test('spool GC prunes expired finished jobs, stale .exit.tmp, and pre-boot or quiet orphan job logs while keeping active post-boot logs', async t => {
+  const stateDir = await tempDir('pi-jobs-gc-');
+  t.after(() => fs.rm(stateDir, { recursive: true, force: true }));
+  const jobsDir = path.join(stateDir, 'jobs');
+  await fs.mkdir(jobsDir, { recursive: true });
+  const nowMs = Date.now();
+  const bootTimeMs = nowMs - 2 * 3600_000; // 2h ago
+
+  const writeAged = async (name, content, ageMs) => {
+    const file = path.join(jobsDir, name);
+    await fs.writeFile(file, content);
+    const ts = new Date(nowMs - ageMs);
+    await fs.utimes(file, ts, ts);
+    return file;
+  };
+
+  // Expired finished job (> 1h TTL) -> deleted
+  const expLog = await writeAged('finished-old.log', 'old out', 7200_000);
+  const expExit = await writeAged('finished-old.exit', '0\n', 7200_000);
+  // Fresh finished job (< 1h TTL) -> kept
+  const freshLog = await writeAged('finished-fresh.log', 'fresh out', 600_000);
+  const freshExit = await writeAged('finished-fresh.exit', '0\n', 600_000);
+  // Stale .exit.tmp (> 1h TTL) -> deleted
+  const staleTmp = await writeAged('stale.exit.tmp', '0\n', 7200_000);
+  // Orphan .log predating boot (3h old, > 1h TTL, < bootTimeMs) -> deleted
+  const preBootOrphan = await writeAged('pre-boot-orphan.log', 'dead server', 3 * 3600_000);
+  // Post-boot running .log (90m old: > 1h TTL, > bootTimeMs, < 24h orphanMinTtl) -> kept
+  const liveServerLog = await writeAged('live-server.log', 'serving', 90 * 60_000);
+  // Very old orphan (> 24h) even if bootTimeMs were earlier -> deleted
+  const ancientOrphan = await writeAged('ancient-orphan.log', 'ancient', 30 * 3600_000);
+
+  const direct = await pruneJobSpools({
+    jobsDir,
+    ttlSeconds: 3600,
+    bootTimeMs,
+    nowMs,
+  });
+  assert.equal(direct.deletedFiles, 5);
+  for (const gone of [expLog, expExit, staleTmp, preBootOrphan, ancientOrphan]) {
+    await assert.rejects(() => fs.stat(gone), { code: 'ENOENT' });
+  }
+  for (const kept of [freshLog, freshExit, liveServerLog]) {
+    assert.equal((await fs.stat(kept)).isFile(), true);
+  }
+
+  // Also verify pruneBashSpools delegates into stateDir/jobs.
+  const viaTop = await writeAged('via-top.exit', '0\n', 8 * 86400_000);
+  const viaTopLog = await writeAged('via-top.log', 'body', 8 * 86400_000);
+  const gc = await pruneBashSpools({
+    stateDir,
+    maxSpoolBytes: 2048,
+    ttlSeconds: 7 * 86400,
+    maxTotalBytes: 8192,
+    nowMs,
+  });
+  assert.equal(gc.deletedJobFiles, 2);
+  await assert.rejects(() => fs.stat(viaTop), { code: 'ENOENT' });
+  await assert.rejects(() => fs.stat(viaTopLog), { code: 'ENOENT' });
 });

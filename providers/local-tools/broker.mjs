@@ -76,6 +76,23 @@ function isFailedBatchEntryResult(route, result) {
   return false;
 }
 
+function isSkillLibraryPolicyChangedResult(server, result) {
+  if (server !== 'skill-library' || result?.isError !== true || !Array.isArray(result.content)) {
+    return false;
+  }
+  for (const item of result.content) {
+    if (item?.type !== 'text' || typeof item.text !== 'string') continue;
+    const text = item.text.trim();
+    if (text.startsWith('POLICY_CHANGED:')) return true;
+    if (text.startsWith('{')) {
+      try {
+        if (JSON.parse(text)?.code === 'POLICY_CHANGED') return true;
+      } catch {}
+    }
+  }
+  return false;
+}
+
 export function isReadOnlyBrokerCall(toolName, reqArgs, broker = null) {
   if (toolName === 'tool_list' || toolName === 'tool_schema') return true;
   const check = (server, tool, args) => (
@@ -416,6 +433,7 @@ export class LocalToolBroker {
   _passthroughBackendError(error) {
     return error?.code === 'INNER_UNAVAILABLE'
       || error?.code === 'DOWNSTREAM_UNAVAILABLE'
+      || error?.code === 'DOWNSTREAM_RECOVERY_FAILED'
       || error?.code === 'INNER_CONFIG_INVALID'
       || error?.code === 'UNKNOWN_SERVER';
   }
@@ -702,6 +720,22 @@ export class LocalToolBroker {
     }
     try {
       let result = await this.inner.callServerTool(server, tool, args, signal, metaOverrides);
+      if (
+        isSkillLibraryPolicyChangedResult(server, result)
+        && !signal?.aborted
+        && typeof this.inner.restartServer === 'function'
+        && (typeof this.inner.canAutoRecover !== 'function' || await this.inner.canAutoRecover(server))
+      ) {
+        this.logger?.log('info', {
+          event: 'server_policy_reload',
+          server,
+          tool,
+        });
+        await this.recoverServer(server);
+        if (!signal?.aborted) {
+          result = await this.inner.callServerTool(server, tool, args, signal, metaOverrides);
+        }
+      }
       if (browserDailyBudgetCapMs !== null) {
         result = rewriteBudgetCappedBrowserTimeout(result, browserDailyBudgetCapMs, rpcBudgetMs);
       }

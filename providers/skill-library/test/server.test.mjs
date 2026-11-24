@@ -10,7 +10,7 @@ import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 import { createSkillServer } from '../server.mjs';
 import { SkillLibrary } from '../library.mjs';
-import { LocalToolBroker, createLocalBrokerServer } from '../../local-tools/server.mjs';
+import { DirectLocalServerPool, LocalToolBroker, createLocalBrokerServer } from '../../local-tools/server.mjs';
 import { createSampleLibrary } from './fixtures/sample-library.mjs';
 
 const execFileAsync = promisify(execFile);
@@ -155,4 +155,80 @@ test('sync-skillshare-library publishes atomically by generation and preserves l
   assert.ok(alphaCard);
   const readAfterFail = await libAfterFail.read({ id: alphaCard.id, revision: alphaCard.revision });
   assert.match(readAfterFail.content, /Alpha v2/);
+});
+
+test('LocalToolBroker auto-recycles live skill-library stdio child on POLICY_CHANGED after mid-session sync', async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-live-reload-'));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const sourceDir = path.join(root, 'source');
+  const outDir = path.join(root, 'out');
+  const emptyExtra = path.join(root, 'extra-none');
+  await fs.mkdir(path.join(sourceDir, 'beta-skill'), { recursive: true });
+  await fs.writeFile(
+    path.join(sourceDir, 'beta-skill', 'SKILL.md'),
+    '---\nname: beta-skill\ndescription: Beta v1 skill\n---\n# Beta v1\n',
+    'utf8',
+  );
+  await execFileAsync(process.execPath, [syncScriptPath, '--source', sourceDir, '--extra-packs', emptyExtra, '--out', outDir]);
+  const policyPath = path.join(outDir, 'policy.json');
+  const cfgPath = path.join(root, 'mcp-local.json');
+  await fs.writeFile(cfgPath, JSON.stringify({
+    version: '1.0.0',
+    mcpServers: {
+      'skill-library': {
+        type: 'stdio',
+        protocolVersion: '2026-07-28',
+        command: process.execPath,
+        args: [serverPath],
+        env: { MCP_SKILL_POLICY_FILE: policyPath },
+      },
+    },
+  }), 'utf8');
+
+  const pool = new DirectLocalServerPool({ configPath: cfgPath, idleMs: 0 });
+  const broker = new LocalToolBroker({ inner: pool, configPath: cfgPath, recovery: { pollMs: 25, timeoutMs: 5000 } });
+  t.after(() => broker.shutdown());
+
+  const foundV1 = await broker.call({
+    server: 'skill-library',
+    tool: 'find_skills',
+    arguments: { query: 'beta-skill' },
+  });
+  assert.equal(foundV1.isError, undefined);
+  const cardV1 = foundV1.structuredContent.candidates[0];
+  assert.match(cardV1.description, /Beta v1/);
+
+  // Mid-session sync swaps policy.json while the skill-library child stays warm.
+  await fs.writeFile(
+    path.join(sourceDir, 'beta-skill', 'SKILL.md'),
+    '---\nname: beta-skill\ndescription: Beta v2 skill\n---\n# Beta v2\n',
+    'utf8',
+  );
+  await execFileAsync(process.execPath, [syncScriptPath, '--source', sourceDir, '--extra-packs', emptyExtra, '--out', outDir]);
+
+  const foundV2 = await broker.call({
+    server: 'skill-library',
+    tool: 'find_skills',
+    arguments: { query: 'beta-skill' },
+  });
+  assert.equal(foundV2.isError, undefined);
+  const cardV2 = foundV2.structuredContent.candidates[0];
+  assert.match(cardV2.description, /Beta v2/);
+  assert.notEqual(cardV2.revision, cardV1.revision);
+
+  // Sync again and call read_skill with the now-stale v2 revision: broker recycles and surfaces STALE_REVISION.
+  await fs.writeFile(
+    path.join(sourceDir, 'beta-skill', 'SKILL.md'),
+    '---\nname: beta-skill\ndescription: Beta v3 skill\n---\n# Beta v3\n',
+    'utf8',
+  );
+  await execFileAsync(process.execPath, [syncScriptPath, '--source', sourceDir, '--extra-packs', emptyExtra, '--out', outDir]);
+
+  const staleRead = await broker.call({
+    server: 'skill-library',
+    tool: 'read_skill',
+    arguments: { id: cardV2.id, revision: cardV2.revision },
+  });
+  assert.equal(staleRead.isError, true);
+  assert.equal(JSON.parse(staleRead.content[0].text).code, 'STALE_REVISION');
 });
