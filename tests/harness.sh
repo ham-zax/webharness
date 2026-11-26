@@ -180,6 +180,7 @@ NODE2
       HOME="$tmp/home" XDG_RUNTIME_DIR="$tmp/runtime" node "$ROOT/scripts/render-config.mjs" \
         --profile "$profile" --env-file "$tmp/deployment.env" --state-dir "$tmp/$profile" --repo-root "$ROOT" >/dev/null || rc=1
       cmp "$ROOT/config/templates/instructions-template.md" "$tmp/$profile/1mcp/instructions-template.md" || rc=1
+      grep -A1 -Fx '[admin]' "$log_cfg" | grep -Fxq 'enabled = true' || rc=1
       grep -Fq '[auth]' "$log_cfg" || rc=1
       if [ "$profile" = server ]; then
         grep -Fq 'sessionTtl = 525600' "$log_cfg" || rc=1
@@ -823,7 +824,8 @@ test_extension_install_preflights_required_config() {
 test_cold_start_policy_rendering() {
   local tmp
   tmp="$(mktemp -d)" || return 1
-  node --input-type=module - "$ROOT" "$tmp" <<'NODE'
+  mkdir -p "$tmp/home" || { rm -rf "$tmp"; return 1; }
+  HOME="$tmp/home" node --input-type=module - "$ROOT" "$tmp" <<'NODE'
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import assert from 'node:assert/strict';
@@ -871,6 +873,113 @@ NODE
   return "$rc"
 }
 
+test_mcp_extension_lifecycle_and_render() {
+  local tmp home config output rc
+  tmp="$(mktemp -d)" || return 1
+  home="$tmp/home"
+  config="$home/.config/mcp-dev-bridge"
+  mkdir -p "$tmp/repo/bin" "$tmp/repo/scripts" "$tmp/repo/extensions/ext-mcp/memory" "$tmp/repo/extensions/ext-mcp-dup" "$tmp/repo/extensions/ext-node-bad" "$tmp/runtime" "$home" || { rm -rf "$tmp"; return 1; }
+  cp "$ROOT/bin/extension" "$tmp/repo/bin/extension" || { rm -rf "$tmp"; return 1; }
+  cp "$ROOT/scripts/manage-extension.mjs" "$tmp/repo/scripts/manage-extension.mjs" || { rm -rf "$tmp"; return 1; }
+  chmod +x "$tmp/repo/bin/extension" || { rm -rf "$tmp"; return 1; }
+  cat > "$home/mock-mcp.sh" <<'SH'
+#!/bin/sh
+exit 0
+SH
+  chmod +x "$home/mock-mcp.sh" || { rm -rf "$tmp"; return 1; }
+  cat > "$tmp/repo/extensions/ext-mcp/extension.json" <<'EOF'
+{"version":1,"name":"ext-mcp","description":"Mock MCP extension","required_artifacts":[],"required_sources":[],"memory":[],"mcp_servers":{"mock-mcp":{"type":"stdio","protocolVersion":"legacy","command":"$HOME/mock-mcp.sh","cwd":"$HOME","idleMs":300000,"restartOnExit":true}}}
+EOF
+  cat > "$tmp/repo/extensions/ext-mcp-dup/extension.json" <<'EOF'
+{"version":1,"name":"ext-mcp-dup","required_artifacts":[],"required_sources":[],"memory":[],"mcp_servers":{"mock-mcp":{"type":"stdio","protocolVersion":"legacy","command":"$HOME/mock-mcp.sh"}}}
+EOF
+  cat > "$tmp/repo/extensions/ext-node-bad/extension.json" <<'EOF'
+{"version":1,"name":"ext-node-bad","required_artifacts":[],"required_sources":[],"memory":[],"mcp_servers":{"bad-node":{"type":"stdio","protocolVersion":"legacy","command":"$NODE_BIN","args":["$HOME/does-not-exist.js"]}}}
+EOF
+
+  # Missing node entrypoint is rejected at enable time.
+  output="$(HOME="$home" NODE_ENV=test MCP_EXTENSION_TEST_CONFIG_ROOT="$config" "$tmp/repo/bin/extension" enable ext-node-bad 2>&1)"
+  rc=$?
+  [ "$rc" -ne 0 ] && grep -Fq 'EXTENSION_MCP_UNAVAILABLE' <<<"$output" || { rm -rf "$tmp"; return 1; }
+
+  # Enable ext-mcp, verify list, conflict with ext-mcp-dup, and render-config integration.
+  HOME="$home" NODE_ENV=test MCP_EXTENSION_TEST_CONFIG_ROOT="$config" "$tmp/repo/bin/extension" enable ext-mcp >/dev/null || { rm -rf "$tmp"; return 1; }
+  HOME="$home" NODE_ENV=test MCP_EXTENSION_TEST_CONFIG_ROOT="$config" "$tmp/repo/bin/extension" list | grep -Fq '"mock-mcp"' || { rm -rf "$tmp"; return 1; }
+  output="$(HOME="$home" NODE_ENV=test MCP_EXTENSION_TEST_CONFIG_ROOT="$config" "$tmp/repo/bin/extension" enable ext-mcp-dup 2>&1)"
+  rc=$?
+  [ "$rc" -ne 0 ] && grep -Fq 'EXTENSION_MCP_SERVER_CONFLICT' <<<"$output" || { rm -rf "$tmp"; return 1; }
+
+  cat > "$tmp/deployment.env" <<'ENV'
+MCP_PUBLIC_URL=https://mcp.example.test
+MCP_ONE_MCP_PORT=43050
+ENV
+  HOME="$home" XDG_RUNTIME_DIR="$tmp/runtime" node "$ROOT/scripts/render-config.mjs" \
+    --profile personal --env-file "$tmp/deployment.env" --state-dir "$tmp/state" --repo-root "$ROOT" >/dev/null || { rm -rf "$tmp"; return 1; }
+  node - "$tmp/state/local-1mcp/mcp.json" "$home" <<'NODE' || { rm -rf "$tmp"; return 1; }
+const fs = require('fs');
+const cfg = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+const home = process.argv[3];
+const srv = cfg.mcpServers?.['mock-mcp'];
+if (!srv || srv.command !== `${home}/mock-mcp.sh` || srv.cwd !== home || srv.idleMs !== 300000 || srv.protocolVersion !== 'legacy') process.exit(1);
+NODE
+
+  # Duplicate server in MCP_LOCAL_SERVERS_FILE is rejected cleanly.
+  printf '{"version":"1.0.0","mcpServers":{"mock-mcp":{"command":"%s/mock-mcp.sh"}}}\n' "$home" > "$tmp/dup-local.json"
+  cat > "$tmp/deployment-dup.env" <<EOF
+MCP_PUBLIC_URL=https://mcp.example.test
+MCP_ONE_MCP_PORT=43050
+MCP_LOCAL_SERVERS_FILE=$tmp/dup-local.json
+EOF
+  output="$(HOME="$home" XDG_RUNTIME_DIR="$tmp/runtime" node "$ROOT/scripts/render-config.mjs" \
+    --profile personal --env-file "$tmp/deployment-dup.env" --state-dir "$tmp/state-dup" --repo-root "$ROOT" 2>&1)"
+  rc=$?
+  [ "$rc" -ne 0 ] && grep -Fq 'duplicates Local server already provided by an enabled extension' <<<"$output" || { rm -rf "$tmp"; return 1; }
+
+  # Update refreshes state and disable removes the server cleanly on re-render.
+  HOME="$home" NODE_ENV=test MCP_EXTENSION_TEST_CONFIG_ROOT="$config" "$tmp/repo/bin/extension" update ext-mcp | grep -Fq '"status": "updated"' || { rm -rf "$tmp"; return 1; }
+  HOME="$home" NODE_ENV=test MCP_EXTENSION_TEST_CONFIG_ROOT="$config" "$tmp/repo/bin/extension" disable ext-mcp | grep -Fq '"removed_mcp_servers"' || { rm -rf "$tmp"; return 1; }
+  HOME="$home" XDG_RUNTIME_DIR="$tmp/runtime" node "$ROOT/scripts/render-config.mjs" \
+    --profile personal --env-file "$tmp/deployment.env" --state-dir "$tmp/state" --repo-root "$ROOT" >/dev/null || { rm -rf "$tmp"; return 1; }
+  node - "$tmp/state/local-1mcp/mcp.json" <<'NODE' || { rm -rf "$tmp"; return 1; }
+const fs = require('fs');
+const cfg = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+if (cfg.mcpServers?.['mock-mcp'] !== undefined) process.exit(1);
+NODE
+  rm -rf "$tmp"
+}
+
+test_extension_render_rollback() (
+  set -e
+  local tmp state
+  tmp="$(mktemp -d)"
+  trap 'rm -rf "$tmp"' EXIT
+  export HOME="$tmp/home" XDG_RUNTIME_DIR="$tmp/runtime" MCP_BRIDGE_STATE_DIR="$tmp/state"
+  export MCP_OWNER_ENV_FILE='' MCP_OWNER_CONTEXT_FILE='' MCP_SKILL_POLICY_FILE=''
+  export MCP_PERSONAL_DEFAULT_CWD="$HOME" MCP_LOCAL_SERVERS_FILE="$tmp/owner.json"
+  export MCP_PUBLIC_URL=https://mcp.example.test
+  unset NODE_ENV MCP_EXTENSION_NO_RENDER MCP_EXTENSION_TEST_CONFIG_ROOT
+  mkdir -p "$HOME/.satori/bin" "$XDG_RUNTIME_DIR" "$MCP_BRIDGE_STATE_DIR"
+  touch "$HOME/.satori/bin/satori-mcp.js"
+  printf "%s\n" "MCP_BRIDGE_PROFILE='personal'" > "$MCP_BRIDGE_STATE_DIR/bridge.env"
+  printf '%s\n' '{"mcpServers":{"satori":{"command":"/bin/true"}}}' > "$MCP_LOCAL_SERVERS_FILE"
+  chmod 600 "$MCP_LOCAL_SERVERS_FILE"
+  if "$ROOT/bin/webharness" extension enable satori >"$tmp/result" 2>&1; then return 1; fi
+  grep -q 'duplicates Local server' "$tmp/result" || return 1
+  state="$HOME/.config/mcp-dev-bridge/extensions/enabled/satori.json"
+  [ ! -e "$state" ] || return 1
+  printf '%s\n' '{"mcpServers":{}}' > "$MCP_LOCAL_SERVERS_FILE"
+  "$ROOT/bin/webharness" extension enable satori >/dev/null || return 1
+  [ -f "$state" ] || return 1
+  cp "$state" "$tmp/previous"
+  printf '%s\n' '{"mcpServers":{"satori":{"command":"/bin/true"}}}' > "$MCP_LOCAL_SERVERS_FILE"
+  if "$ROOT/bin/webharness" extension update satori >"$tmp/result" 2>&1; then return 1; fi
+  cmp "$tmp/previous" "$state" || return 1
+  printf '%s\n' 'broken' > "$MCP_LOCAL_SERVERS_FILE"
+  if "$ROOT/bin/webharness" extension disable satori >"$tmp/result" 2>&1; then return 1; fi
+  cmp "$tmp/previous" "$state"
+)
+
+run_test 'extension render failures restore the prior enabled state across enable, update and disable' test_extension_render_rollback
 run_test 'cold start policy renders, validates, and reserves removed CodeDB names' test_cold_start_policy_rendering
 run_test 'CodeDB provider and installation surface are removed' test_raw_codedb_surface_removed
 run_test 'final rendered composition places Browser behind Local only in personal mode' test_final_rendered_composition
@@ -890,6 +999,7 @@ run_test 'legacy filesystem dependency is removed after Pi cutover' test_legacy_
 run_test 'optional extensions install and remove without changing Browser core' test_optional_extension_lifecycle
 run_test 'extension-lifetime browser memory cannot acquire multiple owners' test_extension_memory_lifetime_ownership
 run_test 'extension install preflights required config before mutation' test_extension_install_preflights_required_config
+run_test 'modular MCP extensions enable, update, disable, detect conflicts, and render into Local' test_mcp_extension_lifecycle_and_render
 
 printf '\n%d tests, %d failures\n' "$TESTS" "$FAILURES"
 [ "$FAILURES" -eq 0 ]

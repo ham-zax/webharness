@@ -11,6 +11,7 @@
  *   "$(npm root -g)/@1mcp/agent".
  */
 import fs from 'node:fs';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -104,8 +105,51 @@ function singleOwnerOAuthPolicy() {
 }
 `;
 
+const ownerSignIn = fs.readFileSync(new URL('./oauth-owner-sign-in.html', import.meta.url), 'utf8');
+const ownerScript = ownerSignIn.match(/<script>([\s\S]+?)<\/script>/)[1];
+const ownerScriptHash = createHash('sha256').update(ownerScript).digest('base64');
+const ownerPagePolicy = `default-src 'none'; script-src 'sha256-${ownerScriptHash}'; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'`;
+
 /** Ordered, shape-qualified patches. Each entry is applied at most once. */
 export const PATCHES = [
+  {
+    id: 'owner-link-route', file: 'build/sdk/legacy/transport/http/server.js', label: 'workstation approval route',
+    upstream: '        this.app.use(createOperatorConsentRoutes(authRouter, oauthRoutes, consentGuard));',
+    patched: `        installOwnerLink(this.app, adminStorageDir, runtimeIdentity.externalUrl, authRouter, oauthFlow);
+        this.app.use(createOperatorConsentRoutes(authRouter, oauthRoutes, consentGuard));`,
+  },
+  {
+    id: 'owner-link-import', file: 'build/sdk/legacy/transport/http/server.js', label: 'workstation approval module',
+    upstream: 'import { createOperatorConsentGuard,',
+    patched: "import { installOwnerLink } from '../../../../transport/http/routes/webHarnessOwnerLink.mjs';\nimport { createOperatorConsentGuard,",
+  },
+  {
+    id: 'owner-link-consent', file: 'build/sdk/legacy/auth/sdkOAuthServerProvider.js', label: 'request-bound owner consent',
+    upstream: '        const csrfToken = res.locals?.oauthConsentCsrfToken;',
+    patched: `        if (res.locals?.ownerLinkConsent) {
+            return res.locals.ownerLinkConsent(client, requestedScopes, () =>
+                this.oauthStorage.createAuthorizationRequest(client.client_id, params.redirectUri, params.codeChallenge,
+                    params.state, params.resource?.toString(), requestedScopes));
+        }
+        const csrfToken = res.locals?.oauthConsentCsrfToken;`,
+  },
+  {
+    id: 'same-site-owner-consent',
+    file: 'build/transport/http/routes/operatorConsentRoutes.js',
+    label: 'same-tab owner sign-in and consent',
+    upstream: `        if (!session) {
+            res
+                .status(401)`,
+    patched: `        if (!session && req.method === 'GET') {
+            res.set('Content-Security-Policy', ${JSON.stringify(ownerPagePolicy)});
+            res.set('Referrer-Policy', 'no-referrer');
+            res.status(401).type('html').send(${JSON.stringify(ownerSignIn)});
+            return;
+        }
+        if (!session) {
+            res
+                .status(401)`,
+  },
   {
     id: 'constants-non-expiring-session',
     file: 'build/constants/auth.js',
@@ -776,6 +820,10 @@ import { equivalentResources } from '../../../../../auth/resourceIdentity.js';`,
 
 /** Files this module creates rather than patches. */
 export const CREATED_FILES = [
+  {
+    id: 'owner-link-module', file: 'build/transport/http/routes/webHarnessOwnerLink.mjs', label: 'one-time owner approval',
+    content: fs.readFileSync(new URL('./oauth-owner-link.mjs', import.meta.url), 'utf8'),
+  },
   {
     id: 'resource-identity-module',
     file: 'build/auth/resourceIdentity.js',

@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Sign in to review access</title>
+<main>
+  <h1>Review connector access</h1>
+  <p id="status" role="status">Checking your owner session…</p>
+  <noscript>Enable JavaScript to sign in and resume this request.</noscript>
+  <form hidden method="post" action="/admin/api/session/login">
+    <label>Username <input name="username" autocomplete="username" required></label>
+    <label>Password <input type="password" name="password" autocomplete="current-password" required></label>
+    <button>Sign in</button>
+  </form>
+</main>
+<script>
+const form = document.querySelector('form');
+const status = document.getElementById('status');
+
+async function resume() {
+  const response = await fetch('/admin/api/session', { cache: 'no-store' });
+  if (!response.ok) throw new Error();
+  const session = await response.json();
+  if (!session.authenticated) return false;
+  if (location.hash === '#resume-consent') {
+    status.textContent = 'Your session could not be used for this request. Allow cookies for this site and restart the connection.';
+    return true;
+  }
+  // Start a same-site navigation and preserve the original OAuth query verbatim.
+  location.replace('/authorize' + location.search + '#resume-consent');
+  return true;
+}
+
+form.addEventListener('submit', async event => {
+  event.preventDefault();
+  const button = form.querySelector('button');
+  button.disabled = true;
+  try {
+    const response = await fetch(form.action, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(Object.fromEntries(new FormData(form))),
+    });
+    form.elements.password.value = '';
+    if (response.ok && await resume()) return;
+    status.textContent = response.status === 429 ? 'Too many attempts. Try again later.'
+      : response.ok ? 'Sign-in requires cookies for this site.' : 'Sign-in failed. Check your username and password.';
+  } catch {
+    status.textContent = 'Could not reach the bridge. Try again.';
+  } finally {
+    button.disabled = false;
+  }
+});
+
+resume().then(resuming => {
+  if (!resuming) {
+    status.textContent = 'Sign in as the bridge owner to continue.';
+    form.hidden = false;
+  }
+}).catch(() => {
+  status.textContent = 'Could not check your session. Reload to try again.';
+});
+</script>
+</html>

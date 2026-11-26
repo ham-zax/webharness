@@ -15,7 +15,9 @@ Usage:
   webharness stop
   webharness restart [--wait] [--timeout SECONDS]
   webharness status
-  webharness extension list|install|remove ...
+  webharness approval-link [AUTHORIZATION_URL]  # reads the URL from stdin when omitted
+  webharness telemetry [--since 7d|24h|all] [--client NAME] [--repo NAME] [--issues] [--json]
+  webharness extension list|install|enable|remove|disable|update ...
   webharness skills find|read|check|export ...
   webharness help
 EOF
@@ -196,6 +198,17 @@ COMMAND="${1:-help}"
 if [ "$#" -gt 0 ]; then shift; fi
 
 case "$COMMAND" in
+  approval-link)
+    [ "$#" -le 1 ] || { usage >&2; exit 2; }
+    # shellcheck source=lib/bridge/common.sh
+    source "$ROOT/lib/bridge/common.sh"
+    request_url="${1:-}"
+    if [ -z "$request_url" ]; then IFS= read -r request_url || [ -n "$request_url" ]; fi
+    node --input-type=module -e 'import {pathToFileURL} from "node:url";
+      const [module, dir, origin, request] = process.argv.slice(1);
+      const {mintOwnerLink} = await import(pathToFileURL(module));
+      console.log(mintOwnerLink(dir, origin, request));' "$ROOT/scripts/oauth-owner-link.mjs" "$BRIDGE_CONFIG_DIR" "$TUNNEL_URL" "$request_url"
+    ;;
   setup)
     setup_command "$@"
     ;;
@@ -217,8 +230,23 @@ case "$COMMAND" in
     [ "$#" -eq 0 ] || { usage >&2; exit 2; }
     exec "$ROOT/bin/status"
     ;;
+  telemetry)
+    exec node "$ROOT/scripts/analyze-telemetry.mjs" "$@"
+    ;;
   extension)
     [ "$#" -gt 0 ] || { usage >&2; exit 2; }
+    export WEBHARNESS_RENDER_PROFILE='' WEBHARNESS_RENDER_STATE_DIR=''
+    case "${1:-}" in
+      install|enable|remove|disable|update)
+        if [ "${NODE_ENV:-}" != test ] && [ "${MCP_EXTENSION_NO_RENDER:-0}" != 1 ]; then
+          state_dir="${MCP_BRIDGE_STATE_DIR:-${BRIDGE_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/mcp-dev-bridge}}"
+          if [ -f "$state_dir/bridge.env" ]; then
+            WEBHARNESS_RENDER_PROFILE="$(sed -nE "s/^MCP_BRIDGE_PROFILE=['\"]?([a-z-]+)['\"]?$/\1/p" "$state_dir/bridge.env" | tail -n 1)"
+            WEBHARNESS_RENDER_STATE_DIR="$state_dir"
+          fi
+        fi
+        ;;
+    esac
     exec "$ROOT/bin/extension" "$@"
     ;;
   skills)

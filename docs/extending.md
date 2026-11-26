@@ -23,6 +23,7 @@ Run from the repository root (`just --list` shows every recipe):
 
 ```bash
 just host-audit             # pueued + CLI toolbox + live bridge health in ~15 lines
+just telemetry              # analyze rotating usage/context/issue telemetry (logs/telemetry.jsonl)
 just init-connector-policy  # install starter connector-policy.yaml only if missing
 just sync-skills            # sync local Skillshare skills into gitignored skill-library/packs/
 just test-fast              # core bridge/local-tools/skill-library tests (counts + failures only)
@@ -85,7 +86,20 @@ Point `MCP_LOCAL_SERVERS_FILE` in `.env` at a private mode-`0600` JSON file (<=1
 }
 ```
 
-Re-render with `just render personal` (or `server`). `DirectLocalServerPool` wakes `my-db` only on demand, restarts unexpected crashes (`restartOnExit: true` default), and evicts it after 30 minutes idle.
+Re-render with `just render personal` (or `server`). `DirectLocalServerPool` wakes `my-db` only on demand, restarts unexpected crashes (`restartOnExit: true` default), supports an optional per-server `idleMs` override, and evicts idle or removed servers cleanly.
+
+### Plug-and-play MCP extensions (`satori`, `codebase-memory-mcp`, etc.)
+
+Package optional local MCP servers as reversible extensions under `extensions/<name>/extension.json` (private per-machine overrides go in `~/.config/mcp-dev-bridge/extensions/config/<name>.json`, enabled state in `extensions/enabled/<name>.json`):
+
+```bash
+webharness extension list
+webharness extension enable satori          # plugs in Satori ($HOME multi-repo container, 5m idle eviction)
+webharness extension update satori          # re-resolves $NODE_BIN / $HOME paths after upgrades
+webharness extension disable satori         # unplugs Satori without deleting ~/.satori indexes
+```
+
+`webharness extension enable|disable|update` automatically re-renders `local-1mcp/mcp.json` when a bridge state directory exists, and `DirectLocalServerPool` picks up added/removed servers on the next request without leaving stale proxies behind.
 
 ### Sync private Skillshare skills, site memory, or extensions
 

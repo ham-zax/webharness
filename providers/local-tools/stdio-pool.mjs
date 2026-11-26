@@ -437,6 +437,13 @@ function parseServerDefinition(serverName, raw) {
     }
     requestTimeout = raw.requestTimeout;
   }
+  let idleMs;
+  if (raw.idleMs !== undefined) {
+    if (!Number.isSafeInteger(raw.idleMs) || raw.idleMs < 0 || raw.idleMs > MAX_INNER_IDLE_MS) {
+      throw brokerError('INNER_CONFIG_INVALID', `local server ${serverName} idleMs must be an integer from 0 to ${MAX_INNER_IDLE_MS}`);
+    }
+    idleMs = raw.idleMs;
+  }
   if (raw.restartOnExit !== undefined && typeof raw.restartOnExit !== 'boolean') {
     throw brokerError('INNER_CONFIG_INVALID', `local server ${serverName} restartOnExit must be a boolean`);
   }
@@ -447,6 +454,7 @@ function parseServerDefinition(serverName, raw) {
     env: raw.env,
     protocolVersion: raw.protocolVersion ?? 'legacy',
     requestTimeout,
+    idleMs,
     restartOnExit: raw.restartOnExit ?? true
   };
 }
@@ -594,12 +602,16 @@ export class DirectServerClient {
       ...(call ? { [CALL_ID_META]: call.id } : {}),
       ...(rpcBudgetMs !== undefined ? { [RPC_BUDGET_META]: rpcBudgetMs } : {}),
     };
+    let reqBytes = 0;
+    try { reqBytes = Buffer.byteLength(JSON.stringify(args ?? {}), 'utf8'); } catch {}
+    let resBytes;
     let outcome = 'error';
     try {
       const result = await this.client.callTool(
         { name, arguments: args, ...(Object.keys(meta).length > 0 ? { _meta: meta } : {}) },
         this._requestOptions(signal)
       );
+      try { resBytes = Buffer.byteLength(JSON.stringify(result?.content ?? ''), 'utf8'); } catch {}
       if (result?.isError === true) {
         this.logger?.log('warn', {
           event: 'tool_call_error_result',
@@ -629,6 +641,8 @@ export class DirectServerClient {
         tool: name,
         duration_ms: Date.now() - startedAt,
         outcome,
+        req_bytes: reqBytes,
+        ...(resBytes !== undefined ? { res_bytes: resBytes, est_tokens: Math.round(resBytes / 4) } : {}),
       });
     }
   }
@@ -843,8 +857,20 @@ export class DirectLocalServerPool {
     return Boolean(entry && !entry.permanentlyExited && entry.supervisor.inner?.alive);
   }
 
+  pruneRemovedServers(knownServers) {
+    const allowed = knownServers instanceof Set ? knownServers : new Set(knownServers);
+    const removed = [];
+    for (const [name, entry] of this.entries.entries()) {
+      if (allowed.has(name)) continue;
+      this.entries.delete(name);
+      removed.push(entry.supervisor.close().catch(() => {}));
+    }
+    return removed.length > 0 ? Promise.allSettled(removed).then(() => {}) : Promise.resolve();
+  }
+
   async _readServerDefinition(server) {
     const entry = await readCachedInnerConfig(this.configPath);
+    this.pruneRemovedServers(entry.servers);
     const cached = entry.definitions.get(server);
     if (cached) return cached;
     if (!Object.hasOwn(entry.rawServers, server)) {
@@ -898,7 +924,7 @@ export class DirectLocalServerPool {
         supervisor: null
       };
       record.supervisor = new LazyIdleSupervisor({
-        idleMs: this.idleMs,
+        idleMs: definition.idleMs ?? this.idleMs,
         isPinned: this.isPinned,
         start: async ({ signal } = {}) => {
           if (record.permanentlyExited) {

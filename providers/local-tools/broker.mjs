@@ -421,6 +421,7 @@ export class LocalToolBroker {
   async configuredServers() {
     const entry = await readCachedInnerConfig(this.configPath);
     for (const server of entry.servers) validateServerName(server, 'INVALID_INNER_SERVER_NAME');
+    this.inner.pruneRemovedServers?.(entry.servers);
     return new Set(entry.servers);
   }
 
@@ -693,7 +694,11 @@ export class LocalToolBroker {
     const fetchPromise = fetchSchema().catch(() => null);
     try {
       const inputSchema = await Promise.race([fetchPromise, abortWait]);
-      return explainSchemaViolation(inputSchema, args);
+      const violation = explainSchemaViolation(inputSchema, args);
+      const signature = server === 'satori' && paramSignature(inputSchema);
+      if (!signature) return violation;
+      const readTip = tool === 'read_file' ? ' Copy recommendedNextAction.args when provided.' : '';
+      return [violation, `Hint: satori/${tool} takes ${signature} (* required).${readTip}`].filter(Boolean).join('. ');
     } catch {
       return null;
     } finally {

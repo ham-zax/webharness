@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "name": "codebase-memory-mcp",
+  "description": "Codebase Memory structural graph MCP server (optional puzzle-piece extension; disabled by default when Satori is active).",
+  "memory": [],
+  "required_artifacts": [],
+  "required_sources": [],
+  "mcp_servers": {
+    "codebase-memory-mcp": {
+      "type": "stdio",
+      "protocolVersion": "legacy",
+      "command": "$HOME/.local/bin/codebase-memory-mcp",
+      "idleMs": 300000,
+      "restartOnExit": true
+    }
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "name": "satori",
+  "description": "Satori local-first semantic and structural code intelligence MCP server (shared offline daemon, implicit $HOME multi-repo container, 5-minute idle eviction).",
+  "memory": [],
+  "required_artifacts": [],
+  "required_sources": [],
+  "mcp_servers": {
+    "satori": {
+      "type": "stdio",
+      "protocolVersion": "legacy",
+      "command": "$NODE_BIN",
+      "args": ["$HOME/.satori/bin/satori-mcp.js"],
+      "cwd": "$HOME",
+      "idleMs": 300000,
+      "restartOnExit": true
+    }
+  },
+  "connector_hints": {
+    "tool_descriptions": {
+      "dev_search": "[For unfamiliar behavior, ownership, or callers in a repo, prefer local_fallback_dispatch(server=\"satori\", tool=\"search_codebase\", arguments={path:\"/abs/repo\", query:\"...\", alt_terms:[...]}); keep dev_search for exact literals.]",
+      "local_fallback_dispatch": "[Code intelligence: server=\"satori\" -> search_codebase(path,query,alt_terms?), read_file(path,open_symbol?), call_graph, file_outline, find_references, detect_changes, list_codebases.]"
+    },
+    "exploration_nudge": {
+      "server": "satori",
+      "tip": "[tip: satori MCP is live — for unfamiliar behavior, ownership, callers, or symbol-bounded reads, use local_fallback_dispatch(server=\"satori\", tool=\"search_codebase\", arguments={path:\"/abs/repo\", query:\"...\", alt_terms:[...]}) instead of broad grep/read chains]"
+    }
+  }
+}

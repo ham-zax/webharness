@@ -166,6 +166,8 @@ echo "Local broker logs: files=$INNER_LOG_FILES bytes=$INNER_LOG_BYTES policy_by
 if [ "$INNER_LOG_POLICY_BYTES" -gt 0 ] && [ "$INNER_LOG_BYTES" -gt "$INNER_LOG_POLICY_BYTES" ]; then
   warn "Local broker logs exceed configured nominal retention: $INNER_LOG_BYTES > $INNER_LOG_POLICY_BYTES bytes"
 fi
+read -r TELEM_FILES TELEM_BYTES TELEM_OLDEST_AGE < <(storage_stats "$BRIDGE_STATE_DIR/logs" 'telemetry.jsonl*')
+echo "Telemetry JSONL logs: files=$TELEM_FILES bytes=$TELEM_BYTES policy_bytes=104857600 oldest_age_seconds=$TELEM_OLDEST_AGE"
 
 DEV_SPOOL_BUDGET="$(node - "$BRIDGE_CONFIG_DIR/mcp.json" 2>/dev/null <<'NODE' || true
 const fs = require('fs');

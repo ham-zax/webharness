@@ -71,7 +71,7 @@ const VAULT_PACK_MAP = new Map([
 
 const MAX_FILE_BYTES = 2 * 1024 * 1024;
 const MAX_SKILL_BYTES = 14 * 1024 * 1024;
-const MAX_SKILL_FILES = 240;
+const MAX_SKILL_FILES = 400;
 const MAX_INVENTORY_JSON_BYTES = 14 * 1024;
 const UTF8_DECODER = new TextDecoder('utf-8', { fatal: true });
 

@@ -1219,8 +1219,11 @@ test('DirectLocalServerPool wakes only the addressed server and negotiates both 
   const alphaRes = await traceCall({ id, layer: 'local', tool: 'tool_call', log: () => {} },
     () => broker.call({ server: 'alpha', tool: 'ping_alpha', arguments: { msg: 'one' } }));
   assert.equal(alphaRes.content[0].text, 'alpha:one');
-  assert.deepEqual(records.filter(record => record.event === 'tool_call_completed').map(({ duration_ms, ...record }) => {
+  assert.deepEqual(records.filter(record => record.event === 'tool_call_completed').map(({ duration_ms, req_bytes, res_bytes, est_tokens, ...record }) => {
     assert.ok(duration_ms >= 0);
+    assert.equal(req_bytes, Buffer.byteLength(JSON.stringify({ msg: 'one' }), 'utf8'));
+    assert.ok(Number.isInteger(res_bytes) && res_bytes > 0);
+    assert.equal(est_tokens, Math.round(res_bytes / 4));
     return record;
   }), [{ event: 'tool_call_completed', call_id: id, server: 'alpha', tool: 'ping_alpha', outcome: 'success' }]);
   const alphaPids = await readPids(alpha.pidLog);
@@ -2104,4 +2107,80 @@ test('broker recycles skill-library once on POLICY_CHANGED and bounds retries', 
   assert.equal(noAutoRes.isError, true);
   assert.equal(noAutoInner.callCalls.length, 1);
   assert.equal(noAutoInner.restartCalls.length, 0);
+});
+
+test('broker derives Satori recovery hints from the connected server schema', async t => {
+  const configPath = await configFile(t, ['satori']);
+  const inner = fakeInner({
+    pages: { FIRST: { tools: [{ name: 'read_file', inputSchema: { type: 'object', properties: { path: {}, futureParam: {} }, required: ['path', 'futureParam'] } }] } },
+    callHandler: async () => ({
+      isError: true,
+      content: [{ type: 'text', text: "Error: Invalid arguments for 'read_file'. path: Invalid input: expected string, received undefined" }],
+    }),
+  });
+  const broker = new LocalToolBroker({ inner, configPath });
+  const res = await broker.fallbackDispatch({ server: 'satori', tool: 'read_file', arguments: {} });
+  assert.equal(res.isError, true);
+  assert.match(res.content[0].text, /Hint: satori\/read_file takes path\*, futureParam\*/);
+  assert.match(res.content[0].text, /recommendedNextAction\.args/);
+});
+
+test('DirectLocalServerPool honors per-server idleMs and prunes servers removed from config', async t => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'local-pool-ext-test-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const configPath = path.join(dir, 'mcp.json');
+  await fs.writeFile(configPath, JSON.stringify({
+    version: '1.0.0',
+    mcpServers: {
+      fastIdle: { command: process.execPath, idleMs: 35 },
+      normal: { command: process.execPath },
+    },
+  }));
+
+  const closed = [];
+  const closedResolvers = new Map();
+  const waitClosed = name => new Promise(resolve => {
+    if (closed.includes(name)) resolve();
+    else closedResolvers.set(name, resolve);
+  });
+  const pool = new DirectLocalServerPool({
+    configPath,
+    idleMs: 60_000,
+    clientFactory: async ({ serverName }) => {
+      let alive = true;
+      return {
+        get alive() { return alive; },
+        async listTools() { return { tools: [{ name: 'ping' }] }; },
+        async callTool() { return { content: [{ type: 'text', text: serverName }] }; },
+        async close() {
+          if (!alive) return;
+          alive = false;
+          closed.push(serverName);
+          closedResolvers.get(serverName)?.();
+        },
+      };
+    },
+  });
+  t.after(() => pool.close());
+
+  const fastClosed = waitClosed('fastIdle');
+  await pool.callServerTool('fastIdle', 'ping', {});
+  await pool.callServerTool('normal', 'ping', {});
+  assert.equal(pool.isServerLive('fastIdle'), true);
+  assert.equal(pool.isServerLive('normal'), true);
+
+  await fastClosed;
+  assert.equal(pool.isServerLive('fastIdle'), false);
+  assert.equal(pool.isServerLive('normal'), true);
+  assert.ok(closed.includes('fastIdle'));
+
+  // Remove `normal` from mcp.json and verify broker.configuredServers prunes & closes it.
+  const normalClosed = waitClosed('normal');
+  await fs.writeFile(configPath, JSON.stringify({ version: '1.0.0', mcpServers: {} }));
+  const broker = new LocalToolBroker({ inner: pool, configPath });
+  const configured = await broker.configuredServers();
+  assert.equal(configured.size, 0);
+  await normalClosed;
+  assert.equal(pool.isServerLive('normal'), false);
+  assert.ok(closed.includes('normal'));
 });

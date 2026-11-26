@@ -70,7 +70,7 @@ export function createLocalBrokerServer({ broker } = {}) {
       inputSchema: {
         type: 'object',
         properties: {
-          server: { type: 'string', minLength: 1, description: 'Logical downstream server name, such as terminal, host, browser-fast, browser-devtools, codebase-memory-mcp, or the known fallback-only dev recovery server. Omit to discover public logical servers rather than individual tools.' },
+          server: { type: 'string', minLength: 1, description: 'Logical downstream server name, such as terminal, host, browser-fast, browser-devtools, satori, or the known fallback-only dev recovery server. Omit to discover public logical servers rather than individual tools.' },
           query: { type: 'string', minLength: 1, description: 'Case-insensitive filter. Without server it matches logical server names only; with server it matches that server\'s tool name, title, and description.' },
           limit: { type: 'integer', minimum: 1, maximum: MAX_LIST_LIMIT, default: DEFAULT_LIST_LIMIT },
           cursor: { type: 'string', minLength: 1, description: 'Opaque continuation cursor returned by a prior tool_list call with the same server/query filters.' }

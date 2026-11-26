@@ -2,6 +2,22 @@
 
 The gate is multi-tenant by design: each app mints its own OAuth client, identified by `clientId`. Grants and access-token sessions are per client, so connecting one app never touches another.
 
+## Set up the owner account
+
+1MCP 0.40 requires an administrator to sign in before approving a connector. For an existing bridge, deploy the updated generated config with `just deploy <profile>` using the bridge's current profile. For a fresh install, `webharness setup` already renders the config.
+
+Create the first admin once on the bridge host as the same Linux user that runs the bridge. For a custom state directory, point `--config-dir` at its `1mcp` subdirectory.
+
+```bash
+read -r -s -p 'New 1MCP admin password: ' webharness_admin_password
+printf '\n'
+1mcp admin bootstrap --config-dir "${XDG_STATE_HOME:-$HOME/.local/state}/mcp-dev-bridge/1mcp" \
+  --username owner --password "$webharness_admin_password"
+unset webharness_admin_password
+```
+
+Sign in at `/admin` on the same origin you use for approval. An existing admin account can be reused. Bootstrapping is only needed for a runtime that has no admin account.
+
 ## Connect a client with blank optional fields
 
 This is the supported path for a hosted connector. Add a custom MCP server with the deployment's public URL and leave the optional Client ID and Client secret empty:
@@ -16,20 +32,43 @@ The connector then registers itself through `POST /register` and builds its own 
 
 Choose one mode per connector. Either leave both optional fields empty and let the connector register itself, or paste a client you minted yourself. Mixing them sends the approval to a client the app registered by itself, and the pasted credentials never take effect. If the address bar shows a `client_id` you did not mint, the credentials did not take effect; delete the connector and start again.
 
+## Approve with a one-time workstation link
+
+Start the connector with the normal `/mcp` URL. Copy its full authorization URL, then run this command as the bridge owner on the workstation hosting that bridge:
+
+```bash
+webharness approval-link
+```
+
+Paste the authorization URL and press Enter. The command prints a bearer link valid for five minutes. It accepts this bridge’s authorization requests with explicit scopes and S256 PKCE. Open the link in any browser to review the connector, callback, and permissions. Click **Approve** or **Deny**. You can open the review page repeatedly until one decision consumes the link. Anyone holding the link during that window can make that decision.
+
+For a terminal approval, paste the minted link at the prompt:
+
+```bash
+read -r -s -p 'One-time approval link: ' approval_link
+printf '\n'
+curl -fsS "$approval_link"
+curl -si --data 'action=approve' "$approval_link"
+unset approval_link
+```
+
+The POST returns the registered callback in the HTTP 303 `Location` header. Open that callback in the originating connector’s browser session to finish. Use `action=deny` to decline. If the connector starts a new request, mint a new link for that request.
+
 ## Cross-device approval
 
 A hosted connector registers an HTTPS callback on its own platform, so approval works from any browser:
 
 ```text
 web client   -> POST /register          platform callback registered
-home browser -> GET  /authorize?...     owner signs in, approves once
-home browser -> POST /oauth/consent     approval, same origin
-home browser -> 302  https://<platform>/callback?code=...&state=...
+home browser -> GET  /authorize?...     redirects to /admin/oauth/authorize
+home browser ->      owner signs in on the approval page if needed
+home browser -> POST /admin/oauth/consent  approval, same origin
+home browser ->      https://<platform>/callback?code=...&state=...
 platform     -> POST /token             code plus PKCE verifier
 web client   -> POST /mcp               Bearer access token
 ```
 
-The owner opens the authorization link on the home browser and approves. The browser redirects to the platform's registered HTTPS callback, the platform backend exchanges the code, and the web client continues on its own. The headless server needs no desktop, no browser, no SSH forward, and no URL editing. The exact registered callback, `state`, and PKCE `code_challenge` are carried through unchanged.
+The owner opens the authorization link in their browser. If prompted, sign in on that page. Review the requested permissions and approve. The browser continues to the platform's registered HTTPS callback, where the platform backend exchanges the code. The exact registered callback, `state`, and PKCE `code_challenge` are carried through unchanged.
 
 A client that registers `http://127.0.0.1:PORT/callback` is a same-machine client. Its callback resolves on whichever machine runs the browser, so it cannot complete from a different computer. That is a client limitation, not a server setting: WebHarness does not rewrite a registered loopback callback, and this deployment offers no device-code or callback-relay flow. Approve from the machine running that client, or use a hosted connector.
 
@@ -51,7 +90,7 @@ Each app owns its own redirect URI. A Gemini connector registers a Google one; a
 Approval alone is not completion. The connector is live only after the token exchange:
 
 ```text
-POST /token                       <- the app's backend, minutes after the 302
+POST /token                       <- the app's backend after the callback
 Exchanged authorization code for access token  {clientId: <uuid>}
 Scope operation: scope_validation_success      {grantedScopes: [...]}
 ```

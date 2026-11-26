@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { constants as fsConstants } from 'node:fs';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -10,6 +11,15 @@ const ROOT = path.resolve(SCRIPT_DIR, '..');
 const EXTENSIONS_DIR = path.join(ROOT, 'extensions');
 const NAME_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const ARTIFACT_RE = /^[A-Za-z0-9._-]+$/;
+const MCP_SERVER_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+const MAX_IDLE_MS = 2 ** 31 - 1;
+const RESERVED_MCP_SERVERS = new Set([
+  '1mcp', 'code', 'codedb', 'dev', 'terminal', 'host',
+  'skill-library', 'browser-devtools', 'browser-fast', 'browser-daily',
+]);
+const ALLOWED_MCP_SERVER_FIELDS = new Set([
+  'type', 'protocolVersion', 'command', 'args', 'cwd', 'env', 'idleMs', 'requestTimeout', 'restartOnExit',
+]);
 
 function fail(code, message) {
   const error = new Error(message);
@@ -65,6 +75,31 @@ async function writePrivateJson(file, value) {
   await fs.chmod(file, 0o600);
 }
 
+async function renderActiveBridge() {
+  const profile = process.env.WEBHARNESS_RENDER_PROFILE;
+  if (!profile) return;
+  const { renderConfig } = await import('./render-config.mjs');
+  await renderConfig({ profile, stateDir: process.env.WEBHARNESS_RENDER_STATE_DIR });
+}
+
+async function publishExtensionState(file, next, previous) {
+  if (next) await writePrivateJson(file, next);
+  else await fs.unlink(file);
+  try {
+    await renderActiveBridge();
+  } catch (error) {
+    if (previous) await writePrivateJson(file, previous);
+    else await fs.unlink(file);
+    // A filesystem error may occur after the renderer has replaced some outputs.
+    try {
+      await renderActiveBridge();
+    } catch (restoreError) {
+      throw new Error(`${error.message}; previous extension state restored, re-render failed: ${restoreError.message}`);
+    }
+    throw error;
+  }
+}
+
 function extensionDir(name) {
   return path.join(EXTENSIONS_DIR, name);
 }
@@ -92,7 +127,213 @@ async function loadManifest(name) {
     safeRelative(item.target, 'memory.target');
     if (item.lifetime !== 'extension' && item.lifetime !== 'shared') fail('INVALID_EXTENSION_MANIFEST', 'memory.lifetime must be extension or shared');
   }
+  if (manifest.mcp_servers !== undefined) {
+    if (!manifest.mcp_servers || typeof manifest.mcp_servers !== 'object' || Array.isArray(manifest.mcp_servers)) {
+      fail('INVALID_EXTENSION_MANIFEST', 'mcp_servers must be an object');
+    }
+    for (const [serverName, spec] of Object.entries(manifest.mcp_servers)) {
+      validateMcpServerTemplate(serverName, spec);
+    }
+  }
+  if (manifest.connector_hints !== undefined) {
+    validateConnectorHints(manifest.connector_hints, manifest.mcp_servers);
+  }
   return { dir, manifest };
+}
+
+function validateConnectorHints(hints, mcpServers) {
+  if (!hints || typeof hints !== 'object' || Array.isArray(hints)) {
+    fail('INVALID_EXTENSION_MANIFEST', 'connector_hints must be an object');
+  }
+  const allowedKeys = new Set(['tool_descriptions', 'exploration_nudge']);
+  for (const key of Object.keys(hints)) {
+    if (!allowedKeys.has(key)) fail('INVALID_EXTENSION_MANIFEST', `connector_hints has unsupported field: ${key}`);
+  }
+  if (hints.tool_descriptions !== undefined) {
+    if (!hints.tool_descriptions || typeof hints.tool_descriptions !== 'object' || Array.isArray(hints.tool_descriptions)) {
+      fail('INVALID_EXTENSION_MANIFEST', 'connector_hints.tool_descriptions must be an object');
+    }
+    for (const [toolName, text] of Object.entries(hints.tool_descriptions)) {
+      if (!/^[A-Za-z0-9_.-]{1,128}$/.test(toolName)) {
+        fail('INVALID_EXTENSION_MANIFEST', `invalid connector_hints.tool_descriptions tool name: ${toolName}`);
+      }
+      if (typeof text !== 'string' || text.trim().length === 0 || text.length > 512) {
+        fail('INVALID_EXTENSION_MANIFEST', `connector_hints.tool_descriptions.${toolName} must be a non-empty string <= 512 chars`);
+      }
+    }
+  }
+  if (hints.exploration_nudge !== undefined) {
+    const nudge = hints.exploration_nudge;
+    if (!nudge || typeof nudge !== 'object' || Array.isArray(nudge)) {
+      fail('INVALID_EXTENSION_MANIFEST', 'connector_hints.exploration_nudge must be an object');
+    }
+    for (const key of Object.keys(nudge)) {
+      if (key !== 'server' && key !== 'tip') {
+        fail('INVALID_EXTENSION_MANIFEST', `connector_hints.exploration_nudge has unsupported field: ${key}`);
+      }
+    }
+    if (typeof nudge.server !== 'string' || !mcpServers || !Object.hasOwn(mcpServers, nudge.server)) {
+      fail('INVALID_EXTENSION_MANIFEST', 'connector_hints.exploration_nudge.server must match a declared mcp_servers entry');
+    }
+    if (typeof nudge.tip !== 'string' || nudge.tip.trim().length === 0 || nudge.tip.length > 512) {
+      fail('INVALID_EXTENSION_MANIFEST', 'connector_hints.exploration_nudge.tip must be a non-empty string <= 512 chars');
+    }
+  }
+}
+
+function validateMcpServerTemplate(serverName, spec) {
+  if (!MCP_SERVER_NAME_RE.test(serverName)) {
+    fail('INVALID_EXTENSION_MANIFEST', `invalid mcp_servers entry name: ${serverName}`);
+  }
+  if (RESERVED_MCP_SERVERS.has(serverName)) {
+    fail('INVALID_EXTENSION_MANIFEST', `mcp_servers cannot declare reserved or built-in server: ${serverName}`);
+  }
+  if (!spec || typeof spec !== 'object' || Array.isArray(spec)) {
+    fail('INVALID_EXTENSION_MANIFEST', `mcp_servers.${serverName} must be an object`);
+  }
+  for (const key of Object.keys(spec)) {
+    if (!ALLOWED_MCP_SERVER_FIELDS.has(key)) {
+      fail('INVALID_EXTENSION_MANIFEST', `mcp_servers.${serverName} has unsupported field: ${key}`);
+    }
+  }
+  if (spec.type !== undefined && spec.type !== 'stdio') {
+    fail('INVALID_EXTENSION_MANIFEST', `mcp_servers.${serverName}.type must be stdio`);
+  }
+  if (spec.protocolVersion !== undefined && !['auto', 'legacy', '2026-07-28'].includes(spec.protocolVersion)) {
+    fail('INVALID_EXTENSION_MANIFEST', `mcp_servers.${serverName}.protocolVersion must be auto, legacy, or 2026-07-28`);
+  }
+  if (typeof spec.command !== 'string' || spec.command.length === 0) {
+    fail('INVALID_EXTENSION_MANIFEST', `mcp_servers.${serverName}.command must be a non-empty string`);
+  }
+  if (spec.args !== undefined && (!Array.isArray(spec.args) || spec.args.some(arg => typeof arg !== 'string'))) {
+    fail('INVALID_EXTENSION_MANIFEST', `mcp_servers.${serverName}.args must be an array of strings`);
+  }
+  if (spec.cwd !== undefined && (typeof spec.cwd !== 'string' || spec.cwd.length === 0)) {
+    fail('INVALID_EXTENSION_MANIFEST', `mcp_servers.${serverName}.cwd must be a non-empty string`);
+  }
+  if (spec.env !== undefined) {
+    if (!spec.env || typeof spec.env !== 'object' || Array.isArray(spec.env)) {
+      fail('INVALID_EXTENSION_MANIFEST', `mcp_servers.${serverName}.env must be an object of string values`);
+    }
+    for (const [k, v] of Object.entries(spec.env)) {
+      if (typeof v !== 'string') fail('INVALID_EXTENSION_MANIFEST', `mcp_servers.${serverName}.env.${k} must be a string`);
+    }
+  }
+  if (spec.idleMs !== undefined && (!Number.isSafeInteger(spec.idleMs) || spec.idleMs < 0 || spec.idleMs > MAX_IDLE_MS)) {
+    fail('INVALID_EXTENSION_MANIFEST', `mcp_servers.${serverName}.idleMs must be an integer from 0 to ${MAX_IDLE_MS}`);
+  }
+  if (spec.requestTimeout !== undefined && (!Number.isSafeInteger(spec.requestTimeout) || spec.requestTimeout < 1)) {
+    fail('INVALID_EXTENSION_MANIFEST', `mcp_servers.${serverName}.requestTimeout must be a positive integer`);
+  }
+  if (spec.restartOnExit !== undefined && typeof spec.restartOnExit !== 'boolean') {
+    fail('INVALID_EXTENSION_MANIFEST', `mcp_servers.${serverName}.restartOnExit must be a boolean`);
+  }
+}
+
+function expandMcpTokens(value, tokens) {
+  if (typeof value !== 'string') return value;
+  let out = value;
+  for (const [token, replacement] of Object.entries(tokens)) {
+    out = out.split(token).join(replacement);
+  }
+  return out;
+}
+
+async function resolveMcpServers(manifest, localConfig, name) {
+  const declared = manifest.mcp_servers;
+  if (!declared || Object.keys(declared).length === 0) return {};
+  const overrides = localConfig?.mcp_servers && typeof localConfig.mcp_servers === 'object' && !Array.isArray(localConfig.mcp_servers)
+    ? localConfig.mcp_servers
+    : {};
+  const tokens = {
+    $HOME: process.env.HOME || os.homedir(),
+    $NODE_BIN: process.execPath,
+  };
+  const resolved = {};
+  for (const [serverName, baseSpec] of Object.entries(declared)) {
+    const override = overrides[serverName];
+    if (override !== undefined && (!override || typeof override !== 'object' || Array.isArray(override))) {
+      fail('INVALID_EXTENSION_CONFIG', `extension ${name} mcp_servers.${serverName} override must be an object`);
+    }
+    const merged = {
+      ...baseSpec,
+      ...override,
+      ...(baseSpec.env || override?.env ? { env: { ...baseSpec.env, ...override?.env } } : {}),
+    };
+    validateMcpServerTemplate(serverName, merged);
+    const command = expandMcpTokens(merged.command, tokens);
+    if (!path.isAbsolute(command)) {
+      fail('EXTENSION_MCP_UNAVAILABLE', `mcp_servers.${serverName}.command must resolve to an absolute path: ${command}`);
+    }
+    const cmdStat = await fs.stat(command).catch(() => null);
+    if (!cmdStat?.isFile()) {
+      fail('EXTENSION_MCP_UNAVAILABLE', `mcp_servers.${serverName}.command does not exist: ${command}`);
+    }
+    try {
+      await fs.access(command, fsConstants.X_OK);
+    } catch {
+      fail('EXTENSION_MCP_UNAVAILABLE', `mcp_servers.${serverName}.command is not executable: ${command}`);
+    }
+    const args = merged.args ? merged.args.map(arg => expandMcpTokens(arg, tokens)) : undefined;
+    if (args?.length && /^node(\.exe)?$/i.test(path.basename(command)) && path.isAbsolute(args[0])) {
+      const entryStat = await fs.stat(args[0]).catch(() => null);
+      if (!entryStat?.isFile()) {
+        fail('EXTENSION_MCP_UNAVAILABLE', `mcp_servers.${serverName}.args[0] does not exist: ${args[0]}`);
+      }
+    }
+    let cwd;
+    if (merged.cwd !== undefined) {
+      cwd = expandMcpTokens(merged.cwd, tokens);
+      if (!path.isAbsolute(cwd)) {
+        fail('EXTENSION_MCP_UNAVAILABLE', `mcp_servers.${serverName}.cwd must resolve to an absolute path: ${cwd}`);
+      }
+      const cwdStat = await fs.stat(cwd).catch(() => null);
+      if (!cwdStat?.isDirectory()) {
+        fail('EXTENSION_MCP_UNAVAILABLE', `mcp_servers.${serverName}.cwd directory does not exist: ${cwd}`);
+      }
+    }
+    const env = merged.env
+      ? Object.fromEntries(Object.entries(merged.env).map(([k, v]) => [k, expandMcpTokens(v, tokens)]))
+      : undefined;
+    resolved[serverName] = {
+      type: merged.type ?? 'stdio',
+      ...(merged.protocolVersion !== undefined ? { protocolVersion: merged.protocolVersion } : {}),
+      command,
+      ...(args !== undefined ? { args } : {}),
+      ...(cwd !== undefined ? { cwd } : {}),
+      ...(env !== undefined ? { env } : {}),
+      ...(merged.idleMs !== undefined ? { idleMs: merged.idleMs } : {}),
+      ...(merged.requestTimeout !== undefined ? { requestTimeout: merged.requestTimeout } : {}),
+      restartOnExit: merged.restartOnExit ?? true,
+    };
+  }
+  return resolved;
+}
+
+async function assertNoMcpServerConflicts(root, selfName, mcpServers) {
+  const names = Object.keys(mcpServers);
+  if (names.length === 0) return;
+  const enabledDir = path.join(root, 'extensions', 'enabled');
+  let entries = [];
+  try {
+    entries = await fs.readdir(enabledDir, { withFileTypes: true });
+  } catch (error) {
+    if (error?.code === 'ENOENT') return;
+    throw error;
+  }
+  for (const entry of entries) {
+    if (!entry.isFile() || !entry.name.endsWith('.json')) continue;
+    const otherName = entry.name.slice(0, -5);
+    if (otherName === selfName) continue;
+    const otherState = await readJson(path.join(enabledDir, entry.name), { missing: null });
+    const otherServers = otherState?.mcp_servers;
+    if (!otherServers || typeof otherServers !== 'object' || Array.isArray(otherServers)) continue;
+    for (const serverName of names) {
+      if (Object.hasOwn(otherServers, serverName)) {
+        fail('EXTENSION_MCP_SERVER_CONFLICT', `MCP server ${serverName} is already provided by enabled extension ${otherName}`);
+      }
+    }
+  }
 }
 
 function browserMemoryRoot(root) {
@@ -150,10 +391,10 @@ async function applyMemoryPlan(plan) {
 async function install(name) {
   const root = configRoot();
   const enabledFile = stateFile(root, name);
-  try {
-    await fs.access(enabledFile);
+  if (await readJson(enabledFile, { missing: null })) {
+    await renderActiveBridge();
     return { status: 'already_enabled', name, state: enabledFile };
-  } catch {}
+  }
 
   const { dir, manifest } = await loadManifest(name);
   const localConfig = await readJson(localConfigFile(root, name), { missing: {} });
@@ -186,6 +427,8 @@ async function install(name) {
     if (!stat.isFile()) fail('EXTENSION_ARTIFACT_UNAVAILABLE', `artifact is not a regular file: ${artifact}`);
     artifactValues[artifact] = resolved;
   }
+  const mcpServers = await resolveMcpServers(manifest, localConfig, name);
+  await assertNoMcpServerConflicts(root, name, mcpServers);
 
   const memoryRoot = browserMemoryRoot(root);
   const memoryPlans = [];
@@ -227,10 +470,18 @@ async function install(name) {
       skill: manifest.skill ?? null,
       memory: installedMemory,
       artifacts: artifactValues,
-      sources: sourceValues
+      sources: sourceValues,
+      ...(Object.keys(mcpServers).length > 0 ? { mcp_servers: mcpServers } : {}),
+      ...(manifest.connector_hints ? { connector_hints: manifest.connector_hints } : {}),
     };
-    await writePrivateJson(enabledFile, state);
-    return { status: 'enabled', name, skill: manifest.skill ?? null, state: enabledFile };
+    await publishExtensionState(enabledFile, state, null);
+    return {
+      status: 'enabled',
+      name,
+      skill: manifest.skill ?? null,
+      ...(Object.keys(mcpServers).length > 0 ? { mcp_servers: Object.keys(mcpServers) } : {}),
+      state: enabledFile,
+    };
   } catch (error) {
     for (const target of createdMemory.reverse()) {
       try {
@@ -251,7 +502,10 @@ async function remove(name) {
   const root = configRoot();
   const enabledFile = stateFile(root, name);
   const state = await readJson(enabledFile, { missing: null });
-  if (!state) return { status: 'already_disabled', name };
+  if (!state) {
+    await renderActiveBridge();
+    return { status: 'already_disabled', name };
+  }
   if (state.version !== 1 || state.name !== name || !Array.isArray(state.memory) || !state.artifacts || typeof state.artifacts !== 'object') {
     fail('INVALID_EXTENSION_STATE', `invalid enabled state: ${enabledFile}`);
   }
@@ -317,7 +571,7 @@ async function remove(name) {
     }
     await writePrivateJson(artifactPath, nextArtifactManifest);
     artifactsWritten = true;
-    await fs.unlink(enabledFile);
+    await publishExtensionState(enabledFile, null, state);
   } catch (error) {
     if (artifactsWritten) {
       try {
@@ -335,6 +589,9 @@ async function remove(name) {
     }
     throw error;
   }
+  const removedMcpServers = state.mcp_servers && typeof state.mcp_servers === 'object' && !Array.isArray(state.mcp_servers)
+    ? Object.keys(state.mcp_servers)
+    : [];
   return {
     status: 'disabled',
     name,
@@ -343,8 +600,46 @@ async function remove(name) {
     retained_existing_memory: retainedExistingMemory,
     removed_artifacts: removedArtifacts,
     preserved_artifacts: preservedArtifacts,
+    ...(removedMcpServers.length > 0 ? { removed_mcp_servers: removedMcpServers } : {}),
     private_data_preserved: true,
     skill: state.skill ?? null
+  };
+}
+
+async function update(name) {
+  const root = configRoot();
+  const enabledFile = stateFile(root, name);
+  const existing = await readJson(enabledFile, { missing: null });
+  if (!existing) {
+    await renderActiveBridge();
+    return { status: 'not_enabled', name };
+  }
+  if (existing.version !== 1 || existing.name !== name) {
+    fail('INVALID_EXTENSION_STATE', `invalid enabled state: ${enabledFile}`);
+  }
+  const { manifest } = await loadManifest(name);
+  const localConfig = await readJson(localConfigFile(root, name), { missing: {} });
+  if (Object.keys(localConfig).length > 0 && localConfig.version !== 1) {
+    fail('INVALID_EXTENSION_CONFIG', `extension config version must be 1: ${localConfigFile(root, name)}`);
+  }
+  const mcpServers = await resolveMcpServers(manifest, localConfig, name);
+  await assertNoMcpServerConflicts(root, name, mcpServers);
+  const nextState = {
+    ...existing,
+    updated_at: new Date().toISOString(),
+    skill: manifest.skill ?? null,
+  };
+  if (Object.keys(mcpServers).length > 0) nextState.mcp_servers = mcpServers;
+  else delete nextState.mcp_servers;
+  if (manifest.connector_hints) nextState.connector_hints = manifest.connector_hints;
+  else delete nextState.connector_hints;
+  await publishExtensionState(enabledFile, nextState, existing);
+  return {
+    status: 'updated',
+    name,
+    skill: manifest.skill ?? null,
+    ...(Object.keys(mcpServers).length > 0 ? { mcp_servers: Object.keys(mcpServers) } : {}),
+    state: enabledFile,
   };
 }
 
@@ -370,7 +665,14 @@ async function list() {
       await fs.access(stateFile(root, entry.name));
       enabled = true;
     } catch {}
-    result.push({ name: entry.name, enabled, description: manifest.description ?? '', skill: manifest.skill ?? null });
+    const mcpServers = manifest.mcp_servers ? Object.keys(manifest.mcp_servers) : [];
+    result.push({
+      name: entry.name,
+      enabled,
+      description: manifest.description ?? '',
+      skill: manifest.skill ?? null,
+      ...(mcpServers.length > 0 ? { mcp_servers: mcpServers } : {}),
+    });
   }
   return { extensions: result };
 }
@@ -380,9 +682,10 @@ async function main() {
   const rawName = process.argv[3];
   let result;
   if (command === 'list' && rawName === undefined) result = await list();
-  else if (command === 'install') result = await install(extensionName(rawName));
-  else if (command === 'remove') result = await remove(extensionName(rawName));
-  else fail('USAGE', 'usage: bin/extension list | bin/extension install <name> | bin/extension remove <name>');
+  else if (command === 'install' || command === 'enable') result = await install(extensionName(rawName));
+  else if (command === 'remove' || command === 'disable') result = await remove(extensionName(rawName));
+  else if (command === 'update') result = await update(extensionName(rawName));
+  else fail('USAGE', 'usage: bin/extension list | bin/extension install|enable <name> | bin/extension remove|disable <name> | bin/extension update <name>');
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
 }
 

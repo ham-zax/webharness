@@ -1,4 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+case "${1:-}" in
+  install|enable|remove|disable|update)
+    lock_dir="$HOME/.config/mcp-dev-bridge/extensions"
+    if [[ ${NODE_ENV:-} == test && -n ${MCP_EXTENSION_TEST_CONFIG_ROOT:-} ]]; then
+      lock_dir="$MCP_EXTENSION_TEST_CONFIG_ROOT/extensions"
+    fi
+    umask 077
+    mkdir -p "$lock_dir"
+    exec 9>"$lock_dir/.mutation.lock"
+    flock -x 9
+    ;;
+esac
 exec node "$DIR/scripts/manage-extension.mjs" "$@"

@@ -44,13 +44,13 @@ ssh user@machine-b 'chmod 600 ~/.cloudflared/<TUNNEL_UUID>.json'
 
 ## 3. Approve headless Machine B from Machine A via Cloudflare Access Email OTP
 
-Machine B has no browser, and web connectors (ChatGPT, Claude, Gemini) register their own HTTPS callbacks (`https://<platform>/callback`). You approve Machine B once from **Machine A's browser** while **Cloudflare Zero Trust Access (Email One-Time PIN)** locks down the two human OAuth routes (`/authorize` and `/oauth/consent`).
+Machine B has no browser, and web connectors (ChatGPT, Claude, Gemini) register their own HTTPS callbacks (`https://<platform>/callback`). You approve each connector from **Machine A's browser**. **Cloudflare Zero Trust Access (Email One-Time PIN)** protects the browser-facing routes, and 1MCP uses its own admin session for consent. [Bootstrap the owner account](oauth-clients.md#set-up-the-owner-account) on Machine B first.
 
-### Why only two routes are gated
+### Browser routes behind Access
 
 | Path | Cloudflare Access | Routed to |
 |---|---|---|
-| `/authorize` & `/oauth/consent` | **Protected (owner email OTP only)** | `http://127.0.0.1:3050` |
+| `/authorize`, `/admin`, `/admin/*` | **Protected (owner email OTP only)** | `http://127.0.0.1:3050` |
 | `/mcp`, `/register`, `/token`, `/revoke`, `/.well-known/*`, `/health/ready`, `/v1/*` | **No Access app** (direct protocol/Bearer traffic) | `http://127.0.0.1:3050` |
 
 Never apply Access to the whole hostname—interactive login on `/mcp`, `/register`, `/token`, or `/.well-known/*` breaks MCP clients.
@@ -60,9 +60,10 @@ Never apply Access to the whole hostname—interactive login on `/mcp`, `/regist
 1. Open **Cloudflare Zero Trust** -> **Settings** -> **Authentication** -> confirm **One-time PIN** is enabled as a login method (built-in, free, no external IdP required).
 2. Go to **Access** -> **Applications** -> **Add an application** -> **Self-hosted**.
 3. Name it (e.g. `WebHarness Machine B Approval`) and set **Session Duration** to `720h` (30 days—this only governs browser approval logins, not MCP tokens).
-4. Add **two Public Hostnames** in that same application:
+4. Add these paths for the public hostname in that same application:
    - `mcp-server.example.com` with path `authorize`
-   - `mcp-server.example.com` with path `oauth/consent`
+   - `mcp-server.example.com` with path `admin`
+   - `mcp-server.example.com` with path `admin/*`
 5. Add an **Allow** policy:
    - Include -> **Emails** -> `your-owner-email@example.com` (exact email that will receive the OTP).
    - Authentication -> **One-time PIN** (selected).
@@ -80,7 +81,7 @@ credentials-file: /home/<user>/.cloudflared/<TUNNEL_UUID>.json
 
 ingress:
   - hostname: mcp-server.example.com
-    path: '^/(authorize|oauth/consent)/?$'
+    path: '^/(authorize/?|admin(/.*)?)$'
     service: http://127.0.0.1:3050
     originRequest:
       access:
@@ -103,7 +104,7 @@ cloudflared tunnel ingress validate
 
 # From Machine A:
 curl -sS -o /dev/null -w "health=%{http_code}\n" https://mcp-server.example.com/health/ready      # expect 200
-curl -sS -o /dev/null -w "consent=%{http_code}\n" -X POST https://mcp-server.example.com/oauth/consent  # expect 302 or 403 (NOT 200)
+curl -sS -o /dev/null -w "admin=%{http_code}\n" https://mcp-server.example.com/admin  # expect Access redirect or denial
 ```
 
 ### How the Email OTP approval flow works (Machine A -> Machine B)
@@ -113,8 +114,8 @@ curl -sS -o /dev/null -w "consent=%{http_code}\n" -X POST https://mcp-server.exa
 3. **Cloudflare Access intercepts `/authorize`** and displays an email login prompt on Machine A.
 4. Enter your allowlisted email (`your-owner-email@example.com`). Cloudflare immediately emails a **6-digit One-Time PIN (OTP)** to that inbox.
 5. Paste the 6-digit code in Machine A's browser. Cloudflare issues a signed Access JWT cookie and forwards the request through Tunnel B.
-6. `cloudflared` on Machine B validates the JWT (`teamName` + `audTag`) and forwards `/authorize` to loopback 1MCP, which displays the OAuth consent page.
-7. Click **Approve** (`POST /oauth/consent`). 1MCP redirects Machine A's browser back to the AI platform's registered HTTPS callback, the platform exchanges the code at `POST /token`, and Machine B is live.
+6. `cloudflared` on Machine B validates the JWT (`teamName` + `audTag`). 1MCP redirects `/authorize` to `/admin/oauth/authorize`. The approval page uses your existing owner session or prompts you to sign in there.
+7. Click **Approve** (`POST /admin/oauth/consent`). 1MCP returns Machine A's browser to the AI platform's registered HTTPS callback, and the platform exchanges the code at `POST /token`.
 
 Zero browser on Machine B, zero SSH tunnel, and zero URL rewriting. Because `server` sets `WEBHARNESS_OAUTH_SINGLE_OWNER=1` and `auth.sessionTtl = 525600`, issued tokens last **365 days** with rolling 365-day refresh authority until revoked.
 
@@ -122,14 +123,14 @@ Zero browser on Machine B, zero SSH tunnel, and zero URL rewriting. Because `ser
 
 ## 4. Fallback: temporary SSH approval (before Cloudflare Access is set up)
 
-If you have not configured Cloudflare Access yet, omit `oauth/consent` from public ingress and forward Machine B's port temporarily from Machine A:
+If you have not configured Cloudflare Access yet, omit the browser routes (`/authorize`, `/admin`, and `/admin/*`) from public ingress and forward Machine B's port temporarily from Machine A:
 
 ```powershell
 ssh -N -o ExitOnForwardFailure=yes -L 127.0.0.1:43070:127.0.0.1:3050 YOUR_SERVER_ALIAS
 curl.exe -sS -o NUL -w "%{http_code}\n" http://127.0.0.1:43070/health/ready  # expect 200
 ```
 
-Start connector setup in your browser, replace only the `/authorize?...` origin with `http://127.0.0.1:43070` (keep the full path/query intact), approve, then press `Ctrl+C` on the SSH forward. Never commit full authorization/callback URLs.
+Start connector setup in your browser, replace only the `/authorize?...` origin with `http://127.0.0.1:43070` (keep the full path/query intact), and complete sign-in and approval on the forwarded origin. Then press `Ctrl+C` on the SSH forward. Never commit full authorization/callback URLs.
 
 ## 5. Upgrades, CLI accelerators & `pueued.service`
 

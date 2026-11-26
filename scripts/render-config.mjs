@@ -110,6 +110,67 @@ function renderOwnerRuntimeEnv(values) {
     .join('');
 }
 
+async function normalizeLocalServerEntry(name, server, label = 'Local downstream server') {
+  if (!LOCAL_SERVER_NAME_RE.test(name)) {
+    throw new Error(`invalid Local downstream server name: ${name}`);
+  }
+  if (!server || typeof server !== 'object' || Array.isArray(server)) {
+    throw new Error(`${label} ${name} must be an object`);
+  }
+  const allowed = new Set(['type', 'protocolVersion', 'command', 'args', 'cwd', 'env', 'idleMs', 'requestTimeout', 'restartOnExit']);
+  for (const key of Object.keys(server)) {
+    if (!allowed.has(key)) throw new Error(`${label} ${name} has unsupported field: ${key}`);
+  }
+  if (server.type !== undefined && server.type !== 'stdio') {
+    throw new Error(`${label} ${name} type must be stdio when set`);
+  }
+  if (server.protocolVersion !== undefined && !['auto', 'legacy', '2026-07-28'].includes(server.protocolVersion)) {
+    throw new Error(`${label} ${name} protocolVersion must be one of: auto, legacy, 2026-07-28`);
+  }
+  if (typeof server.command !== 'string' || !path.isAbsolute(server.command)) {
+    throw new Error(`${label} ${name} command must be an absolute path`);
+  }
+  const stat = await fs.stat(server.command).catch(() => null);
+  if (!stat?.isFile()) throw new Error(`${label} ${name} command must reference an existing regular file`);
+  try {
+    await fs.access(server.command, fsConstants.X_OK);
+  } catch {
+    throw new Error(`${label} ${name} command must be executable`);
+  }
+  if (server.args !== undefined && (!Array.isArray(server.args) || server.args.some((arg) => typeof arg !== 'string'))) {
+    throw new Error(`${label} ${name} args must be an array of strings`);
+  }
+  if (server.cwd !== undefined) {
+    if (typeof server.cwd !== 'string' || !path.isAbsolute(server.cwd)) {
+      throw new Error(`${label} ${name} cwd must be an absolute path`);
+    }
+    const cwdStat = await fs.stat(server.cwd).catch(() => null);
+    if (!cwdStat?.isDirectory()) throw new Error(`${label} ${name} cwd must reference an existing directory`);
+  }
+  if (server.env !== undefined) {
+    if (!server.env || typeof server.env !== 'object' || Array.isArray(server.env)) {
+      throw new Error(`${label} ${name} env must be an object of string values`);
+    }
+    for (const [key, envValue] of Object.entries(server.env)) {
+      if (typeof envValue !== 'string') throw new Error(`${label} ${name} env.${key} must be a string`);
+    }
+  }
+  if (server.idleMs !== undefined && (!Number.isSafeInteger(server.idleMs) || server.idleMs < 0 || server.idleMs > 2147483647)) {
+    throw new Error(`${label} ${name} idleMs must be an integer from 0 to 2147483647`);
+  }
+  if (server.requestTimeout !== undefined && (!Number.isSafeInteger(server.requestTimeout) || server.requestTimeout < 1)) {
+    throw new Error(`${label} ${name} requestTimeout must be a positive integer`);
+  }
+  if (server.restartOnExit !== undefined && typeof server.restartOnExit !== 'boolean') {
+    throw new Error(`${label} ${name} restartOnExit must be a boolean`);
+  }
+  return {
+    ...server,
+    type: server.type ?? 'stdio',
+    restartOnExit: server.restartOnExit ?? true,
+  };
+}
+
 async function parseLocalServersConfig(text) {
   let value;
   try {
@@ -129,60 +190,71 @@ async function parseLocalServersConfig(text) {
   }
   const normalized = {};
   for (const [name, server] of Object.entries(servers)) {
-    if (!LOCAL_SERVER_NAME_RE.test(name)) {
-      throw new Error(`invalid Local downstream server name: ${name}`);
-    }
-    if (!server || typeof server !== 'object' || Array.isArray(server)) {
-      throw new Error(`Local downstream server ${name} must be an object`);
-    }
-    const allowed = new Set(['type', 'protocolVersion', 'command', 'args', 'cwd', 'env', 'restartOnExit']);
-    for (const key of Object.keys(server)) {
-      if (!allowed.has(key)) throw new Error(`Local downstream server ${name} has unsupported field: ${key}`);
-    }
-    if (server.type !== undefined && server.type !== 'stdio') {
-      throw new Error(`Local downstream server ${name} type must be stdio when set`);
-    }
-    if (server.protocolVersion !== undefined && !['auto', 'legacy', '2026-07-28'].includes(server.protocolVersion)) {
-      throw new Error(`Local downstream server ${name} protocolVersion must be one of: auto, legacy, 2026-07-28`);
-    }
-    if (typeof server.command !== 'string' || !path.isAbsolute(server.command)) {
-      throw new Error(`Local downstream server ${name} command must be an absolute path`);
-    }
-    const stat = await fs.stat(server.command).catch(() => null);
-    if (!stat?.isFile()) throw new Error(`Local downstream server ${name} command must reference an existing regular file`);
-    try {
-      await fs.access(server.command, fsConstants.X_OK);
-    } catch {
-      throw new Error(`Local downstream server ${name} command must be executable`);
-    }
-    if (server.args !== undefined && (!Array.isArray(server.args) || server.args.some((arg) => typeof arg !== 'string'))) {
-      throw new Error(`Local downstream server ${name} args must be an array of strings`);
-    }
-    if (server.cwd !== undefined) {
-      if (typeof server.cwd !== 'string' || !path.isAbsolute(server.cwd)) {
-        throw new Error(`Local downstream server ${name} cwd must be an absolute path`);
-      }
-      const cwdStat = await fs.stat(server.cwd).catch(() => null);
-      if (!cwdStat?.isDirectory()) throw new Error(`Local downstream server ${name} cwd must reference an existing directory`);
-    }
-    if (server.env !== undefined) {
-      if (!server.env || typeof server.env !== 'object' || Array.isArray(server.env)) {
-        throw new Error(`Local downstream server ${name} env must be an object of string values`);
-      }
-      for (const [key, envValue] of Object.entries(server.env)) {
-        if (typeof envValue !== 'string') throw new Error(`Local downstream server ${name} env.${key} must be a string`);
-      }
-    }
-    if (server.restartOnExit !== undefined && typeof server.restartOnExit !== 'boolean') {
-      throw new Error(`Local downstream server ${name} restartOnExit must be a boolean`);
-    }
-    normalized[name] = {
-      ...server,
-      type: server.type ?? 'stdio',
-      restartOnExit: server.restartOnExit ?? true
-    };
+    normalized[name] = await normalizeLocalServerEntry(name, server, 'Local downstream server');
   }
   return normalized;
+}
+
+async function readEnabledExtensionLocalState(home) {
+  const enabledDir = path.join(home, '.config', 'mcp-dev-bridge', 'extensions', 'enabled');
+  const emptyHints = { version: 1, tool_descriptions: {}, exploration_nudges: [] };
+  let entries;
+  try {
+    entries = await fs.readdir(enabledDir, { withFileTypes: true });
+  } catch (error) {
+    if (error?.code === 'ENOENT') return { mcpServers: {}, connectorHints: emptyHints };
+    throw error;
+  }
+  const merged = {};
+  const toolDescriptions = {};
+  const explorationNudges = [];
+  for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+    if (!entry.isFile() || !entry.name.endsWith('.json')) continue;
+    const filePath = path.join(enabledDir, entry.name);
+    const rawText = await readOwnedRegularTextFile(filePath, `enabled extension ${entry.name}`, LOCAL_SERVERS_MAX_BYTES);
+    let state;
+    try {
+      state = JSON.parse(rawText);
+    } catch {
+      throw new Error(`enabled extension ${entry.name} must contain valid JSON`);
+    }
+    const servers = state?.mcp_servers;
+    if (servers !== undefined) {
+      if (!servers || typeof servers !== 'object' || Array.isArray(servers)) {
+        throw new Error(`enabled extension ${entry.name} mcp_servers must be an object`);
+      }
+      for (const [name, server] of Object.entries(servers)) {
+        if (Object.hasOwn(merged, name)) {
+          throw new Error(`enabled extensions define duplicate Local server: ${name}`);
+        }
+        merged[name] = await normalizeLocalServerEntry(name, server, `extension ${entry.name} Local server`);
+      }
+    }
+    const hints = state?.connector_hints;
+    if (hints && typeof hints === 'object' && !Array.isArray(hints)) {
+      if (hints.tool_descriptions && typeof hints.tool_descriptions === 'object' && !Array.isArray(hints.tool_descriptions)) {
+        for (const [toolName, text] of Object.entries(hints.tool_descriptions)) {
+          if (typeof text !== 'string' || !text.trim()) continue;
+          if (!Array.isArray(toolDescriptions[toolName])) toolDescriptions[toolName] = [];
+          if (!toolDescriptions[toolName].includes(text.trim())) toolDescriptions[toolName].push(text.trim());
+        }
+      }
+      const nudge = hints.exploration_nudge;
+      if (nudge && typeof nudge === 'object' && typeof nudge.server === 'string' && typeof nudge.tip === 'string' && nudge.tip.trim()) {
+        if (Object.hasOwn(merged, nudge.server) && !explorationNudges.some(n => n.server === nudge.server)) {
+          explorationNudges.push({ server: nudge.server, tip: nudge.tip.trim() });
+        }
+      }
+    }
+  }
+  return {
+    mcpServers: merged,
+    connectorHints: {
+      version: 1,
+      tool_descriptions: toolDescriptions,
+      exploration_nudges: explorationNudges,
+    },
+  };
 }
 
 function replaceStrings(value, replacements) {
@@ -263,6 +335,7 @@ export async function renderConfig(options) {
   let ownerContextFile = null;
   let ownerEnv = {};
   let localOwnerServers = {};
+  let extensionConnectorHints = { version: 1, tool_descriptions: {}, exploration_nudges: [] };
   if (isLocal) {
     if (!runtimeDir || !path.isAbsolute(runtimeDir)) {
       throw new Error(`${profile} profile requires an absolute XDG_RUNTIME_DIR or a user runtime directory`);
@@ -305,10 +378,20 @@ export async function renderConfig(options) {
       }
     }
     const localServersFile = String(deployment.MCP_LOCAL_SERVERS_FILE ?? '').trim() || null;
+    const { mcpServers: extensionLocalServers, connectorHints } = await readEnabledExtensionLocalState(home);
+    extensionConnectorHints = connectorHints;
     if (localServersFile) {
-      localOwnerServers = await parseLocalServersConfig(
+      const fileServers = await parseLocalServersConfig(
         await readOwnedRegularTextFile(localServersFile, 'MCP_LOCAL_SERVERS_FILE', LOCAL_SERVERS_MAX_BYTES),
       );
+      for (const name of Object.keys(fileServers)) {
+        if (Object.hasOwn(extensionLocalServers, name)) {
+          throw new Error(`MCP_LOCAL_SERVERS_FILE duplicates Local server already provided by an enabled extension: ${name}`);
+        }
+      }
+      localOwnerServers = { ...extensionLocalServers, ...fileServers };
+    } else {
+      localOwnerServers = extensionLocalServers;
     }
   }
 
@@ -510,7 +593,10 @@ export async function renderConfig(options) {
   const bridgeEnvPath = path.join(stateDir, 'bridge.env');
   const appConfig = [
     `port = ${coldStart === '1' ? backendPort : oneMcpPort}`,
-    ...(isLocal ? ['[admin]', 'enabled = false', ''] : []),
+    // 1MCP 0.40 requires an authenticated admin session for OAuth consent.
+    '[admin]',
+    'enabled = true',
+    '',
     '[auth]',
     // The single-owner server profile keeps connector access for 365 days; every
     // other profile keeps the previous 30-day access-token lifetime. The installer
@@ -573,7 +659,10 @@ export async function renderConfig(options) {
     await fs.chmod(logDir, 0o700);
 
     if (isPersonal) await atomicWrite(path.join(stateDir, 'owner.env'), renderOwnerRuntimeEnv(ownerEnv));
-    if (localRendered) await atomicWrite(localInnerConfigPath, `${JSON.stringify(localRendered, null, 2)}\n`);
+    if (localRendered) {
+      await atomicWrite(localInnerConfigPath, `${JSON.stringify(localRendered, null, 2)}\n`);
+      await atomicWrite(path.join(localOneMcpDir, 'connector-hints.json'), `${JSON.stringify(extensionConnectorHints, null, 2)}\n`);
+    }
     if (localInnerAppConfigPath) await atomicWrite(localInnerAppConfigPath, localInnerAppConfig);
     await atomicWrite(configPath, `${JSON.stringify(rendered, null, 2)}\n`);
     await atomicWrite(appConfigPath, appConfig);

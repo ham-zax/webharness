@@ -15,6 +15,7 @@ test-fast:
         lib/bridge/test/connector-policy.test.mjs \
         lib/bridge/test/wake-proxy.test.mjs \
         lib/bridge/test/http-diagnostics.test.mjs \
+        lib/bridge/test/telemetry.test.mjs \
         lib/test/local-route-policy.test.mjs \
         lib/test/stdio-diagnostics.test.mjs \
         providers/local-tools/test/server.test.mjs \
@@ -145,6 +146,10 @@ sync-skills *ARGS="":
 # Check live WebHarness status.
 status:
     ./bin/status
+
+# Analyze rotating usage/context/issue telemetry (logs/telemetry.jsonl).
+telemetry *ARGS="":
+    node scripts/analyze-telemetry.mjs {{ARGS}}
 
 # Compact factual snapshot (git + pueue + tmux) for zero-hallucination session handoffs.
 handoff-state:
