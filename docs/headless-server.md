@@ -44,13 +44,13 @@ ssh user@machine-b 'chmod 600 ~/.cloudflared/<TUNNEL_UUID>.json'
 
 ## 3. Approve headless Machine B from Machine A via Cloudflare Access Email OTP
 
-Machine B has no browser, and web connectors (ChatGPT, Claude, Gemini) register their own HTTPS callbacks (`https://<platform>/callback`). You approve each connector from **Machine A's browser**. **Cloudflare Zero Trust Access (Email One-Time PIN)** protects the browser-facing routes, and 1MCP uses its own admin session for consent. [Bootstrap the owner account](oauth-clients.md#set-up-the-owner-account) on Machine B first.
+Machine B has no browser, and web connectors (ChatGPT, Claude, Gemini) register their own HTTPS callbacks (`https://<platform>/callback`). You approve each connector from **Machine A's browser**. **Cloudflare Zero Trust Access (Email One-Time PIN)** protects the browser-facing routes. The bridge verifies the signed Access identity before displaying or accepting consent.
 
 ### Browser routes behind Access
 
 | Path | Cloudflare Access | Routed to |
 |---|---|---|
-| `/authorize`, `/admin`, `/admin/*` | **Protected (owner email OTP only)** | `http://127.0.0.1:3050` |
+| `/authorize`, `/oauth/consent` | **Protected (owner email OTP only)** | `http://127.0.0.1:3050` |
 | `/mcp`, `/register`, `/token`, `/revoke`, `/.well-known/*`, `/health/ready`, `/v1/*` | **No Access app** (direct protocol/Bearer traffic) | `http://127.0.0.1:3050` |
 
 Never apply Access to the whole hostname—interactive login on `/mcp`, `/register`, `/token`, or `/.well-known/*` breaks MCP clients.
@@ -62,14 +62,15 @@ Never apply Access to the whole hostname—interactive login on `/mcp`, `/regist
 3. Name it (e.g. `WebHarness Machine B Approval`) and set **Session Duration** to `720h` (30 days—this only governs browser approval logins, not MCP tokens).
 4. Add these paths for the public hostname in that same application:
    - `mcp-server.example.com` with path `authorize`
-   - `mcp-server.example.com` with path `admin`
-   - `mcp-server.example.com` with path `admin/*`
+   - `mcp-server.example.com` with path `oauth/consent`
 5. Add an **Allow** policy:
    - Include -> **Emails** -> `your-owner-email@example.com` (exact email that will receive the OTP).
    - Authentication -> **One-time PIN** (selected).
 6. Save the application and copy two values from its **Overview** tab:
    - **Team domain prefix (`teamName`)**: the `<team>` part of `<team>.cloudflareaccess.com`.
    - **Application Audience (`AUD`) Tag**: the 64-character hex string.
+
+Set `WEBHARNESS_ACCESS_TEAM` and `WEBHARNESS_ACCESS_AUD` to those same values in a user-systemd drop-in for `mcp-dev-bridge.service` under `[Service]` as `Environment=` assignments. Run `systemctl --user daemon-reload` before restarting the bridge. Use an Access application whose policy admits only the owner.
 
 ### Configure `~/.cloudflared/config.yml` on Machine B
 
@@ -81,7 +82,7 @@ credentials-file: /home/<user>/.cloudflared/<TUNNEL_UUID>.json
 
 ingress:
   - hostname: mcp-server.example.com
-    path: '^/(authorize/?|admin(/.*)?)$'
+    path: '^/(authorize|oauth/consent)/?$'
     service: http://127.0.0.1:3050
     originRequest:
       access:
@@ -104,7 +105,7 @@ cloudflared tunnel ingress validate
 
 # From Machine A:
 curl -sS -o /dev/null -w "health=%{http_code}\n" https://mcp-server.example.com/health/ready      # expect 200
-curl -sS -o /dev/null -w "admin=%{http_code}\n" https://mcp-server.example.com/admin  # expect Access redirect or denial
+curl -sS -o /dev/null -w "authorize=%{http_code}\n" https://mcp-server.example.com/authorize  # expect Access redirect or denial
 ```
 
 ### How the Email OTP approval flow works (Machine A -> Machine B)
@@ -114,8 +115,8 @@ curl -sS -o /dev/null -w "admin=%{http_code}\n" https://mcp-server.example.com/a
 3. **Cloudflare Access intercepts `/authorize`** and displays an email login prompt on Machine A.
 4. Enter your allowlisted email (`your-owner-email@example.com`). Cloudflare immediately emails a **6-digit One-Time PIN (OTP)** to that inbox.
 5. Paste the 6-digit code in Machine A's browser. Cloudflare issues a signed Access JWT cookie and forwards the request through Tunnel B.
-6. `cloudflared` on Machine B validates the JWT (`teamName` + `audTag`). 1MCP redirects `/authorize` to `/admin/oauth/authorize`. The approval page uses your existing owner session or prompts you to sign in there.
-7. Click **Approve** (`POST /admin/oauth/consent`). 1MCP returns Machine A's browser to the AI platform's registered HTTPS callback, and the platform exchanges the code at `POST /token`.
+6. `cloudflared` on Machine B validates the JWT (`teamName` + `audTag`). The bridge independently checks the assertion signature, issuer, audience, expiry, and user identity, then displays consent at `/authorize`.
+7. Click **Approve** (`POST /oauth/consent`). 1MCP returns Machine A's browser to the AI platform's registered HTTPS callback, and the platform exchanges the code at `POST /token`.
 
 Zero browser on Machine B, zero SSH tunnel, and zero URL rewriting. Because `server` sets `WEBHARNESS_OAUTH_SINGLE_OWNER=1` and `auth.sessionTtl = 525600`, issued tokens last **365 days** with rolling 365-day refresh authority until revoked.
 
@@ -123,7 +124,7 @@ Zero browser on Machine B, zero SSH tunnel, and zero URL rewriting. Because `ser
 
 ## 4. Fallback: temporary SSH approval (before Cloudflare Access is set up)
 
-If you have not configured Cloudflare Access yet, omit the browser routes (`/authorize`, `/admin`, and `/admin/*`) from public ingress and forward Machine B's port temporarily from Machine A:
+With the Access environment settings unset on the bridge, omit the browser routes (`/authorize`, `/admin`, and `/admin/*`) from public ingress and forward Machine B's port temporarily from Machine A:
 
 ```powershell
 ssh -N -o ExitOnForwardFailure=yes -L 127.0.0.1:43070:127.0.0.1:3050 YOUR_SERVER_ALIAS

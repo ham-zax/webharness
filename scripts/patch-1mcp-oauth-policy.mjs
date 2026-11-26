@@ -113,6 +113,31 @@ const ownerPagePolicy = `default-src 'none'; script-src 'sha256-${ownerScriptHas
 /** Ordered, shape-qualified patches. Each entry is applied at most once. */
 export const PATCHES = [
   {
+    id: 'access-consent-guard', file: 'build/sdk/legacy/transport/http/server.js', label: 'Cloudflare Access owner verification',
+    upstream: 'const consentGuard = createOperatorConsentGuard(adminDomain.adminService, adminEnabled);',
+    patched: 'const consentGuard = accessConsentGuard(createOperatorConsentGuard(adminDomain.adminService, adminEnabled));',
+  },
+  {
+    id: 'access-consent-import', file: 'build/sdk/legacy/transport/http/server.js', label: 'Cloudflare Access verifier',
+    upstream: "import express from 'express';",
+    patched: "import { accessConsentGuard } from '../../../../transport/http/routes/webHarnessAccess.mjs';\nimport express from 'express';",
+  },
+  {
+    id: 'access-authorize-entry', file: 'build/transport/http/routes/operatorConsentRoutes.js', label: 'protected authorization entry',
+    upstream: "    router.get('/authorize', (req, res) => {",
+    patched: `    if (process.env.MCP_BRIDGE_PROFILE === 'server' && process.env.WEBHARNESS_ACCESS_TEAM) {
+        router.all('/authorize', guard, authRouter);
+    }
+    router.get('/authorize', (req, res) => {`,
+  },
+  {
+    id: 'access-consent-form', file: 'build/sdk/legacy/auth/sdkOAuthServerProvider.js', label: 'protected consent form action',
+    upstream: '        res.send(consentPageHtml);',
+    patched: `        res.send(res.locals.cloudflareOwnerConsent
+            ? consentPageHtml.replace('action="/admin/oauth/consent"', 'action="/oauth/consent"')
+            : consentPageHtml);`,
+  },
+  {
     id: 'owner-link-route', file: 'build/sdk/legacy/transport/http/server.js', label: 'workstation approval route',
     upstream: '        this.app.use(createOperatorConsentRoutes(authRouter, oauthRoutes, consentGuard));',
     patched: `        installOwnerLink(this.app, adminStorageDir, runtimeIdentity.externalUrl, authRouter, oauthFlow);
@@ -820,6 +845,10 @@ import { equivalentResources } from '../../../../../auth/resourceIdentity.js';`,
 
 /** Files this module creates rather than patches. */
 export const CREATED_FILES = [
+  {
+    id: 'access-module', file: 'build/transport/http/routes/webHarnessAccess.mjs', label: 'Cloudflare Access consent module',
+    content: fs.readFileSync(new URL('./oauth-cloudflare-access.mjs', import.meta.url), 'utf8'),
+  },
   {
     id: 'owner-link-module', file: 'build/transport/http/routes/webHarnessOwnerLink.mjs', label: 'one-time owner approval',
     content: fs.readFileSync(new URL('./oauth-owner-link.mjs', import.meta.url), 'utf8'),
